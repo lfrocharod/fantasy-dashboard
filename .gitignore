@@ -1,0 +1,28 @@
+# deps
+node_modules/
+.venv/
+__pycache__/
+*.egg-info/
+*.pyc
+
+# env / secrets
+.env
+.env.local
+.env*.local
+!.env.example
+
+# build
+web/.next/
+web/out/
+web/next-env.d.ts
+dist/
+build/
+
+# misc
+.DS_Store
+*.log
+.soccerdata/
+soccerdata_cache/
+
+.pytest_cache/
+.ruff_cache/

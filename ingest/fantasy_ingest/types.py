@@ -1,0 +1,107 @@
+"""Plain domain types shared across ingestion and the model.
+
+No third-party imports here on purpose — `model/` imports this and nothing else
+from the package, so the projection maths stays unit-testable in isolation.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Literal
+
+Position = Literal["GK", "DEF", "MID", "FWD"]
+POSITIONS: tuple[Position, ...] = ("GK", "DEF", "MID", "FWD")
+
+
+@dataclass(slots=True)
+class Team:
+    uefa_team_id: int
+    name: str
+    code: str = ""
+    # Multiplicative ratings centred on 1.0 (1.2 = 20% stronger than average).
+    attack_rating: float = 1.0
+    defence_rating: float = 1.0
+
+
+@dataclass(slots=True)
+class Player:
+    uefa_player_id: int
+    name: str
+    team_id: int
+    position: Position
+    price: float = 0.0
+    uefa_total_points: int = 0
+    uefa_form: float = 0.0
+    selected_pct: float = 0.0
+    status_code: int = 0  # 0 fit, 1 doubt, 2 out
+    status_detail: str = ""
+    fbref_id: str | None = None
+    understat_id: str | None = None
+
+
+@dataclass(slots=True)
+class PlayerStat:
+    """Rolling per-90 underlying numbers from FBref / Understat."""
+
+    player_id: int
+    scope: str = "combined"
+    minutes: float = 0.0
+    matches: int = 0
+    npxg90: float = 0.0
+    xag90: float = 0.0
+    shots90: float = 0.0
+    sca90: float = 0.0
+    save_pct: float = 0.0
+    source: str = ""
+
+
+@dataclass(slots=True)
+class Fixture:
+    uefa_match_id: int
+    matchday: int
+    home_team_id: int
+    away_team_id: int
+    kickoff: datetime | None = None
+    status: str = "upcoming"
+    home_goals: int | None = None
+    away_goals: int | None = None
+    home_xg_est: float = 0.0
+    away_xg_est: float = 0.0
+
+
+@dataclass(slots=True)
+class SquadPick:
+    player_id: int
+    is_starter: bool = True
+    is_captain: bool = False
+    is_vice: bool = False
+    bench_order: int = 0
+    purchase_price: float = 0.0
+
+
+@dataclass(slots=True)
+class LeagueEntry:
+    entry_id: str
+    manager_name: str
+    team_name: str
+    matchday: int
+    points: int
+    total_points: int
+    rank: int
+    prev_rank: int = 0
+    squad: list[int] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class Projection:
+    player_id: int
+    matchday: int
+    p_start: float
+    exp_minutes: float
+    xpts: float
+    xpts_captain: float
+    value: float
+    xpts_high: float
+    xpts_low: float
+    components: dict[str, float]
