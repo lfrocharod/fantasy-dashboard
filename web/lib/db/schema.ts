@@ -199,6 +199,67 @@ export const ingestRuns = pgTable("ingest_runs", {
   notes: text("notes").notNull().default(""),
 });
 
+/* ------------------------------------------------------------------ *
+ * Draft assistant — sport-agnostic. sport = "nfl" | "nba" | "fpl".
+ * ------------------------------------------------------------------ */
+
+export const draftPlayers = pgTable(
+  "draft_players",
+  {
+    sport: text("sport").notNull(),
+    extId: text("ext_id").notNull(), // provider id (ESPN player id, FPL element, …)
+    name: text("name").notNull(),
+    team: text("team").notNull().default(""),
+    // comma-separated eligible positions, e.g. "RB,FLEX"
+    positions: text("positions").notNull().default(""),
+    primaryPos: text("primary_pos").notNull().default(""),
+    projPoints: real("proj_points").notNull().default(0),
+    adp: real("adp").notNull().default(0),
+    // provider's own draft rank (ESPN PPR rank, etc.)
+    providerRank: integer("provider_rank"),
+    // FantasyPros expert consensus rank + tier + disagreement (higher std = more contested)
+    ecrRank: integer("ecr_rank"),
+    ecrTier: integer("ecr_tier"),
+    ecrPosRank: text("ecr_pos_rank").notNull().default(""),
+    ecrStd: real("ecr_std").notNull().default(0),
+    // points over replacement for the configured roster
+    vbd: real("vbd").notNull().default(0),
+    byeWeek: integer("bye_week"),
+    injuryStatus: text("injury_status").notNull().default(""),
+    outlook: text("outlook").notNull().default(""),
+    raw: jsonb("raw"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: uniqueIndex("draft_players_pk").on(t.sport, t.extId),
+    bySport: index("draft_players_sport_idx").on(t.sport),
+  }),
+);
+
+export const draftPicks = pgTable(
+  "draft_picks",
+  {
+    id: serial("id").primaryKey(),
+    sport: text("sport").notNull(),
+    overall: integer("overall").notNull(),
+    round: integer("round").notNull().default(0),
+    pickInRound: integer("pick_in_round").notNull().default(0),
+    teamId: integer("team_id").notNull().default(0),
+    teamName: text("team_name").notNull().default(""),
+    playerExtId: text("player_ext_id").notNull(),
+    isMine: boolean("is_mine").notNull().default(false),
+    source: text("source").notNull().default("manual"), // manual | espn
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uq: uniqueIndex("draft_picks_sport_overall_idx").on(t.sport, t.overall),
+    byPlayer: index("draft_picks_player_idx").on(t.sport, t.playerExtId),
+  }),
+);
+
+export type DraftPlayer = typeof draftPlayers.$inferSelect;
+export type DraftPick = typeof draftPicks.$inferSelect;
+
 export type Team = typeof teams.$inferSelect;
 export type Player = typeof players.$inferSelect;
 export type Projection = typeof projections.$inferSelect;
