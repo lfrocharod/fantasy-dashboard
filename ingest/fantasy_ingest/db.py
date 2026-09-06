@@ -302,6 +302,41 @@ class DB:
             )
             c.commit()
 
+    # ---- draft board -----------------------------------------------------
+
+    def replace_draft_players(self, sport: str, rows: list) -> None:
+        self._many(
+            """insert into draft_players
+               (sport, ext_id, name, team, positions, primary_pos, proj_points, adp,
+                provider_rank, ecr_rank, ecr_tier, ecr_pos_rank, ecr_std, vbd, bye_week,
+                injury_status, outlook, raw, updated_at)
+               values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())""",
+            [
+                (r.sport, r.ext_id, r.name, r.team, ",".join(r.positions), r.primary_pos,
+                 r.proj_points, r.adp, r.provider_rank, r.ecr_rank, r.ecr_tier, r.ecr_pos_rank,
+                 r.ecr_std, r.vbd, r.bye_week, r.injury_status, r.outlook, json.dumps(r.raw or {}))
+                for r in rows
+            ],
+            atomic_delete="delete from draft_players where sport=%s",
+            delete_args=(sport,),
+        )
+
+    def replace_draft_picks(self, sport: str, picks: list[dict]) -> None:
+        self._many(
+            """insert into draft_picks
+               (sport, overall, round, pick_in_round, team_id, team_name, player_ext_id,
+                is_mine, source, created_at)
+               values (%s,%s,%s,%s,%s,%s,%s,%s,%s, now())""",
+            [
+                (sport, p["overall"], p.get("round", 0), p.get("pick_in_round", 0),
+                 p.get("team_id", 0), p.get("team_name", ""), str(p["player_ext_id"]),
+                 bool(p.get("is_mine")), p.get("source", "espn"))
+                for p in picks
+            ],
+            atomic_delete="delete from draft_picks where sport=%s and source='espn'",
+            delete_args=(sport,),
+        )
+
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
