@@ -35,9 +35,44 @@ def _cfg(db: DB, sport: str) -> dict:
     return {k.split(".")[-1]: v for k, v in s.items()}
 
 
+def _espn_cookies(cfg: dict, env: Env | None) -> tuple[str | None, str | None]:
+    s2, swid = cfg.get("espn_s2"), cfg.get("swid")
+    if not (s2 and swid):
+        return None, None
+    if env and env.web_crypto_key:
+        try:
+            return decrypt(s2), decrypt(swid)
+        except Exception as e:  # noqa: BLE001
+            _log(f"could not decrypt ESPN cookies: {e}")
+            return None, None
+    return s2, swid  # allow plaintext for local use
+
+
 def sync_picks(db: DB, env: Env, sport: str, cfg: dict) -> int:
     if sport == "fpl":
         return _sync_fpl(db, env, cfg)
+
+    if sport == "nfl":
+        # in-season NFL: rosters + schedule + projections are all done inside
+        # build_board when cookies are present, so there's nothing extra here
+        # unless we're still pre-draft.
+        from . import espn_league
+
+        s2, swid = _espn_cookies(cfg, env)
+        lid = cfg.get("league_id")
+        if not (s2 and swid and lid):
+            _log("nfl sync skipped — set league_id + espn_s2 + swid in Settings")
+            return 0
+        year = int(cfg.get("year") or 2026)
+        data = espn_league.fetch_league(year, lid, s2, swid)
+        settings = espn_league.parse_settings(data)
+        db.set_setting("draft.nfl.roster", json.dumps(settings["roster"]))
+        db.set_setting("draft.nfl.teams", str(settings["teams"]))
+        db.set_setting("draft.nfl.scoring", settings["scoring"])
+        # In-season, rosters come from mRoster (handled in build_board); the
+        # draft_picks table isn't used.
+        _log(f"nfl league synced · {settings['name']} · {settings['teams']} teams · {settings['scoring']}")
+        return 0
 
     from . import espn_league
 
@@ -133,13 +168,35 @@ def _bootstrap_events(c) -> dict:
 
 def build_board(db: DB, sport: str, cfg: dict, env: Env | None = None) -> None:
     if sport == "nfl":
-        from . import nfl
-
         year = int(cfg.get("year") or 2026)
         scoring = cfg.get("scoring") or "ppr"
+        s2, swid = _espn_cookies(cfg, env)
+        lid = cfg.get("league_id")
+        # In-season if we can reach the league; otherwise the pre-draft board.
+        if s2 and swid and lid:
+            from . import nfl_season
+
+            _log(f"building nfl IN-SEASON board · {year} · league {lid}")
+            rows, meta = nfl_season.build(
+                year, lid, s2, swid, scoring,
+                int(cfg["my_team_id"]) if cfg.get("my_team_id") else None,
+            )
+            db.replace_draft_players(sport, rows)
+            for k in ("schedule", "standings", "teams", "slots", "playoff_weeks"):
+                db.set_setting(f"draft.nfl.{k}", json.dumps(meta[k]))
+            db.set_setting("draft.nfl.week", str(meta["week"]))
+            db.set_setting("draft.nfl.reg_weeks", str(meta["reg_weeks"]))
+            db.set_setting("draft.nfl.my_roster", json.dumps(meta["my_roster"]))
+            _log(f"wrote {len(rows)} players · week {meta['week']} · "
+                 f"{len(meta['my_roster'])} on your roster · "
+                 f"playoffs weeks {meta['playoff_weeks']}")
+            return
+
+        from . import nfl
+
         roster = json.loads(cfg["roster"]) if cfg.get("roster") else dict(DEFAULT_ROSTER)
         teams = int(cfg.get("teams") or 12)
-        _log(f"building nfl board · {year} · {scoring} · {teams} teams · roster {roster}")
+        _log(f"building nfl DRAFT board · {year} · {scoring} · {teams} teams")
         rows = nfl.build(year, scoring, roster, teams)
         db.replace_draft_players(sport, rows)
         _log(f"wrote {len(rows)} players "
