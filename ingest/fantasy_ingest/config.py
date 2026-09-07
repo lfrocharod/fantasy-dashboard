@@ -25,10 +25,15 @@ class Env:
     uefa_email: str | None
     uefa_password: str | None
     web_crypto_key: str | None
-    # Comma-separated FBref/Understat league names for the domestic xG source.
+    # Comma-separated Understat league names for the (fallback) domestic source.
     source_leagues: str
     fbref_season: str | None
     skip_sources: bool
+    # "sofascore" (all competitions, default) | "understat" (domestic only)
+    recent_form_source: str
+    recent_form_lookback: int
+    # only fetch per-match form for players at/above this price (trims cheap fodder)
+    recent_form_min_price: float
 
     @classmethod
     def load(cls) -> Env:
@@ -52,4 +57,7 @@ class Env:
             ),
             fbref_season=env("FBREF_SEASON"),
             skip_sources=(env("SKIP_SOURCES") or "").lower() in ("1", "true", "yes"),
+            recent_form_source=(env("RECENT_FORM_SOURCE", "sofascore") or "sofascore").lower(),
+            recent_form_lookback=int(env("RECENT_FORM_LOOKBACK", "5") or 5),
+            recent_form_min_price=float(env("RECENT_FORM_MIN_PRICE", "4.5") or 4.5),
         )

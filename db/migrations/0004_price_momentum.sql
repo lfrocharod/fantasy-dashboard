@@ -1,0 +1,1 @@
+ALTER TABLE "players" ADD COLUMN "price_momentum" real DEFAULT 0 NOT NULL;

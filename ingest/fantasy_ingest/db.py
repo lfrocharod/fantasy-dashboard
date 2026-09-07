@@ -13,6 +13,7 @@ from .types import (
     Fixture,
     LeagueEntry,
     Player,
+    PlayerForm,
     PlayerStat,
     Projection,
     SquadPick,
@@ -26,17 +27,27 @@ class DB:
         self.url = url.replace("postgres://", "postgresql://", 1)
         self._conn: psycopg.Connection | None = None
 
+    def _fresh(self) -> psycopg.Connection:
+        return psycopg.connect(
+            self.url, autocommit=True, connect_timeout=15,
+            keepalives=1, keepalives_idle=30,
+        )
+
     def _connect(self) -> psycopg.Connection:
-        if self._conn is None or self._conn.closed:
-            # connect_timeout stops a hang when Neon is resuming from idle;
-            # autocommit keeps the ~2k per-run upserts simple and cheap.
-            self._conn = psycopg.connect(
-                self.url,
-                autocommit=True,
-                connect_timeout=15,
-                keepalives=1,
-                keepalives_idle=30,
-            )
+        # A long scrape between DB calls can silently drop the Neon socket, and
+        # psycopg doesn't always mark it .closed — probe cheaply and reconnect.
+        if self._conn is not None and not self._conn.closed:
+            try:
+                self._conn.execute("select 1")
+                return self._conn
+            except psycopg.Error:
+                try:
+                    self._conn.close()
+                except psycopg.Error:
+                    pass
+                self._conn = None
+        if self._conn is None:
+            self._conn = self._fresh()
         return self._conn
 
     @contextmanager
@@ -49,15 +60,22 @@ class DB:
         instead of N. `atomic_delete` runs a DELETE + the inserts in one txn."""
         if not rows and atomic_delete is None:
             return
-        conn = self._connect()
-        if atomic_delete is not None:
-            with conn.transaction(), conn.cursor() as cur:
-                cur.execute(atomic_delete, delete_args)
-                if rows:
+
+        def _do(conn: psycopg.Connection) -> None:
+            if atomic_delete is not None:
+                with conn.transaction(), conn.cursor() as cur:
+                    cur.execute(atomic_delete, delete_args)
+                    if rows:
+                        cur.executemany(sql, rows)
+            else:
+                with conn.cursor() as cur:
                     cur.executemany(sql, rows)
-        else:
-            with conn.cursor() as cur:
-                cur.executemany(sql, rows)
+
+        try:
+            _do(self._connect())
+        except psycopg.OperationalError:
+            self._conn = None
+            _do(self._connect())
 
     def close(self) -> None:
         if self._conn is not None and not self._conn.closed:
@@ -99,25 +117,42 @@ class DB:
         self._many(
             """insert into players
                (uefa_player_id, name, display_name, team_id, position, price,
-                uefa_total_points, uefa_form, selected_pct, status_code, status_detail,
-                fbref_id, understat_id, updated_at)
-               values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+                uefa_total_points, uefa_form, selected_pct, price_momentum, status_code,
+                status_detail, set_piece, fbref_id, understat_id, updated_at)
+               values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
                on conflict (uefa_player_id) do update set
                  name=excluded.name, display_name=excluded.display_name,
                  team_id=excluded.team_id, position=excluded.position,
                  price=excluded.price, uefa_total_points=excluded.uefa_total_points,
                  uefa_form=excluded.uefa_form, selected_pct=excluded.selected_pct,
+                 price_momentum=excluded.price_momentum,
                  status_code=excluded.status_code, status_detail=excluded.status_detail,
+                 set_piece=excluded.set_piece,
                  fbref_id=coalesce(excluded.fbref_id, players.fbref_id),
                  understat_id=coalesce(excluded.understat_id, players.understat_id),
                  updated_at=now()""",
             [
                 (p.uefa_player_id, p.name, p.name, p.team_id, p.position, p.price,
-                 p.uefa_total_points, p.uefa_form, p.selected_pct, p.status_code,
-                 p.status_detail, p.fbref_id, p.understat_id)
+                 p.uefa_total_points, p.uefa_form, p.selected_pct, p.price_momentum,
+                 p.status_code, p.status_detail, p.set_piece, p.fbref_id, p.understat_id)
                 for p in players
             ],
         )
+
+    def load_set_piece_overrides(self) -> dict[int, dict]:
+        """player_id -> {pen_rank, fk_rank, ck_rank, note} from the hand-edited
+        override table (wins over the computed guess)."""
+        try:
+            with self._connect().cursor() as cur:
+                cur.execute(
+                    "select player_id, pen_rank, fk_rank, ck_rank, note from set_piece_roles"
+                )
+                return {
+                    r[0]: {"pen_rank": r[1], "fk_rank": r[2], "ck_rank": r[3], "note": r[4]}
+                    for r in cur.fetchall()
+                }
+        except psycopg.Error:
+            return {}
 
     def set_player_external_ids(self, mapping: dict[int, tuple[str | None, str | None]]) -> None:
         self._many(
@@ -141,6 +176,50 @@ class DB:
                 for s in stats
             ],
         )
+
+    def replace_player_form(self, rows: list[PlayerForm]) -> None:
+        cols = (
+            "player_id, source, source_team, team_ok, role, role_note, recent_matches, "
+            "recent_starts, recent_minutes, recent_goals, recent_assists, recent_npxg, "
+            "recent_xa, recent_shots, season_minutes, season_npxg90, season_xa90, "
+            "start_prob, hot_score, avg_rating, matches_14d, comps"
+        )
+        upd = ", ".join(f"{c}=excluded.{c}" for c in cols.split(", ") if c != "player_id")
+        self._many(
+            f"""insert into player_form ({cols}, updated_at)
+                values ({",".join(["%s"] * 22)}, now())
+                on conflict (player_id) do update set {upd}, updated_at=now()""",
+            [
+                (f.player_id, f.source, f.source_team, f.team_ok, f.role, f.role_note,
+                 f.recent_matches, f.recent_starts, f.recent_minutes, f.recent_goals,
+                 f.recent_assists, f.recent_npxg, f.recent_xa, f.recent_shots,
+                 f.season_minutes, f.season_npxg90, f.season_xa90, f.start_prob, f.hot_score,
+                 f.avg_rating, f.matches_14d, f.comps)
+                for f in rows
+            ],
+        )
+
+    def load_player_form(self) -> dict[int, PlayerForm]:
+        with self.conn() as c:
+            rows = c.execute(
+                """select player_id, source, source_team, team_ok, role, role_note,
+                          recent_matches, recent_starts, recent_minutes, recent_goals,
+                          recent_assists, recent_npxg, recent_xa, recent_shots,
+                          season_minutes, season_npxg90, season_xa90, start_prob, hot_score,
+                          avg_rating, matches_14d, comps
+                   from player_form"""
+            ).fetchall()
+        return {
+            r[0]: PlayerForm(
+                player_id=r[0], source=r[1], source_team=r[2], team_ok=r[3], role=r[4],
+                role_note=r[5], recent_matches=r[6], recent_starts=r[7], recent_minutes=r[8],
+                recent_goals=r[9], recent_assists=r[10], recent_npxg=r[11], recent_xa=r[12],
+                recent_shots=r[13], season_minutes=r[14], season_npxg90=r[15],
+                season_xa90=r[16], start_prob=r[17], hot_score=r[18], avg_rating=r[19],
+                matches_14d=r[20], comps=r[21],
+            )
+            for r in rows
+        }
 
     def upsert_fixtures(self, fixtures: list[Fixture]) -> None:
         self._many(

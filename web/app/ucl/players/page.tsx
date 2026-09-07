@@ -1,12 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { PosBadge, StatusDot } from "@/components/ui";
+import { Legend, PosBadge, StatusDot } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import { POSITIONS, type Position } from "@/lib/ucl/formation";
 import type { PlayerRow } from "@/lib/ucl/queries";
 
-type SortKey = "xpts" | "value" | "price" | "selectedPct" | "uefaForm";
+type SortKey = "xpts" | "value" | "price" | "selectedPct" | "differential" | "hotScore";
+
+function sortVal(p: PlayerRow, k: SortKey): number {
+  if (k === "differential")
+    return (p.xpts ?? 0) / Math.max(3, p.selectedPct ?? 100);
+  if (k === "hotScore") return p.hotScore ?? 0;
+  return Number(p[k as keyof PlayerRow] ?? 0);
+}
 
 export default function PlayersPage() {
   const [players, setPlayers] = useState<PlayerRow[]>([]);
@@ -49,7 +56,8 @@ export default function PlayersPage() {
 
   const rows = useMemo(() => {
     const list = hideOwned ? players.filter((p) => !owned.has(p.playerId)) : players;
-    return [...list].sort((a, b) => (Number(b[sort] ?? 0) - Number(a[sort] ?? 0)));
+    const asc = sort === "price" || sort === "selectedPct";
+    return [...list].sort((a, b) => (asc ? 1 : -1) * (sortVal(b, sort) - sortVal(a, sort)));
   }, [players, owned, hideOwned, sort]);
 
   return (
@@ -79,9 +87,10 @@ export default function PlayersPage() {
           <select className="input" value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
             <option value="xpts">xPts</option>
             <option value="value">Value (xPts/€)</option>
+            <option value="differential">Differential (xPts / owned%)</option>
+            <option value="hotScore">Hot form</option>
             <option value="price">Price</option>
             <option value="selectedPct">Ownership</option>
-            <option value="uefaForm">UEFA form</option>
           </select>
         </label>
         <label className="flex items-center gap-2 text-sm">
@@ -93,46 +102,96 @@ export default function PlayersPage() {
         </span>
       </div>
 
-      <div className="card overflow-x-auto">
-        <table className="grid">
+      <div className="card table-wrap">
+        <table className="dtable">
           <thead>
             <tr>
               <th>Pos</th>
               <th>Player</th>
-              <th>Team</th>
+              <th className="hide-sm">Team</th>
               <th className="num">Price</th>
-              <th className="num">Own%</th>
-              <th className="num">Form</th>
-              <th className="num">P(start)</th>
+              <th className="num hide-sm">Own%</th>
+              <th className="num hide-sm">L5 G+A</th>
+              <th className="num hide-sm">Rtg</th>
+              <th className="num">Start%</th>
               <th className="num">xPts</th>
-              <th className="num">xPts(C)</th>
+              <th className="num hide-sm">xPts(C)</th>
               <th className="num">Value</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((p) => (
-              <tr key={p.playerId}>
-                <td>
-                  <PosBadge position={p.position} />
-                </td>
-                <td>
-                  {p.name} <StatusDot code={p.statusCode} detail={p.statusDetail} />
-                </td>
-                <td>{p.teamName}</td>
-                <td className="num">{fmt(p.price)}</td>
-                <td className="num">{fmt(p.selectedPct, 0)}</td>
-                <td className="num">{fmt(p.uefaForm)}</td>
-                <td className="num">{p.pStart != null ? `${Math.round(p.pStart * 100)}%` : "–"}</td>
-                <td className="num font-semibold">{fmt(p.xpts)}</td>
-                <td className="num">{fmt(p.xptsCaptain)}</td>
-                <td className="num">{fmt(p.value, 2)}</td>
-                <td>{owned.has(p.playerId) ? <span className="text-[var(--muted)]">owned</span> : ""}</td>
-              </tr>
-            ))}
+            {rows.map((p) => {
+              const sp = p.startProb ?? p.pStart ?? null;
+              const lev = p.role && p.role !== p.position && ["FWD", "MID"].includes(p.role);
+              const l4 =
+                p.recentMatches != null && p.recentMatches > 0
+                  ? (p.recentGoals ?? 0) + (p.recentAssists ?? 0)
+                  : null;
+              return (
+                  <tr key={p.playerId} style={p.teamOk === false ? { opacity: 0.4 } : undefined}>
+                    <td>
+                      <PosBadge position={p.position} />
+                      {lev && (
+                        <span
+                          className="ml-1 text-[11px] font-semibold text-[var(--warn)]"
+                          title={p.roleNote ?? ""}
+                        >
+                          →{p.role}
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      {p.name} <StatusDot code={p.statusCode} detail={p.statusDetail} />
+                      {p.teamOk === false && (
+                        <span className="ml-1 text-[10px] text-[var(--bad)]" title={p.roleNote ?? ""}>
+                          transferred?
+                        </span>
+                      )}
+                      {(p.hotScore ?? 0) >= 0.9 && (
+                        <span className="ml-1" title={`hot form: ${fmt(p.hotScore, 2)} G+A per 90`}>🔥</span>
+                      )}
+                      {p.setPiece && (
+                        <span
+                          className="ml-1 rounded border border-[var(--border)] px-1 text-[10px] font-semibold text-[var(--accent)]"
+                          title="set-piece duty (penalties / free-kicks / corners)"
+                        >
+                          {p.setPiece.replace("PK2", "PK²")}
+                        </span>
+                      )}
+                      {p.priceMomentum >= 0.25 && (
+                        <span className="ml-1 text-[var(--good)]" title="net transfers in — price likely rising">📈</span>
+                      )}
+                      {p.priceMomentum <= -0.25 && (
+                        <span className="ml-1 text-[var(--bad)]" title="net transfers out — price likely falling">📉</span>
+                      )}
+                      {(p.selectedPct ?? 100) < 8 && (p.xpts ?? 0) >= 4.5 && !owned.has(p.playerId) && (
+                        <span
+                          className="ml-1 rounded bg-[var(--good)] px-1 text-[10px] font-semibold text-white"
+                          title="low ownership, high projection — a differential to gain rank"
+                        >
+                          DIFF
+                        </span>
+                      )}
+                    </td>
+                    <td className="hide-sm">{p.teamName}</td>
+                    <td className="num">{fmt(p.price)}</td>
+                    <td className="num hide-sm">{fmt(p.selectedPct, 0)}</td>
+                    <td className="num hide-sm">
+                      {l4 != null ? `${fmt(l4, 0)} / ${p.recentMatches}` : "–"}
+                    </td>
+                    <td className="num hide-sm">{p.avgRating ? fmt(p.avgRating, 1) : "–"}</td>
+                    <td className="num">{sp != null ? `${Math.round(sp * 100)}%` : "–"}</td>
+                    <td className="num font-semibold">{fmt(p.xpts)}</td>
+                    <td className="num hide-sm">{fmt(p.xptsCaptain)}</td>
+                    <td className="num">{fmt(p.value, 2)}</td>
+                    <td>{owned.has(p.playerId) ? <span className="text-[var(--muted)]">owned</span> : ""}</td>
+                  </tr>
+              );
+            })}
             {rows.length === 0 && !loading && (
               <tr>
-                <td colSpan={11} className="text-center text-[var(--muted)]">
+                <td colSpan={12} className="text-center text-[var(--muted)]">
                   No players — has the ingestion job run and produced projections?
                 </td>
               </tr>
@@ -140,6 +199,22 @@ export default function PlayersPage() {
           </tbody>
         </table>
       </div>
+
+      <Legend
+        items={[
+          ["L5 G+A", "goals + assists over the last 5 matches (all competitions) / matches counted"],
+          ["Rtg", "average match rating over those games (Sofascore, ~10 scale)"],
+          ["Start%", "estimated chance of starting"],
+          ["xPts / xPts(C)", "expected points, and if captained"],
+          ["Value", "xPts per €m"],
+          ["DIFF", "low ownership + high projection — a rank-gaining differential"],
+          ["📈 / 📉", "price likely to rise / fall from transfer traffic"],
+          ["🔥", "in hot scoring form"],
+          ["PK / PK² / FK / CK", "penalty / backup-penalty / free-kick / corner duty — extra points upside"],
+          ["→FWD", "playing further forward than UEFA lists — leverage"],
+          ["transferred?", "now at another club — excluded from the optimizer"],
+        ]}
+      />
     </div>
   );
 }

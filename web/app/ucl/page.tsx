@@ -1,5 +1,5 @@
-import { EmptyState, PosBadge, StatCard, StatusDot, Section } from "@/components/ui";
-import { fmt, money, timeUntil } from "@/lib/format";
+import { EmptyState, Legend, PosBadge, StatCard, StatusDot, Section } from "@/components/ui";
+import { fmt, money, timeUntil, dateTime } from "@/lib/format";
 import {
   getCurrentMatchday,
   getFixtures,
@@ -56,21 +56,26 @@ export default async function UclOverview() {
       </div>
 
       <Section title="Your squad">
-        <div className="card overflow-x-auto">
+        <div className="card table-wrap">
           <SquadTable rows={squad} captainId={captainPick?.playerId} />
         </div>
-        <p className="text-xs text-[var(--muted)]">
-          xPts is this model’s projection for the matchday. Captain shown is the raw max —
-          see the Optimizer tab for the formation-constrained best XI and transfer ideas.
-        </p>
+        <Legend
+          items={[
+            ["xPts", "expected points this matchday (our model)"],
+            ["xMin", "expected minutes played"],
+            ["P(start)", "chance of starting"],
+            ["Form", "UEFA points per game this season"],
+            ["🅲", "recommended captain (raw max — see Optimizer for the constrained pick)"],
+          ]}
+        />
       </Section>
 
       <Section title={`Matchday ${md} fixtures`}>
         {fixtures.length === 0 ? (
           <EmptyState title="No fixtures loaded for this matchday" />
         ) : (
-          <div className="card overflow-x-auto">
-            <table className="grid">
+          <div className="card table-wrap">
+            <table className="dtable">
               <thead>
                 <tr>
                   <th>Kickoff</th>
@@ -84,7 +89,7 @@ export default async function UclOverview() {
               <tbody>
                 {fixtures.map((f) => (
                   <tr key={String(f.matchId)}>
-                    <td>{f.kickoff ? new Date(f.kickoff).toLocaleString() : "TBD"}</td>
+                    <td>{f.kickoff ? dateTime(f.kickoff) : "TBD"}</td>
                     <td>{f.homeTeam}</td>
                     <td>{f.awayTeam}</td>
                     <td className="num">{fmt(f.homeXg)}</td>
@@ -96,6 +101,7 @@ export default async function UclOverview() {
             </table>
           </div>
         )}
+        <Legend items={[["xG (H/A)", "expected goals for the home / away team (fixture difficulty)"]]} />
       </Section>
     </div>
   );
@@ -108,7 +114,7 @@ function SquadTable({ rows, captainId }: { rows: SquadRow[]; captainId?: number 
       .sort((a, b) => (b.xpts ?? 0) - (a.xpts ?? 0)),
   );
   return (
-    <table className="grid">
+    <table className="dtable">
       <thead>
         <tr>
           <th>Pos</th>

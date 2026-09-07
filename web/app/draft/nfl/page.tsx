@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Legend } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import {
   POS_FILTERS,
@@ -165,18 +166,18 @@ export default function NflDraftPage() {
             </label>
           </div>
 
-          <div className="card overflow-x-auto">
-            <table className="grid">
+          <div className="card table-wrap">
+            <table className="dtable">
               <thead>
                 <tr>
                   <th>Pos</th>
                   <th>Player</th>
-                  <th>Bye</th>
+                  <th className="hide-sm">Bye</th>
                   <th className="num">Proj</th>
                   <th className="num">VBD</th>
-                  <th className="num">ADP</th>
+                  <th className="num hide-sm">ADP</th>
                   <th className="num">ECR</th>
-                  <th>±</th>
+                  <th className="hide-sm">±</th>
                   <th></th>
                 </tr>
               </thead>
@@ -213,12 +214,12 @@ export default function NflDraftPage() {
                             <span className="ml-1 text-xs text-[var(--muted)]">{p.ecrPosRank}</span>
                           )}
                         </td>
-                        <td>{p.byeWeek ?? "–"}</td>
+                        <td className="hide-sm">{p.byeWeek ?? "–"}</td>
                         <td className="num">{fmt(p.projPoints, 0)}</td>
                         <td className="num font-semibold">{fmt(p.vbd, 0)}</td>
-                        <td className="num">{p.adp ? fmt(p.adp, 1) : "–"}</td>
+                        <td className="num hide-sm">{p.adp ? fmt(p.adp, 1) : "–"}</td>
                         <td className="num">{p.ecrRank ?? "–"}</td>
-                        <td title={`expert disagreement (std ${fmt(p.ecrStd, 1)})`}>
+                        <td className="hide-sm" title={`expert disagreement (std ${fmt(p.ecrStd, 1)})`}>
                           {p.ecrStd >= 12 ? "⚠︎" : p.ecrStd >= 7 ? "~" : ""}
                         </td>
                         <td className="whitespace-nowrap">
@@ -236,6 +237,17 @@ export default function NflDraftPage() {
               </tbody>
             </table>
           </div>
+
+          <Legend
+            items={[
+              ["Proj", "projected fantasy points for the full season"],
+              ["VBD", "value over replacement — projected points above a waiver-level starter at that position"],
+              ["ADP", "average draft position (ESPN)"],
+              ["ECR", "expert consensus rank (FantasyPros)"],
+              ["±", "how much the experts disagree — ⚠︎ high, ~ some"],
+              ["Tier", "FantasyPros tier — a break marks a real talent drop-off"],
+            ]}
+          />
         </div>
 
         {/* ---- side panel ---- */}
@@ -265,7 +277,7 @@ export default function NflDraftPage() {
                 {Object.entries(needs).map(([s, n]) => `${s}×${n}`).join("  ") || "full"}
               </span>
             </div>
-            <table className="grid">
+            <table className="dtable">
               <tbody>
                 {filled.map((row) =>
                   Array.from({ length: row.need }).map((_, i) => {

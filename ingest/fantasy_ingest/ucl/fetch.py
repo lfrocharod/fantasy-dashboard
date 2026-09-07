@@ -8,6 +8,7 @@ exact keys are only visible once the session cookie is in place.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -107,6 +108,9 @@ def parse_teams(feed: Any) -> dict[int, Team]:
 def parse_players(feed: Any) -> tuple[list[Player], dict[int, Team]]:
     players: list[Player] = []
     teams: dict[int, Team] = {}
+    # per player: (penalty attempts signal, goals) — used after the loop to rank
+    # each club's likely first-choice penalty taker.
+    pen_signal: dict[int, tuple[float, int]] = {}
     for r in _rows(feed):
         pid = _i(_pick(r, "id", "pId", "playerId"))
         if not pid:
@@ -131,22 +135,90 @@ def parse_players(feed: Any) -> tuple[list[Player], dict[int, Team]]:
         else:
             status_code, detail = 0, ""
 
+        price = _f(_pick(r, "value", "price"))
+        last_pts = _i(_pick(r, "totPts", "totalPoints"))
+        last_mins = _f(_pick(r, "minsPlyd", "minutesPlayed"))
+        t_in = _f(_pick(r, "mTransferIn", "transferIn"))
+        t_out = _f(_pick(r, "mTransferOut", "transferOut"))
+        net = t_in - t_out
+        momentum = round(math.tanh(net / 8000.0), 3)
+        pos = _SKILL_TO_POS.get(_i(_pick(r, "skill")), "MID")
+        # `uefa_form` carries a reference *points-per-90*. UEFA's `avgPlayerPts`
+        # is points-per-*appearance* off a tiny (often pre-season) sample, so it
+        # runs hot — shrink every estimate toward the price-based prior and cap
+        # it, or cheap defenders with one good cameo dominate the projections.
+        cur_avg = _f(_pick(r, "avgPlayerPts", "pForm"))
+        prior = _price_prior(price, pos)
+        if last_mins >= 360 and last_pts > 0:
+            raw = last_pts / (last_mins / 90.0)
+            ppg = 0.70 * raw + 0.30 * prior
+        elif last_mins >= 90 and last_pts > 0:
+            raw = last_pts / (last_mins / 90.0)
+            ppg = 0.45 * raw + 0.55 * prior
+        elif cur_avg > 0:
+            ppg = 0.35 * cur_avg + 0.65 * prior
+        else:
+            ppg = prior
+        ppg = min(ppg, prior * 1.8 + 1.0)
+
+        # Penalty-taker signal from last season: missing a penalty is near-proof
+        # you were on them; scored pens (`pS`) too where the feed carries it.
+        pens_missed = _f(_pick(r, "pM", "penaltyMiss"))
+        pens_scored = _f(_pick(r, "pS", "penaltyScored"))
+        goals = _i(_pick(r, "gS", "goalsScored"))
+        pen_signal[pid] = (pens_missed * 2.0 + pens_scored * 2.0, goals)
+
         players.append(
             Player(
                 uefa_player_id=pid,
                 name=str(_pick(r, "latinName", "pFName", "pDName", "pName", default=f"Player {pid}")),
                 team_id=tid,
-                position=_SKILL_TO_POS.get(_i(_pick(r, "skill")), "MID"),
-                price=_f(_pick(r, "value", "price")),
-                uefa_total_points=_i(_pick(r, "totPts", "totalPoints")),
-                # No "form" field in the feed; season points-per-match is the closest.
-                uefa_form=_f(_pick(r, "avgPlayerPts", "lastGdPoints")),
+                position=pos,
+                price=price,
+                uefa_total_points=last_pts,
+                uefa_form=round(ppg, 2),
                 selected_pct=_f(_pick(r, "selPer", "selectedBy")),
+                price_momentum=momentum,
                 status_code=status_code,
                 status_detail=detail,
             )
         )
+
+    _mark_penalty_takers(players, pen_signal)
     return players, teams
+
+
+def _mark_penalty_takers(players: list[Player], pen_signal: dict[int, tuple[float, int]]) -> None:
+    """Best-guess first-choice penalty taker per club: whoever has direct penalty
+    evidence (missed/scored one), breaking ties on goals scored. Only a hint —
+    the `set_piece_roles` override table is the source of truth."""
+    by_club: dict[int, list[Player]] = {}
+    for p in players:
+        by_club.setdefault(p.team_id, []).append(p)
+    for squad in by_club.values():
+        ranked = sorted(
+            squad,
+            key=lambda p: (pen_signal.get(p.uefa_player_id, (0.0, 0))[0],
+                           pen_signal.get(p.uefa_player_id, (0.0, 0))[1]),
+            reverse=True,
+        )
+        if not ranked:
+            continue
+        top = ranked[0]
+        sig, _g = pen_signal.get(top.uefa_player_id, (0.0, 0))
+        if sig > 0:
+            top.set_piece = "PK"
+            if len(ranked) > 1 and pen_signal.get(ranked[1].uefa_player_id, (0.0, 0))[0] > 0:
+                ranked[1].set_piece = "PK2"
+
+
+def _price_prior(price: float, pos: Position) -> float:
+    """Rough expected UCL-fantasy points per 90 for a player with no recent
+    sample, from their price (€4m floor, €13m ceiling)."""
+    base = max(0.0, price - 4.0)
+    slope = {"GK": 0.35, "DEF": 0.45, "MID": 0.60, "FWD": 0.65}[pos]
+    floor = {"GK": 2.6, "DEF": 2.4, "MID": 2.2, "FWD": 2.0}[pos]
+    return floor + base * slope
 
 
 @dataclass(slots=True)

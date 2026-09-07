@@ -56,7 +56,8 @@ def test_parse_players():
     assert {p.uefa_player_id for p in players} == {250103758, 250088320, 9}
     hal = next(p for p in players if p.uefa_player_id == 250103758)
     assert hal.position == "FWD" and hal.price == 11.0 and hal.status_code == 0
-    assert hal.uefa_form == 6.1
+    # avgPlayerPts 6.1 regressed toward the FWD/€11m price prior (6.55): 0.35/0.65 blend
+    assert hal.uefa_form == 6.39
     gk = next(p for p in players if p.uefa_player_id == 250088320)
     assert gk.position == "GK" and gk.status_code == 1  # pStatus "1" -> doubt
     inj = next(p for p in players if p.uefa_player_id == 9)

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { dateTime } from "@/lib/format";
 
 interface Cfg {
   leagueId: string;
@@ -84,7 +85,7 @@ export default function SettingsPage() {
           >
             {cfg?.authState ?? "…"}
           </b>
-          {cfg?.tokenSavedAt && <> · token saved {new Date(cfg.tokenSavedAt).toLocaleString()}</>}
+          {cfg?.tokenSavedAt && <> · token saved {dateTime(cfg.tokenSavedAt)}</>}
         </div>
         <p className="mt-2 text-[var(--muted)]">
           Players, prices, fixtures and projections load with no login. Your squad and

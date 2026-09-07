@@ -1,4 +1,4 @@
-import { EmptyState, StatCard, Section } from "@/components/ui";
+import { EmptyState, Legend, StatCard, Section } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import { getCurrentMatchday, getLeagueHistory, getLeagueTable } from "@/lib/ucl/queries";
 
@@ -22,11 +22,19 @@ export default async function LeaguePage() {
   const md = await getCurrentMatchday();
   const [table, history] = await Promise.all([getLeagueTable(md), getLeagueHistory()]);
 
-  if (!table.leagueId || table.rows.length === 0) {
+  if (!table.leagueId) {
     return (
       <EmptyState
-        title="No mini-league loaded"
-        hint="Set your league ID in Settings and connect your UEFA account, then run ingestion."
+        title="No mini-league configured"
+        hint="Set your league code / ID in Settings and connect your UEFA account, then run ingestion."
+      />
+    );
+  }
+  if (table.rows.length === 0) {
+    return (
+      <EmptyState
+        title={`Mini-league ${table.leagueId} — no standings yet`}
+        hint="UEFA only publishes league standings once the first matchday has been played. This fills in automatically after MD1."
       />
     );
   }
@@ -85,8 +93,8 @@ export default async function LeaguePage() {
       </div>
 
       <Section title={`Standings — after matchday ${md}`}>
-        <div className="card overflow-x-auto">
-          <table className="grid">
+        <div className="card table-wrap">
+          <table className="dtable">
             <thead>
               <tr>
                 <th>#</th>
@@ -122,8 +130,8 @@ export default async function LeaguePage() {
       </Section>
 
       <Section title="Power ranking (last 3 matchdays)">
-        <div className="card overflow-x-auto">
-          <table className="grid">
+        <div className="card table-wrap">
+          <table className="dtable">
             <thead>
               <tr>
                 <th>#</th>
@@ -155,6 +163,15 @@ export default async function LeaguePage() {
             </tbody>
           </table>
         </div>
+        <Legend
+          items={[
+            ["MD pts", "points scored in the latest matchday"],
+            ["Move", "rank change vs the previous matchday"],
+            ["Last 3", "total points over the last three matchdays"],
+            ["Avg/MD", "average points per matchday"],
+            ["σ", "standard deviation of matchday points — lower = more consistent"],
+          ]}
+        />
         <p className="text-xs text-[var(--muted)]">
           Power ranking sorts by recent scoring, not cumulative total — it shows who’s hot
           regardless of the table.
