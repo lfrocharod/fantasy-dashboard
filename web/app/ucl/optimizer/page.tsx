@@ -111,6 +111,22 @@ interface MatchdayPlan {
   benchForMd: PlanRow[];
   targets: PlanRow[];
 }
+interface TimingRow {
+  playerId: number;
+  name: string;
+  position: Position;
+  opp: string | null;
+  home: boolean | null;
+  fdr: number | null;
+  mdDay: number | null;
+  xpts: number;
+  pStart: number | null;
+}
+interface MatchdayTiming {
+  days: number;
+  players: TimingRow[];
+  liveOptions: string[];
+}
 interface OptOutput {
   generatedAt: string;
   matchday: number;
@@ -124,6 +140,7 @@ interface OptOutput {
   captains?: CaptainAnalysis;
   chips?: ChipEval;
   matchdayPlan?: MatchdayPlan[];
+  matchdayTiming?: MatchdayTiming;
   preSeason?: boolean;
   freeTransfers?: number;
   idealSquad?: IdealSquad;
@@ -297,7 +314,7 @@ export default async function OptimizerPage() {
         items={[
           ["xPts", "expected points"],
           ["MD", "matchday"],
-          ["Opponent colour", "fixture difficulty 1 (green, easy) … 5 (red, hard) for this matchday"],
+          ["Opponent colour", "next-matchday fixture difficulty (green easy … red hard). The squad is picked to win the upcoming matchday first, then the near-term run — a hard one-off fixture can still be outweighed by a great underlying player."],
           ["EV (2×)", "expected captain points = 2 × projected points"],
           ["Ceiling / Floor", "optimistic (p85) and pessimistic (p15) captain outcomes"],
           ["Bench Boost / Triple Capt / Limitless / Wildcard", "extra points if that chip is played that matchday (estimated)"],
@@ -412,6 +429,53 @@ function PreSeasonSquad({ data }: { data: OptOutput }) {
 function AnalysisSections({ data }: { data: OptOutput }) {
   return (
     <>
+      {data.matchdayTiming && data.matchdayTiming.days > 1 && (
+        <Section title="Matchday timing — bench decisions you can defer">
+          <p className="text-sm text-[var(--muted)]">
+            This matchday runs over {data.matchdayTiming.days} days. You can still change your bench
+            <em> after</em> the early games kick off, so lock in your day-1/2 nailed starters and keep
+            high-upside day-{data.matchdayTiming.days} players on the bench as live options — promote
+            them only if you need the points after seeing the early results.
+            {data.matchdayTiming.liveOptions.length > 0 && (
+              <>
+                {" "}
+                Live options this week: <b>{data.matchdayTiming.liveOptions.join(", ")}</b>.
+              </>
+            )}
+          </p>
+          <div className="card table-wrap">
+            <table className="dtable">
+              <thead>
+                <tr>
+                  <th className="num">Day</th>
+                  <th>Pos</th>
+                  <th>Player</th>
+                  <th>Opponent</th>
+                  <th className="num">xPts</th>
+                  <th className="num hide-sm">Start%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.matchdayTiming.players.map((p) => (
+                  <tr key={p.playerId}>
+                    <td className="num">{p.mdDay ?? "–"}</td>
+                    <td>
+                      <PosBadge position={p.position} />
+                    </td>
+                    <td className="font-medium">{p.name}</td>
+                    <OppCell opp={p.opp} home={p.home} fdr={p.fdr} />
+                    <td className="num font-semibold">{fmt(p.xpts)}</td>
+                    <td className="num hide-sm">
+                      {p.pStart != null ? `${Math.round(p.pStart * 100)}%` : "–"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
+
       {data.captains && data.captains.candidates.length > 0 && (
         <Section title="Captain analysis (this matchday)">
           <p className="text-sm text-[var(--muted)]">

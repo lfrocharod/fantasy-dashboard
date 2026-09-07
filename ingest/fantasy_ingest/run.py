@@ -390,19 +390,24 @@ def _fdr(opp, is_home: bool) -> int:
     return max(1, min(5, round(3 + 2.2 * raw)))
 
 
-def _fixture_context(db, teams, matchday: int) -> dict[int, tuple[str, bool, int]]:
-    out: dict[int, tuple[str, bool, int]] = {}
+def _fixture_context(db, teams, matchday: int) -> dict[int, tuple[str, bool, int, int]]:
+    """club_id -> (opponent name, is_home, fdr 1-5, day-of-matchday 1..N).
+
+    UCL matchdays run over ~3 calendar days; the day index matters because you
+    can still make bench changes after the early games kick off."""
+    out: dict[int, tuple[str, bool, int, int]] = {}
     try:
-        fixtures = db.load_fixtures(matchday)
+        fixtures = [f for f in db.load_fixtures(matchday) if f.matchday == matchday]
     except Exception:  # noqa: BLE001
         return out
+    days = sorted({f.kickoff.date() for f in fixtures if f.kickoff})
+    day_of = {d: i + 1 for i, d in enumerate(days)}
     for f in fixtures:
-        if f.matchday != matchday:
-            continue
         h, a = teams.get(f.home_team_id), teams.get(f.away_team_id)
+        d = day_of.get(f.kickoff.date(), 1) if f.kickoff else 1
         if h and a:
-            out[f.home_team_id] = (a.name, True, _fdr(a, True))
-            out[f.away_team_id] = (h.name, False, _fdr(h, False))
+            out[f.home_team_id] = (a.name, True, _fdr(a, True), d)
+            out[f.away_team_id] = (h.name, False, _fdr(h, False), d)
     return out
 
 
@@ -492,10 +497,14 @@ def _optimizer(db, players, teams, proj_by_md, matchday, params, picks_override,
     plan_mds = sorted(md for md in proj_by_md if md >= matchday) or sorted(proj_by_md)
     horizon = max(1, min(int(params.horizon), len(plan_mds)))
     horizon_mds = plan_mds[:horizon]
+    # Weight nearer matchdays more heavily — the squad should be built to win the
+    # *upcoming* fixture first, not an equal-weighted average of the next 8.
+    decay = 0.65
     horizon_xpts: dict[int, float] = {}
-    for md in horizon_mds:
+    for i, md in enumerate(horizon_mds):
+        w = decay ** i
         for pr in proj_by_md.get(md, []):
-            horizon_xpts[pr.player_id] = horizon_xpts.get(pr.player_id, 0.0) + pr.xpts
+            horizon_xpts[pr.player_id] = horizon_xpts.get(pr.player_id, 0.0) + w * pr.xpts
 
     try:
         min_start = float(db.get_settings(["ucl.min_start_prob"]).get("ucl.min_start_prob") or 0.45)
@@ -525,9 +534,9 @@ def _optimizer(db, players, teams, proj_by_md, matchday, params, picks_override,
             p = pmap.get(row.get("playerId"))
             ctx = fx_by_club.get(p.team_id) if p else None
             if ctx:
-                row["opp"], row["home"], row["fdr"] = ctx
+                row["opp"], row["home"], row["fdr"], row["mdDay"] = ctx
             else:
-                row["opp"], row["home"], row["fdr"] = None, None, None
+                row["opp"], row["home"], row["fdr"], row["mdDay"] = None, None, None, None
         return rows
 
     def eligible(pid: int) -> bool:
@@ -615,6 +624,33 @@ def _optimizer(db, players, teams, proj_by_md, matchday, params, picks_override,
         if plan:
             target["matchdayPlan"] = plan
 
+        # ---- matchday timing: CL lets you sub after the early games ----
+        fx0 = _fixture_context(db, teams, matchday)
+        timing = []
+        for pid in sq_ids:
+            op = mk(pid, True)
+            ctx = fx0.get(pmap[pid].team_id) if pid in pmap else None
+            if not op or not ctx:
+                continue
+            fm = form_by_id.get(pid)
+            timing.append({
+                "playerId": pid, "name": op.name, "position": op.position,
+                "opp": ctx[0], "home": ctx[1], "fdr": ctx[2], "mdDay": ctx[3],
+                "xpts": round(op.xpts, 2),
+                "pStart": round(fm.start_prob, 2) if fm else None,
+            })
+        if timing:
+            n_days = max((t["mdDay"] or 1) for t in timing)
+            late = sorted(
+                (t for t in timing if (t["mdDay"] or 1) >= n_days and t["xpts"] > 0),
+                key=lambda t: -t["xpts"],
+            )
+            target["matchdayTiming"] = {
+                "days": n_days,
+                "players": sorted(timing, key=lambda t: (t["mdDay"] or 9, -t["xpts"])),
+                "liveOptions": [t["name"] for t in late[:4]],
+            }
+
     if len(squad) < 15 or pre_season:
         if not ideal:
             return None
@@ -674,6 +710,7 @@ def _plan_row(o, owned: bool, fx_md: dict, club_of: dict) -> dict:
         "opp": ctx[0] if ctx else None,
         "home": ctx[1] if ctx else None,
         "fdr": ctx[2] if ctx else None,
+        "mdDay": ctx[3] if ctx else None,
     }
 
 

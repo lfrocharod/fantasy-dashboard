@@ -223,11 +223,14 @@ def build_squad(
     *,
     budget: float = BUDGET,
     max_per_club: int = MAX_PER_CLUB,
+    max_per_club_pos: int = 2,
     quota: dict[Position, int] | None = None,
     lock_ids: set[int] | None = None,
 ) -> list[OptPlayer]:
     """Pick the best legal 15 from scratch, maximising summed horizon xPts under
-    the €budget, 2/5/5/3 and max-per-club rules. `lock_ids` forces players in."""
+    the €budget, 2/5/5/3 and max-per-club rules. `max_per_club_pos` caps how many
+    players you can take from one club in the *same position* (3 Barça mids all
+    blank on the same bad night — diversify). `lock_ids` forces players in."""
     quota = quota or SQUAD_QUOTA
     lock_ids = lock_ids or set()
     prob = pulp.LpProblem("build_squad", pulp.LpMaximize)
@@ -241,6 +244,10 @@ def build_squad(
     clubs = {p.club_id for p in pool}
     for cid in clubs:
         prob += pulp.lpSum(x[p.player_id] for p in pool if p.club_id == cid) <= max_per_club
+        for pos in ("GK", "DEF", "MID", "FWD"):
+            same = [x[p.player_id] for p in pool if p.club_id == cid and p.position == pos]
+            if len(same) > max_per_club_pos:
+                prob += pulp.lpSum(same) <= max_per_club_pos
     for pid in lock_ids:
         if pid in x:
             prob += x[pid] == 1

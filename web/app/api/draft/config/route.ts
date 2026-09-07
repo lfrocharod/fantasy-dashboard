@@ -13,6 +13,7 @@ export async function GET(req: Request) {
   const s = await getSettings([
     p + "league_id", p + "my_team_id", p + "my_slot", p + "teams",
     p + "scoring", p + "year", p + "espn_s2", p + "swid", p + "roster",
+    p + "entry_id", p + "pl_profile",
   ]);
   return NextResponse.json({
     sport,
@@ -23,7 +24,11 @@ export async function GET(req: Request) {
     scoring: s[p + "scoring"] ?? "ppr",
     year: s[p + "year"] ?? "2026",
     roster: s[p + "roster"] ?? "",
-    hasCookies: Boolean(s[p + "espn_s2"] && s[p + "swid"]),
+    entryId: s[p + "entry_id"] ?? "",
+    hasCookies:
+      sport === "fpl"
+        ? Boolean(s[p + "pl_profile"])
+        : Boolean(s[p + "espn_s2"] && s[p + "swid"]),
   });
 }
 
@@ -37,6 +42,9 @@ const patch = z.object({
   year: z.coerce.number().int().min(2020).max(2100).optional(),
   espnS2: z.string().min(20).max(4000).optional(),
   swid: z.string().min(8).max(200).optional(),
+  // FPL Draft
+  entryId: z.string().max(32).optional(),
+  plProfile: z.string().min(10).max(8000).optional(),
 });
 
 export async function POST(req: Request) {
@@ -57,6 +65,8 @@ export async function POST(req: Request) {
   if (b.year !== undefined) await set("year", String(b.year));
   if (b.espnS2) await set("espn_s2", encryptSecret(b.espnS2.trim()));
   if (b.swid) await set("swid", encryptSecret(b.swid.trim()));
+  if (b.entryId !== undefined) await set("entry_id", b.entryId.trim());
+  if (b.plProfile) await set("pl_profile", encryptSecret(b.plProfile.trim()));
 
   return NextResponse.json({ ok: true });
 }
