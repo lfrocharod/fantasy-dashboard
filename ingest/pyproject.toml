@@ -10,6 +10,7 @@ dependencies = [
     "python-dateutil>=2.9",
     "rapidfuzz>=3.9",
     "cryptography>=42",
+    "curl_cffi>=0.7",
 ]
 
 [project.optional-dependencies]

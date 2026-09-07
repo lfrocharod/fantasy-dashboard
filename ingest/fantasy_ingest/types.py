@@ -34,8 +34,11 @@ class Player:
     uefa_total_points: int = 0
     uefa_form: float = 0.0
     selected_pct: float = 0.0
+    price_momentum: float = 0.0
     status_code: int = 0  # 0 fit, 1 doubt, 2 out
     status_detail: str = ""
+    # set-piece duty best-guess: "", "PK", "PK,CK", "FK", "CK" …
+    set_piece: str = ""
     fbref_id: str | None = None
     understat_id: str | None = None
 
@@ -91,6 +94,32 @@ class LeagueEntry:
     rank: int
     prev_rank: int = 0
     squad: list[int] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class PlayerForm:
+    player_id: int
+    source: str = "understat"
+    source_team: str = ""
+    team_ok: bool = True
+    role: str = ""
+    role_note: str = ""
+    recent_matches: int = 0
+    recent_starts: int = 0
+    recent_minutes: float = 0.0
+    recent_goals: float = 0.0
+    recent_assists: float = 0.0
+    recent_npxg: float = 0.0
+    recent_xa: float = 0.0
+    recent_shots: float = 0.0
+    season_minutes: float = 0.0
+    season_npxg90: float = 0.0
+    season_xa90: float = 0.0
+    start_prob: float = 0.0
+    hot_score: float = 0.0
+    avg_rating: float = 0.0
+    matches_14d: int = 0
+    comps: str = ""
 
 
 @dataclass(slots=True)

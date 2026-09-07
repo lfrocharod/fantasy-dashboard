@@ -18,6 +18,10 @@ XI_MAX: dict[Position, int] = {"GK": 1, "DEF": 5, "MID": 5, "FWD": 3}
 XI_SIZE = 11
 MAX_PER_CLUB = 3
 
+SQUAD_QUOTA: dict[Position, int] = {"GK": 2, "DEF": 5, "MID": 5, "FWD": 3}
+SQUAD_SIZE = 15
+BUDGET = 100.0
+
 
 @dataclass(slots=True)
 class OptPlayer:
@@ -29,6 +33,13 @@ class OptPlayer:
     price: float
     xpts: float
     owned: bool = False
+    # sum of xpts across the planning horizon (for from-scratch squad building);
+    # falls back to xpts when not set.
+    horizon_xpts: float | None = None
+
+    @property
+    def hx(self) -> float:
+        return self.horizon_xpts if self.horizon_xpts is not None else self.xpts
 
 
 def _as_row(p: OptPlayer, **extra) -> dict:
@@ -207,4 +218,68 @@ def optimise(
     }
 
 
-__all__ = ["OptPlayer", "best_xi", "captain_pick", "optimise", "plan_transfers"]
+def build_squad(
+    pool: list[OptPlayer],
+    *,
+    budget: float = BUDGET,
+    max_per_club: int = MAX_PER_CLUB,
+    quota: dict[Position, int] | None = None,
+    lock_ids: set[int] | None = None,
+) -> list[OptPlayer]:
+    """Pick the best legal 15 from scratch, maximising summed horizon xPts under
+    the €budget, 2/5/5/3 and max-per-club rules. `lock_ids` forces players in."""
+    quota = quota or SQUAD_QUOTA
+    lock_ids = lock_ids or set()
+    prob = pulp.LpProblem("build_squad", pulp.LpMaximize)
+    x = {p.player_id: pulp.LpVariable(f"p_{p.player_id}", cat="Binary") for p in pool}
+
+    prob += pulp.lpSum(p.hx * x[p.player_id] for p in pool)
+    prob += pulp.lpSum(x.values()) == sum(quota.values())
+    prob += pulp.lpSum(p.price * x[p.player_id] for p in pool) <= budget
+    for pos, n in quota.items():
+        prob += pulp.lpSum(x[p.player_id] for p in pool if p.position == pos) == n
+    clubs = {p.club_id for p in pool}
+    for cid in clubs:
+        prob += pulp.lpSum(x[p.player_id] for p in pool if p.club_id == cid) <= max_per_club
+    for pid in lock_ids:
+        if pid in x:
+            prob += x[pid] == 1
+
+    prob.solve(pulp.PULP_CBC_CMD(msg=False))
+    if pulp.LpStatus[prob.status] != "Optimal":
+        return []
+    return [p for p in pool if x[p.player_id].value() and x[p.player_id].value() > 0.5]
+
+
+def suggest_initial_squad(pool: list[OptPlayer], *, matchday: int, horizon: int, budget: float = BUDGET) -> dict:
+    """From-scratch recommendation for building your team before the season /
+    on a wildcard. XI + captain are picked for the given matchday."""
+    squad = build_squad(pool, budget=budget)
+    if len(squad) < SQUAD_SIZE:
+        return {}
+    starters, _bench, formation, xi_xpts = best_xi(squad)
+    cap, vice = captain_pick(starters)
+    cap_bonus = next((p.xpts for p in starters if p.player_id == cap), 0.0)
+    order = ("GK", "DEF", "MID", "FWD")
+    return {
+        "generatedAt": datetime.now(UTC).isoformat(),
+        "matchday": matchday,
+        "horizon": horizon,
+        "formation": formation,
+        "totalCost": round(sum(p.price for p in squad), 1),
+        "budget": budget,
+        "xiXpts": round(xi_xpts + cap_bonus, 2),
+        "horizonXpts": round(sum(p.hx for p in squad), 1),
+        "squad": [
+            _as_row(p, price=round(p.price, 1), horizonXpts=round(p.hx, 1),
+                    isStarter=(p in starters), isCaptain=(p.player_id == cap),
+                    isVice=(p.player_id == vice))
+            for p in sorted(squad, key=lambda p: (order.index(p.position), -p.hx))
+        ],
+    }
+
+
+__all__ = [
+    "OptPlayer", "best_xi", "build_squad", "captain_pick",
+    "optimise", "plan_transfers", "suggest_initial_squad",
+]

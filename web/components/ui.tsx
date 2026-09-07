@@ -56,6 +56,19 @@ export function EmptyState({ title, hint }: { title: string; hint?: ReactNode })
   );
 }
 
+export function Legend({ items }: { items: [string, string][] }) {
+  return (
+    <dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--muted)]">
+      {items.map(([term, meaning]) => (
+        <div key={term} className="flex gap-1">
+          <dt className="font-semibold text-[var(--text)]">{term}</dt>
+          <dd>{meaning}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export function Section({ title, children, right }: { title: string; children: ReactNode; right?: ReactNode }) {
   return (
     <section className="space-y-3">

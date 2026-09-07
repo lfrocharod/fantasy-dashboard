@@ -6,7 +6,11 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { href: "/ucl", label: "Overview" },
   { href: "/ucl/players", label: "Players & FA finder" },
+  { href: "/ucl/lineups", label: "Projected lineups" },
+  { href: "/ucl/teams", label: "Team watch" },
+  { href: "/ucl/fixtures", label: "Fixture ticker" },
   { href: "/ucl/optimizer", label: "Optimizer" },
+  { href: "/ucl/rivals", label: "Rivals" },
   { href: "/ucl/league", label: "Mini-league" },
 ];
 

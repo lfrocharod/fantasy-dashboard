@@ -14,6 +14,13 @@ from ..types import Player, PlayerStat, Position, Projection, Team
 from ..ucl import scoring
 from .params import ModelParams
 
+# Sanity bounds for scraped per-90 underlying rates. Even prime Haaland/Mbappé
+# sit around ~1.0 npxG/90; anything above these is an identity-match error.
+_MAX_NPXG90 = 1.5
+_MAX_XA90 = 1.1
+_MAX_SHOTS90 = 7.0
+_MIN_XG_MINUTES = 200.0
+
 
 def _poisson(rng: random.Random, mu: float) -> int:
     """Knuth's Poisson sampler — fine for the small means we deal with."""
@@ -79,20 +86,71 @@ def project_player(
     params: ModelParams,
     *,
     rng: random.Random | None = None,
+    form=None,
 ) -> Projection:
     pos: Position = player.position
     if player.status_code >= 2:
         return blank_projection(player, matchday)
+    # Transferred away / not at this club any more -> not a real option.
+    if form is not None and not form.team_ok:
+        return blank_projection(player, matchday)
 
-    p_start = start_probability(player, stat)
+    if form is not None and form.start_prob > 0:
+        p_start = form.start_prob
+    else:
+        p_start = start_probability(player, stat)
     exp_minutes, p_any, p60 = _minutes_model(p_start, params)
     minutes_frac = exp_minutes / 90.0
 
     s = stat or PlayerStat(player_id=player.uefa_player_id)
+    # Guard against bad identity matches in the xG source (e.g. a star mapped to
+    # a youth-team namesake with 90 minutes and a freak per-90 rate): drop tiny
+    # samples entirely and clamp implausible rates.
+    if s.minutes and s.minutes < _MIN_XG_MINUTES:
+        s = PlayerStat(player_id=s.player_id)
+    elif s.npxg90 > _MAX_NPXG90 or s.xag90 > _MAX_XA90 or s.shots90 > _MAX_SHOTS90:
+        s = PlayerStat(
+            player_id=s.player_id, scope=s.scope, minutes=s.minutes,
+            npxg90=min(s.npxg90, _MAX_NPXG90), xag90=min(s.xag90, _MAX_XA90),
+            shots90=min(s.shots90, _MAX_SHOTS90), sca90=s.sca90, save_pct=s.save_pct,
+        )
     opp_factor = _opponent_factor(opponent, is_home, params)
 
-    exp_goals = s.npxg90 * minutes_frac * opp_factor
-    exp_assists = s.xag90 * minutes_frac * opp_factor
+    # Fold recent form into the underlying rates: a hot player's last few games
+    # matter more than their season average.
+    npxg90, xag90 = s.npxg90, s.xag90
+    if form is not None and form.recent_minutes >= 45:
+        r90 = form.recent_minutes / 90.0
+        recent_npxg90 = form.recent_npxg / r90
+        recent_xa90 = form.recent_xa / r90
+        w = min(0.6, 0.15 + form.recent_minutes / 600.0)  # up to 60% weight on recent
+        season_npxg90 = form.season_npxg90 or s.npxg90
+        season_xa90 = form.season_xa90 or s.xag90
+        npxg90 = w * recent_npxg90 + (1 - w) * (season_npxg90 or recent_npxg90)
+        xag90 = w * recent_xa90 + (1 - w) * (season_xa90 or recent_xa90)
+        # Match rating captures form the xG numbers miss (link play, dominance).
+        rating = getattr(form, "avg_rating", 0.0) or 0.0
+        if rating:
+            mult = max(0.75, min(1.3, 1.0 + (rating - 6.8) * 0.14))
+            npxg90 *= mult
+            xag90 *= mult
+        s = PlayerStat(
+            player_id=s.player_id, scope="form", minutes=max(s.minutes, form.season_minutes),
+            npxg90=npxg90, xag90=xag90, shots90=s.shots90, sca90=s.sca90, save_pct=s.save_pct,
+        )
+
+    exp_goals = min(npxg90, _MAX_NPXG90) * minutes_frac * opp_factor
+    exp_assists = min(xag90, _MAX_XA90) * minutes_frac * opp_factor
+
+    # Set-piece duty. Understat npxG already excludes penalties, so add the
+    # penalty-taker's expected spot-kick goals back on top. ~0.12 pens won per
+    # team per match (a touch more for the stronger side), ~0.79 conversion.
+    sp = getattr(player, "set_piece", "") or ""
+    if "PK" in sp and "PK2" not in sp:
+        pen_rate = 0.12 * (0.7 + 0.3 * opp_factor) * 0.79
+        exp_goals += pen_rate * p_start
+    elif "PK2" in sp:
+        exp_goals += 0.02 * p_start
 
     goal_pts = exp_goals * scoring.GOAL_POINTS[pos]
     assist_pts = exp_assists * scoring.ASSIST_POINTS
@@ -129,22 +187,32 @@ def project_player(
 
     motm_pts = scoring.MOTM_POINTS * 0.13 * (exp_goals * 0.9 + exp_assists * 0.5)
 
-    model_xpts = (
-        goal_pts
-        + assist_pts
-        + appearance_pts
-        + clean_sheet_pts
-        + conceded_pts
-        + save_pts
-        + recovery_pts
-        + discipline_pts
-        + motm_pts
+    attack_model = goal_pts + assist_pts + motm_pts
+    nonattack_pts = (
+        appearance_pts + clean_sheet_pts + conceded_pts
+        + save_pts + recovery_pts + discipline_pts
     )
+    model_xpts = attack_model + nonattack_pts
 
-    # Blend with UEFA's own recent form (points per match). Only blend when the
-    # player is expected to feature, so benched players aren't propped up.
-    form_component = player.uefa_form * p_any
-    xpts = (1.0 - params.form_weight) * model_xpts + params.form_weight * form_component
+    # Prior for the ATTACKING return only: `player.uefa_form` pts/90 minus a
+    # positional baseline for the non-attacking points the structural model
+    # already accounts for. Scaled by expected minutes and fixture ease.
+    attack_prior_90 = max(0.0, player.uefa_form - scoring.NONATTACK_BASELINE90[pos])
+    attack_prior = attack_prior_90 * minutes_frac * (0.65 + 0.35 * opp_factor)
+
+    # Trust the xG model for the attacking part in proportion to how much
+    # underlying data backs it, but never drop below 35% structural — the
+    # non-attacking points (clean sheet, minutes, opponent) are ALWAYS
+    # structural, so a player with no xG sample can't run away on the prior.
+    xg_data = min(1.0, (s.minutes or 0.0) / 500.0) ** 0.5
+    w_model = max(0.35, xg_data)
+    attack_pts = w_model * attack_model + (1.0 - w_model) * attack_prior
+
+    blended = attack_pts + nonattack_pts
+    form_full = attack_prior + nonattack_pts
+    # `params.form_weight` still nudges toward the raw form prior.
+    xpts = (1.0 - params.form_weight) * blended + params.form_weight * form_full
+    form_component = round(attack_prior, 2)
 
     lo, hi = _simulate_range(
         exp_goals, exp_assists, cs_prob if pos in ("GK", "DEF", "MID") else 0.0,

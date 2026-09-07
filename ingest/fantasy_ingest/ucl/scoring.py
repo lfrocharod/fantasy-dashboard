@@ -52,3 +52,14 @@ BASELINE_RECOVERIES90: dict[Position, float] = {
     "MID": 6.0,
     "FWD": 2.5,
 }
+
+# Rough points/90 a player earns from NON-attacking sources (appearance, clean
+# sheets, recoveries, discipline). Subtracted from the `uefa_form` pts/90 prior
+# so the attacking-return prior isn't double-counting what the structural model
+# already computes. Deliberately modest.
+NONATTACK_BASELINE90: dict[Position, float] = {
+    "GK": 3.4,
+    "DEF": 3.1,
+    "MID": 2.5,
+    "FWD": 1.9,
+}

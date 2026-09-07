@@ -1,3 +1,32 @@
+/** All absolute times in the app are shown in Mexico City time. */
+export const TZ = "America/Mexico_City";
+
+export function dateTime(iso: string | Date | null | undefined): string {
+  if (!iso) return "–";
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  if (Number.isNaN(d.getTime())) return "–";
+  return d.toLocaleString("en-GB", {
+    timeZone: TZ,
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+export function dateShort(iso: string | Date | null | undefined): string {
+  if (!iso) return "–";
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  if (Number.isNaN(d.getTime())) return "–";
+  return d.toLocaleDateString("en-GB", {
+    timeZone: TZ,
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+  });
+}
+
 export function fmt(n: number | null | undefined, digits = 1): string {
   if (n == null || !Number.isFinite(n)) return "–";
   return n.toFixed(digits);

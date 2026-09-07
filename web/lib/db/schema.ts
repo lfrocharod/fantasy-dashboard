@@ -42,9 +42,13 @@ export const players = pgTable(
     uefaTotalPoints: integer("uefa_total_points").notNull().default(0),
     uefaForm: real("uefa_form").notNull().default(0),
     selectedPct: real("selected_pct").notNull().default(0),
+    // net transfer pressure this matchday, ~-1..+1: >0 → price likely to rise
+    priceMomentum: real("price_momentum").notNull().default(0),
     // 0 = fit, 1 = doubt, 2 = out (UEFA "pStatus" style)
     statusCode: integer("status_code").notNull().default(0),
     statusDetail: text("status_detail").notNull().default(""),
+    // set-piece duty best-guess: "", "PK", "PK2", "PK,CK", "FK" …
+    setPiece: text("set_piece").notNull().default(""),
     fbrefId: text("fbref_id"),
     understatId: text("understat_id"),
     raw: jsonb("raw"),
@@ -81,6 +85,50 @@ export const playerStats = pgTable(
     uq: uniqueIndex("player_stats_player_scope_idx").on(t.playerId, t.scope),
   }),
 );
+
+/**
+ * Enhanced form + role layer from Understat (domestic leagues). Drives the
+ * projection blend and the "who will actually start" view. One row per UEFA
+ * player we could match.
+ */
+export const playerForm = pgTable("player_form", {
+  playerId: integer("player_id")
+    .primaryKey()
+    .references(() => players.uefaPlayerId, { onDelete: "cascade" }),
+  source: text("source").notNull().default("understat"),
+  // where the source currently has them playing (name), and whether that matches
+  // the UEFA team — false => probably transferred, exclude from recommendations.
+  sourceTeam: text("source_team").notNull().default(""),
+  teamOk: boolean("team_ok").notNull().default(true),
+  // position they've ACTUALLY been playing: GK|DEF|MID|FWD  (may differ from UEFA)
+  role: text("role").notNull().default(""),
+  roleNote: text("role_note").notNull().default(""),
+  // last-N (default 4) match aggregates
+  recentMatches: integer("recent_matches").notNull().default(0),
+  recentStarts: integer("recent_starts").notNull().default(0),
+  recentMinutes: real("recent_minutes").notNull().default(0),
+  recentGoals: real("recent_goals").notNull().default(0),
+  recentAssists: real("recent_assists").notNull().default(0),
+  recentNpxg: real("recent_npxg").notNull().default(0),
+  recentXa: real("recent_xa").notNull().default(0),
+  recentShots: real("recent_shots").notNull().default(0),
+  // season per-90
+  seasonMinutes: real("season_minutes").notNull().default(0),
+  seasonNpxg90: real("season_npxg90").notNull().default(0),
+  seasonXa90: real("season_xa90").notNull().default(0),
+  // 0..1 — data-driven estimate; the model uses it, the UI shows it
+  startProb: real("start_prob").notNull().default(0),
+  hotScore: real("hot_score").notNull().default(0),
+  // average match rating over the window (Sofascore, ~0-10)
+  avgRating: real("avg_rating").notNull().default(0),
+  // matches played in the last 14 days (fixture congestion / rotation risk)
+  matches14d: integer("matches_14d").notNull().default(0),
+  // competitions the recent matches came from, comma-joined
+  comps: text("comps").notNull().default(""),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type PlayerForm = typeof playerForm.$inferSelect;
 
 export const fixtures = pgTable(
   "fixtures",

@@ -21,7 +21,8 @@ load_key() {  # load_key FILE KEY
   [ -n "$line" ] && export "${line?}"
 }
 for k in DATABASE_URL WEB_CRYPTO_KEY UEFA_COMP_ID UEFA_FEEDS_BASE UEFA_API_BASE \
-         UEFA_ENTITY SOURCE_LEAGUES FBREF_SEASON SKIP_SOURCES; do
+         UEFA_ENTITY SOURCE_LEAGUES FBREF_SEASON SKIP_SOURCES \
+         RECENT_FORM_SOURCE RECENT_FORM_LOOKBACK RECENT_FORM_MIN_PRICE; do
   load_key ../web/.env.local "$k"
   load_key ./.env "$k"
 done
@@ -36,11 +37,13 @@ fi
 # caller passed --skip-sources.
 want_sources=1
 for a in "$@"; do [ "$a" = "--skip-sources" ] && want_sources=0; done
-if ! .venv/bin/python -c "import fantasy_ingest" 2>/dev/null; then
+if ! .venv/bin/python -c "import fantasy_ingest, curl_cffi" 2>/dev/null; then
   .venv/bin/pip -q install -e .
 fi
-if [ "$want_sources" = 1 ] && ! .venv/bin/python -c "import soccerdata" 2>/dev/null; then
-  echo "installing xG scrape deps ([sources]) …"
+# The Understat fallback (RECENT_FORM_SOURCE=understat) needs the heavy stack.
+if [ "$want_sources" = 1 ] && [ "${RECENT_FORM_SOURCE:-sofascore}" = "understat" ] \
+   && ! .venv/bin/python -c "import soccerdata" 2>/dev/null; then
+  echo "installing Understat deps ([sources]) …"
   .venv/bin/pip -q install -e ".[sources]"
 fi
 

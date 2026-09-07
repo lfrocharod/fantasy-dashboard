@@ -46,6 +46,14 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+* {
+  box-sizing: border-box;
+}
+/* never let the page itself scroll sideways on a phone */
+body {
+  overflow-x: hidden;
 }
 
 .card {
@@ -81,29 +89,62 @@ body {
   color: var(--text);
 }
 
-table.grid {
+/* Horizontal-scroll wrapper for any wide table. */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+table.dtable {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: 0.85rem;
+  /* auto layout + no sticky/relative on cells => thead & tbody share one
+     column grid, so headers always sit above their column. */
 }
-table.grid th,
-table.grid td {
-  text-align: left;
+table.dtable th,
+table.dtable td {
   padding: 0.5rem 0.6rem;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
+  text-align: left;
+  vertical-align: middle;
 }
-table.grid th {
+table.dtable th {
   color: var(--muted);
   font-weight: 600;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  background: var(--surface);
 }
-table.grid tbody tr:hover {
+table.dtable tbody tr:hover {
   background: var(--surface-2);
 }
+table.dtable th.num,
+table.dtable td.num,
 .num {
-  font-variant-numeric: tabular-nums;
   text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+table.dtable th.center,
+table.dtable td.center {
+  text-align: center;
+}
+
+/* Phone: tighten tables, and let pages hide low-priority columns. */
+@media (max-width: 640px) {
+  table.dtable {
+    font-size: 0.8rem;
+  }
+  table.dtable th,
+  table.dtable td {
+    padding: 0.45rem 0.5rem;
+  }
+  .hide-sm {
+    display: none !important;
+  }
+}
+.mx-auto.max-w-6xl {
+  width: 100%;
 }
