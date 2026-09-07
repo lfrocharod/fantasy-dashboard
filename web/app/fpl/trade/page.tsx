@@ -51,6 +51,7 @@ export default function TradePage() {
   const [get, setGet] = useState<Set<string>>(new Set());
   const [horizon, setHorizon] = useState<Horizon>("medium");
 
+
   useEffect(() => {
     loadBoard().then((d) => {
       setPlayers(d.players);

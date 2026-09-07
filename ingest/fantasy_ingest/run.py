@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import traceback
 from datetime import UTC
@@ -452,22 +453,38 @@ def _form_source(db, env: Env, players, teams, dry):
     else:
         from .sources.recent_form import fetch_form_rows as fetch_ss
 
-        _log(f"form: Sofascore (all competitions), last {n}, price >= {env.recent_form_min_price}")
+        budget = float(os.environ.get("SOFA_FORM_BUDGET_S", "600") or 600)
+        _log(f"form: Sofascore (best-effort, {budget:.0f}s budget), last {n}, "
+             f"price >= {env.recent_form_min_price}")
         rows = fetch_ss(
-            players, team_names, last_n=n,
-            min_price=env.recent_form_min_price, log=lambda m: _log(m),
+            players, team_names, last_n=n, min_price=env.recent_form_min_price,
+            time_budget_s=budget, log=lambda m: _log(m),
         )
+        if not rows:  # throttled — keep whatever's already in the DB
+            _log("  no fresh form rows; projections use stored form + season xG + prior")
+            return db.load_player_form() if not dry else {}
 
-    form, unmatched = build_player_form(players, team_names, rows)
+    try:
+        overrides = json.loads(db.get_settings(["ucl.role_overrides"]).get("ucl.role_overrides") or "{}")
+    except (ValueError, TypeError):
+        overrides = {}
+    form, unmatched = build_player_form(players, team_names, rows, overrides)
     xfer = [f for f in form if not f.team_ok]
-    _log(f"  matched {len(form)}/{len(players)} ({len(unmatched)} no form data); "
-         f"{len(xfer)} transferred/role-mismatch")
+    _log(f"  fresh form: matched {len(form)}/{len(players)} this run "
+         f"({len(unmatched)} unmatched); {len(xfer)} transferred/role-mismatch")
     for f in xfer[:25]:
         p = next((x for x in players if x.uefa_player_id == f.player_id), None)
         _log(f"  MISMATCH  {p.name if p else f.player_id}: {f.role_note}")
     if not dry and form:
         db.replace_player_form(form)
-    return {f.player_id: f for f in form}
+    # The scrape is time-boxed and only refreshes a slice each run, but
+    # `player_form` is an upsert store — merge this run's rows over everything
+    # we've accumulated so projections see the full history, not just today's
+    # slice. Fresh rows win per player.
+    merged = db.load_player_form() if not dry else {}
+    merged.update({f.player_id: f for f in form})
+    _log(f"  form coverage after merge with stored: {len(merged)}/{len(players)}")
+    return merged
 
 
 def _form_from_sample(db, samples, players, teams, dry):

@@ -100,6 +100,10 @@ def _build_squad_index(client: SofaClient, uefa_teams: dict[int, str], log) -> d
 
 
 def _aggregate_player(client: SofaClient, ss_id: int, last_n: int) -> dict:
+    """One request per player. The `/events/last/0` response already embeds
+    per-match stats (`statisticsMap`), the club played for (`playedForTeamMap`)
+    and whether they were an unused/named sub (`onBenchMap`), so we no longer
+    make the per-match stats/lineup calls that were getting the IP throttled."""
     ev = client.player_last_events(ss_id)
     events = ev.get("events", []) or []
     now = time.time()
@@ -109,6 +113,7 @@ def _aggregate_player(client: SofaClient, ss_id: int, last_n: int) -> dict:
     )[:last_n]
     stat_map = ev.get("statisticsMap", {}) or {}
     team_map = ev.get("playedForTeamMap", {}) or {}
+    bench_map = ev.get("onBenchMap", {}) or {}
 
     agg = {
         "matches": 0, "starts": 0, "minutes": 0.0, "goals": 0.0, "assists": 0.0,
@@ -117,20 +122,19 @@ def _aggregate_player(client: SofaClient, ss_id: int, last_n: int) -> dict:
     }
     for e in played:
         eid = e["id"]
-        comp = e.get("tournament", {}).get("name", "")
-        agg["comps"].append(comp)
+        agg["comps"].append(e.get("tournament", {}).get("name", ""))
         agg["teams"].append(team_map.get(str(eid)) or team_map.get(eid))
         if (e.get("startTimestamp") or 0) > now - 14 * 86400:
             agg["m14"] += 1
-        s = client.player_match_stats(eid, ss_id) or stat_map.get(str(eid)) or {}
-        slot = client.lineup_slot(eid, ss_id) or {}
+        s = stat_map.get(str(eid)) or stat_map.get(eid) or {}
         mins = _num(s.get("minutesPlayed"))
         agg["matches"] += 1
         agg["minutes"] += mins
-        started = not slot.get("substitute", not (mins >= 60))
+        on_bench = bench_map.get(str(eid), bench_map.get(eid))
+        started = (on_bench is False) or (on_bench is None and not s.get("substitute", mins < 60))
         if started:
             agg["starts"] += 1
-            r = _role_of(slot.get("position", ""))
+            r = _role_of(str(s.get("position") or ""))
             if r:
                 agg["roles"].append(r)
         agg["goals"] += _num(s.get("goals"))
@@ -150,18 +154,38 @@ def fetch_form_rows(
     *,
     last_n: int = 5,
     min_price: float = 4.5,
+    time_budget_s: float = 420.0,
     log=print,
 ) -> list[FormRow]:  # pragma: no cover - network
+    """Best-effort: Sofascore throttles a busy IP for a long time, so this runs
+    against a wall-clock budget and returns whatever it managed to pull. The
+    projection layer already has a season-xG + price prior to fall back on."""
+    deadline = time.time() + time_budget_s
     client = SofaClient()
-    squad_idx = _build_squad_index(client, team_names, log)
+    try:
+        squad_idx = _build_squad_index(client, team_names, log)
+    except SofaError as e:
+        log(f"  Sofascore squad index failed ({e}) — skipping recent-form scrape")
+        return []
     log(f"  Sofascore squads: {len(squad_idx)} players across {len(team_names)} clubs")
 
     rows: list[FormRow] = []
     seen_names = list(squad_idx.keys())
     done = 0
-    for p in uefa_players:
-        if p.price < min_price:
-            continue
+    stalled = 0
+    # Spend the wall-clock budget where it matters: highly-selected / expensive
+    # players first, cheap fringe last (the UEFA minutes prior already gives
+    # those a reasonable start-probability without a scrape).
+    targets = sorted(
+        (p for p in uefa_players if p.price >= min_price),
+        key=lambda p: (p.selected_pct, p.price),
+        reverse=True,
+    )
+    for p in targets:
+        if time.time() > deadline or stalled >= 12:
+            log(f"  Sofascore form: stopped early ({len(rows)}/{len(targets)} — "
+                f"{'time budget' if time.time() > deadline else 'too many throttles'})")
+            break
         nn = normalise(p.name)
         entry = squad_idx.get(nn)
         if entry is None:
@@ -180,7 +204,9 @@ def fetch_form_rows(
             continue
         try:
             agg = _aggregate_player(client, entry["ss_id"], last_n)
+            stalled = 0
         except SofaError as e:
+            stalled += 1
             log(f"  stats failed for {p.name}: {e}")
             continue
         done += 1

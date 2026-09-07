@@ -153,50 +153,6 @@ export async function getMySquad(matchday: number): Promise<SquadRow[]> {
   return rows as SquadRow[];
 }
 
-/** Every team playing this matchday + its players ranked by likelihood to start. */
-export async function getProjectedLineups(matchday: number) {
-  const fx = await getFixtures(matchday);
-  const teamsPlaying = new Set<string>();
-  const oppOf: Record<string, { opp: string; home: boolean }> = {};
-  for (const f of fx) {
-    teamsPlaying.add(f.homeTeam);
-    teamsPlaying.add(f.awayTeam);
-    oppOf[f.homeTeam] = { opp: f.awayTeam, home: true };
-    oppOf[f.awayTeam] = { opp: f.homeTeam, home: false };
-  }
-
-  const rows = (await db
-    .select(playerSelect)
-    .from(players)
-    .innerJoin(teams, eq(teams.uefaTeamId, players.teamId))
-    .leftJoin(
-      projections,
-      and(eq(projections.playerId, players.uefaPlayerId), eq(projections.matchday, matchday)),
-    )
-    .leftJoin(playerForm, eq(playerForm.playerId, players.uefaPlayerId))) as PlayerRow[];
-
-  const byTeam = new Map<string, PlayerRow[]>();
-  for (const r of rows) {
-    if (!teamsPlaying.has(r.teamName)) continue;
-    if (r.teamOk === false) continue;
-    (byTeam.get(r.teamName) ?? byTeam.set(r.teamName, []).get(r.teamName)!).push(r);
-  }
-
-  return [...byTeam.entries()]
-    .map(([team, list]) => ({
-      team,
-      fixture: oppOf[team],
-      players: list
-        .sort(
-          (a, b) =>
-            (b.startProb ?? 0) - (a.startProb ?? 0) ||
-            (b.xpts ?? 0) - (a.xpts ?? 0),
-        )
-        .slice(0, 16),
-    }))
-    .sort((a, b) => a.team.localeCompare(b.team));
-}
-
 export async function getFixtures(matchday: number) {
   const home = alias(teams, "home_team");
   const away = alias(teams, "away_team");
@@ -320,11 +276,54 @@ export interface TeamDossier {
   defenceRating: number;
   fixtures: TickerCell[];
   avgDifficulty: number;
-  probableXI: PlayerRow[]; // top 11 by startProb, then xpts
+  probableXI: PlayerRow[]; // a formation-legal XI: the likeliest starter at each slot
+  bench: PlayerRow[]; // next likeliest to feature (subs / fringe)
   setPieces: { pk: PlayerRow[]; fk: PlayerRow[]; ck: PlayerRow[] };
   doubts: PlayerRow[]; // injury / rotation flags
   movedOn: PlayerRow[]; // our roster has them here but the form cross-check says otherwise
   topPicks: PlayerRow[]; // best xPts this matchday
+}
+
+/** Chance a player starts — real modelled value if we have it, else a prior from xPts. */
+function startScore(p: PlayerRow): number {
+  const s = p.startProb ?? p.pStart;
+  if (s != null && s > 0) return s;
+  return Math.max(0.12, Math.min(0.7, (p.xpts ?? 0) / 6));
+}
+
+/**
+ * Pick a plausible XI: exactly one keeper, then the highest-start-score outfield
+ * players subject to 3–5 DEF / 2–5 MID / 1–3 FWD so we never surface a nonsense
+ * shape (six midfielders, no keeper). Returns [xi, bench].
+ */
+function probableXIAndBench(list: PlayerRow[]): [PlayerRow[], PlayerRow[]] {
+  const pool = [...list]
+    .filter((p) => p.teamOk !== false && p.statusCode < 2)
+    .sort((a, b) => startScore(b) - startScore(a) || (b.xpts ?? 0) - (a.xpts ?? 0));
+  const gk = pool.filter((p) => p.position === "GK");
+  const xi: PlayerRow[] = gk.slice(0, 1);
+  const cap: Record<string, number> = { DEF: 5, MID: 5, FWD: 3 };
+  const min: Record<string, number> = { DEF: 3, MID: 2, FWD: 1 };
+  const count: Record<string, number> = { DEF: 0, MID: 0, FWD: 0 };
+  const outfield = pool.filter((p) => p.position !== "GK");
+  for (const p of outfield) {
+    if (xi.length >= 11) break;
+    const c = count[p.position];
+    if (c == null || c >= cap[p.position]) continue;
+    // leave room to still hit the other positions' minimums
+    const slotsLeft = 11 - xi.length;
+    const needElsewhere =
+      Math.max(0, min.DEF - count.DEF) +
+      Math.max(0, min.MID - count.MID) +
+      Math.max(0, min.FWD - count.FWD) -
+      Math.max(0, min[p.position] - c);
+    if (slotsLeft - 1 < needElsewhere) continue;
+    xi.push(p);
+    count[p.position] += 1;
+  }
+  const chosen = new Set(xi.map((p) => p.playerId));
+  const bench = pool.filter((p) => !chosen.has(p.playerId)).slice(0, 6);
+  return [xi, bench];
 }
 
 /** Per-club dossier: strength, fixture run, probable XI, set-piece duty, flags. */
@@ -358,12 +357,7 @@ export async function getTeamDossiers(matchday: number): Promise<TeamDossier[]> 
     .map((t) => {
       const list = byTeam.get(t.uefaTeamId) ?? [];
       const tk = tickerByTeam.get(t.uefaTeamId);
-      const probableXI = [...list]
-        .filter((p) => p.teamOk !== false && p.statusCode < 2)
-        .sort(
-          (a, b) => (b.startProb ?? 0) - (a.startProb ?? 0) || (b.xpts ?? 0) - (a.xpts ?? 0),
-        )
-        .slice(0, 11);
+      const [probableXI, bench] = probableXIAndBench(list);
       return {
         teamId: t.uefaTeamId,
         team: t.name,
@@ -373,6 +367,7 @@ export async function getTeamDossiers(matchday: number): Promise<TeamDossier[]> 
         fixtures: tk?.cells ?? [],
         avgDifficulty: tk?.avgDifficulty ?? 0,
         probableXI,
+        bench,
         setPieces: {
           pk: list.filter((p) => spRank(p, "PK")),
           fk: list.filter((p) => spRank(p, "FK")),
@@ -455,6 +450,14 @@ export interface RivalReport {
   rivals: RivalRow[];
   templateRisk: { playerId: number; name: string; xpts: number; ownedByRivals: number }[];
   commonThreats: { playerId: number; name: string; xpts: number; ownedByRivals: number }[];
+  effectiveOwnership: {
+    playerId: number;
+    name: string;
+    team: string;
+    xpts: number;
+    ownedPct: number; // % of the mini-league (incl. you) that owns them
+    mine: boolean;
+  }[];
   rivalCount: number;
 }
 
@@ -474,6 +477,7 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
     rivals: [],
     templateRisk: [],
     commonThreats: [],
+    effectiveOwnership: [],
     rivalCount: 0,
   };
   if (!leagueId) return empty;
@@ -588,6 +592,25 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
     })
     .sort((a, b) => b.ownedByRivals - a.ownedByRivals || b.xpts - a.xpts);
 
+  // effective ownership across the mini-league (your rivals + you)
+  const leagueSize = withSquads.length;
+  const ownAll = new Map<number, number>();
+  for (const r of withSquads) for (const id of r.squad as number[]) ownAll.set(id, (ownAll.get(id) ?? 0) + 1);
+  const effectiveOwnership = [...allIds]
+    .map((id) => {
+      const x = m.get(id);
+      return {
+        playerId: id,
+        name: x?.name ?? String(id),
+        team: x?.team ?? "",
+        xpts: x?.xpts ?? 0,
+        ownedPct: Math.round((100 * (ownAll.get(id) ?? 0)) / leagueSize),
+        mine: myIds.has(id),
+      };
+    })
+    .filter((r) => r.xpts > 0)
+    .sort((a, b) => b.xpts - a.xpts);
+
   return {
     ready: true,
     myProjectedPoints,
@@ -595,6 +618,7 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
     rivals,
     templateRisk,
     commonThreats,
+    effectiveOwnership,
     rivalCount: rivalStandings.length,
   };
 }

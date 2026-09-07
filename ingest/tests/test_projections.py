@@ -39,6 +39,26 @@ def test_injury_zeroes_start_probability():
     assert out.exp_minutes == 0.0
 
 
+def test_minutes_prior_covers_players_without_domestic_stats():
+    # No Understat stat row at all — used to collapse to a flat 0.75.
+    nailed = _player("MID")
+    nailed.minutes_prior = 0.95
+    fringe = _player("MID", pid=11)
+    fringe.minutes_prior = 0.2
+    assert start_probability(nailed, None) > 0.85
+    assert start_probability(fringe, None) < 0.35
+    # genuine unknown still falls back, but below the old flat 0.75
+    assert start_probability(_player("MID", pid=12), None) == 0.7
+
+
+def test_minutes_prior_blends_with_domestic_share():
+    p = _player("FWD")
+    p.minutes_prior = 0.4  # UCL minutes say rotation
+    # domestic data says nailed — blend lands between the two, nearer the mean
+    blended = start_probability(p, _stat(minutes=1350, matches=15))
+    assert 0.6 < blended < 0.85
+
+
 def test_defender_gets_clean_sheet_value_vs_weak_opponent():
     strong_def = project_player(_player("DEF"), _stat(npxg90=0.1, xag90=0.1), STRONG, WEAK, True, 5, PARAMS)
     # same defender but their team is weak and the opponent strong -> lower CS value

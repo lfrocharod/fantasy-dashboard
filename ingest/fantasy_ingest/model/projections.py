@@ -52,13 +52,23 @@ def _minutes_model(p_start: float, params: ModelParams) -> tuple[float, float, f
 
 
 def start_probability(player: Player, stat: PlayerStat | None) -> float:
-    """Crude P(starts) from availability + how much they've been playing."""
+    """P(starts) from availability + how much they've actually been playing.
+
+    Signal priority: domestic minutes-share (Understat, where we have it) blended
+    with the UEFA-competition minutes prior (`player.minutes_prior`, ~full
+    coverage). Only a player with no minutes anywhere falls back to a flat prior.
+    """
     if player.status_code >= 2:
         return 0.0
-    base = 0.75
+    est: float | None = None
     if stat and stat.matches > 0:
-        share = stat.minutes / (stat.matches * 90.0)
-        base = max(0.05, min(0.98, share))
+        est = stat.minutes / (stat.matches * 90.0)
+    mp = getattr(player, "minutes_prior", 0.0) or 0.0
+    if mp > 0:
+        est = mp if est is None else 0.55 * est + 0.45 * mp
+    if est is None:
+        est = 0.7  # genuine unknown — rookie / no recorded minutes
+    base = max(0.05, min(0.97, est))
     if player.status_code == 1:  # knock / doubt
         base *= 0.55
     return round(base, 3)

@@ -4,7 +4,16 @@ import { useEffect, useMemo, useState } from "react";
 import { Legend } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import type { DraftConfig } from "@/lib/draft/queries";
-import { FDR_BG, POS_COLOR, loadNfl, type NflPlayer } from "../lib";
+import {
+  FDR_BG,
+  POS_COLOR,
+  groupTeams,
+  loadNfl,
+  simPlayoffs,
+  type NflPlayer,
+  type SchedRow,
+  type Standing,
+} from "../lib";
 
 function Tag({ pos }: { pos: string }) {
   return (
@@ -36,6 +45,17 @@ export default function PlannerPage() {
     () => players.filter((p) => myIds.has(p.extId)).sort((a, b) => b.rosProj - a.rosProj),
     [players, myIds],
   );
+
+  const odds = useMemo(() => {
+    const managers = groupTeams(players, config?.myTeamId ?? null);
+    const standings = (config?.standings ?? []) as Standing[];
+    const schedule = (config?.schedule ?? []) as SchedRow[];
+    const slots = config?.nflSlots ?? { QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, DST: 1, K: 1 };
+    if (!managers.length || !schedule.length) return [];
+    return simPlayoffs(
+      managers, standings, schedule, slots, week, regWeeks, 4, config?.myTeamId ?? null,
+    );
+  }, [players, config, week]);
 
   // upcoming weeks we have matchup data for
   const weeks = useMemo(() => {
@@ -74,6 +94,49 @@ export default function PlannerPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold">Bye weeks &amp; playoff schedule</h1>
+
+      {/* ---- PLAYOFF ODDS ---- */}
+      {odds.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold text-[var(--muted)]">
+            PLAYOFF ODDS — 3,000 sims of the rest of the regular season
+          </h2>
+          <div className="card table-wrap">
+            <table className="dtable">
+              <thead>
+                <tr>
+                  <th>Team</th>
+                  <th className="num">Proj. wins</th>
+                  <th className="num">Playoffs</th>
+                  <th className="num hide-sm">Top-2 seed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {odds.map((o) => (
+                  <tr key={o.teamId} style={o.isMine ? { background: "rgba(31,111,235,0.08)" } : undefined}>
+                    <td className="font-medium">{o.name}</td>
+                    <td className="num">{fmt(o.projWins, 1)}</td>
+                    <td
+                      className="num font-semibold"
+                      style={{
+                        color: o.playoffPct >= 60 ? "var(--good)" : o.playoffPct <= 25 ? "var(--bad)" : undefined,
+                      }}
+                    >
+                      {fmt(o.playoffPct, 0)}%
+                    </td>
+                    <td className="num hide-sm">{fmt(o.byePct, 0)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-[var(--muted)]">
+            Each remaining matchup is simulated as two Normal(projected score, 24) draws; seeding
+            uses wins then points-for (your league&apos;s tiebreak). Use it to decide whether to play
+            for this week or the long game.
+          </p>
+        </section>
+      )}
 
       {/* ---- FIXTURE GRID ---- */}
       <section className="space-y-2">

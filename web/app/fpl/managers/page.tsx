@@ -4,7 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Legend } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import type { DraftConfig } from "@/lib/draft/queries";
-import { groupByManager, loadBoard, type FplPlayer, type Manager } from "../lib";
+import {
+  groupByManager,
+  loadBoard,
+  predictClaims,
+  type FplPlayer,
+  type Manager,
+} from "../lib";
 
 const POS_ORDER = ["GKP", "DEF", "MID", "FWD"];
 const POS_COLOR: Record<string, string> = {
@@ -51,6 +57,7 @@ export default function ManagersPage() {
   }
 
   const v = (p: FplPlayer) => (metric === "medium" ? p.horizon : p.ros);
+  const claims = predictClaims(managers, players, config?.entryId ?? null);
 
   return (
     <div className="space-y-5">
@@ -68,6 +75,44 @@ export default function ManagersPage() {
           ))}
         </div>
       </div>
+
+      {claims.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold text-[var(--muted)]">
+            LIKELY RIVAL WAIVER CLAIMS — get there first
+          </h2>
+          <div className="card table-wrap">
+            <table className="dtable">
+              <thead>
+                <tr>
+                  <th>Rival</th>
+                  <th>Weak spot</th>
+                  <th>Likely target</th>
+                  <th className="num">Their gain</th>
+                </tr>
+              </thead>
+              <tbody>
+                {claims.map((c, i) => (
+                  <tr key={i}>
+                    <td>{c.rivalName}</td>
+                    <td className="text-[var(--muted)]">
+                      {c.weakPos} · {c.weakStarter}
+                    </td>
+                    <td className="font-medium">
+                      {c.target.name} <span className="text-[var(--muted)]">{c.target.team}</span>
+                    </td>
+                    <td className="num font-semibold">+{fmt(c.gain, 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-[var(--muted)]">
+            Each rival&apos;s weakest starter (by rest-of-season projection) and the best free agent
+            at that position. If you want any of these, claim before the next waiver run.
+          </p>
+        </section>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {managers.map((mg) => (
@@ -138,7 +183,10 @@ function ManagerCard({
                       </span>
                     )}
                   </td>
-                  <td className="text-[var(--muted)]">{p.team}</td>
+                  <td className="text-[var(--muted)]">
+                    {p.team}
+                    {p.nextOpp ? <span className="ml-1 opacity-70">· {p.nextOpp}</span> : null}
+                  </td>
                   <td className="num font-semibold">{fmt(v(p), metric === "medium" ? 0 : 0)}</td>
                 </tr>
               ));

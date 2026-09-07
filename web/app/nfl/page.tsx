@@ -56,6 +56,7 @@ export default function NflLineupPage() {
   const [players, setPlayers] = useState<NflPlayer[]>([]);
   const [config, setConfig] = useState<DraftConfig | null>(null);
 
+
   useEffect(() => {
     loadNfl().then((d) => {
       setPlayers(d.players);
@@ -100,6 +101,15 @@ export default function NflLineupPage() {
 
   const margin = theirs ? mine.total - theirs.total : 0;
 
+  // changes vs the lineup currently set in ESPN (slot === "BE" means benched)
+  const optIds = new Set(mine.starters.map((s) => s.p?.extId).filter(Boolean) as string[]);
+  const toStart = mine.starters
+    .filter((s) => s.p && (s.p.slot === "BE" || s.p.slot === "IR" || !s.p.slot))
+    .map((s) => s.p!);
+  const toBench = myRoster.filter(
+    (p) => !optIds.has(p.extId) && p.slot && p.slot !== "BE" && p.slot !== "IR",
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -116,6 +126,24 @@ export default function NflLineupPage() {
           )}
         </span>
       </div>
+
+      {(toStart.length > 0 || toBench.length > 0) && (
+        <div className="card p-3 text-sm">
+          <b className="text-[var(--warn)]">Lineup changes to make in ESPN:</b>
+          <ul className="mt-1 space-y-0.5">
+            {toStart.map((p) => (
+              <li key={p.extId}>
+                ▲ Start <b>{p.name}</b> ({p.pos}, {fmt(weekPoints(p, 0))} proj)
+              </li>
+            ))}
+            {toBench.map((p) => (
+              <li key={p.extId} className="text-[var(--muted)]">
+                ▼ Bench {p.name} ({p.slot}, {fmt(weekPoints(p, 0))} proj)
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* ---- OPTIMAL LINEUP ---- */}
       <section className="space-y-2">

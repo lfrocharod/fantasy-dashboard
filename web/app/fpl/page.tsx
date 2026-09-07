@@ -63,6 +63,7 @@ export default function FplDraftPage() {
     setConfig(d.config ?? null);
   }, []);
 
+
   useEffect(() => {
     load();
   }, [load]);

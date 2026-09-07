@@ -111,6 +111,7 @@ def parse_players(feed: Any) -> tuple[list[Player], dict[int, Team]]:
     # per player: (penalty attempts signal, goals) — used after the loop to rank
     # each club's likely first-choice penalty taker.
     pen_signal: dict[int, tuple[float, int]] = {}
+    raw_minutes: dict[int, float] = {}  # uefa_player_id -> UEFA-competition minutes
     for r in _rows(feed):
         pid = _i(_pick(r, "id", "pId", "playerId"))
         if not pid:
@@ -183,9 +184,34 @@ def parse_players(feed: Any) -> tuple[list[Player], dict[int, Team]]:
                 status_detail=detail,
             )
         )
+        raw_minutes[pid] = last_mins
 
     _mark_penalty_takers(players, pen_signal)
+    _set_minutes_prior(players, raw_minutes)
     return players, teams
+
+
+def _set_minutes_prior(players: list[Player], raw_minutes: dict[int, float]) -> None:
+    """Turn each player's UEFA-competition minutes into a 0..1 start-probability
+    prior, normalised against a near-ever-present at the same club (the 3rd-most-
+    played squad member, so one freak total can't set the bar). Covers every
+    player with zero scraping; the Sofascore recent-form scrape overrides it
+    where we have it. If the feed carries no minutes yet (very start of a
+    season) every prior is 0 and the model falls back as before."""
+    by_club: dict[int, list[float]] = {}
+    for p in players:
+        by_club.setdefault(p.team_id, []).append(raw_minutes.get(p.uefa_player_id, 0.0))
+    club_ref: dict[int, float] = {}
+    for tid, arr in by_club.items():
+        top = sorted(arr, reverse=True)
+        ref = top[2] if len(top) >= 3 else (top[0] if top else 0.0)
+        # floor so an early-knockout club (few games played) doesn't inflate
+        # every squad member toward "nailed".
+        club_ref[tid] = max(ref, 900.0)
+    for p in players:
+        rm = raw_minutes.get(p.uefa_player_id, 0.0)
+        ref = club_ref.get(p.team_id, 0.0)
+        p.minutes_prior = round(min(1.0, rm / ref), 3) if ref > 0 and rm > 0 else 0.0
 
 
 def _mark_penalty_takers(players: list[Player], pen_signal: dict[int, tuple[float, int]]) -> None:

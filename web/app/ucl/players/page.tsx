@@ -56,8 +56,12 @@ export default function PlayersPage() {
 
   const rows = useMemo(() => {
     const list = hideOwned ? players.filter((p) => !owned.has(p.playerId)) : players;
+    // Price and ownership read "best" as smallest (cheapest / biggest differential);
+    // everything else reads "best" as largest. Best always sorts to the top.
     const asc = sort === "price" || sort === "selectedPct";
-    return [...list].sort((a, b) => (asc ? 1 : -1) * (sortVal(b, sort) - sortVal(a, sort)));
+    return [...list].sort((a, b) =>
+      asc ? sortVal(a, sort) - sortVal(b, sort) : sortVal(b, sort) - sortVal(a, sort),
+    );
   }, [players, owned, hideOwned, sort]);
 
   return (

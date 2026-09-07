@@ -130,9 +130,60 @@ export default async function RivalsPage() {
         </Section>
       )}
 
+      {r.effectiveOwnership.length > 0 && (
+        <Section title="Effective ownership — in your mini-league only">
+          <p className="text-sm text-[var(--muted)]">
+            What matters isn&apos;t global ownership — it&apos;s how many of the {r.rivalCount + 1}{" "}
+            managers you&apos;re actually racing own each player. Low % + high xPts = a real
+            rank-gaining differential; high % = template (safe, no edge).
+          </p>
+          <div className="card table-wrap">
+            <table className="dtable">
+              <thead>
+                <tr>
+                  <th>Player</th>
+                  <th>Team</th>
+                  <th className="num">Owned</th>
+                  <th className="num">xPts (MD{md})</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.effectiveOwnership.slice(0, 30).map((p) => (
+                  <tr key={p.playerId} style={p.mine ? { background: "rgba(31,111,235,0.08)" } : undefined}>
+                    <td className="font-medium">{p.name}</td>
+                    <td className="text-[var(--muted)]">{p.team}</td>
+                    <td
+                      className="num font-semibold"
+                      style={{
+                        color:
+                          p.ownedPct >= 60 ? "var(--muted)" : p.ownedPct <= 25 ? "var(--good)" : undefined,
+                      }}
+                    >
+                      {p.ownedPct}%
+                    </td>
+                    <td className="num">{fmt(p.xpts)}</td>
+                    <td className="text-xs">
+                      {p.mine ? (
+                        <span className="text-[var(--accent)]">you</span>
+                      ) : p.ownedPct <= 25 && p.xpts >= 4.5 ? (
+                        <span className="text-[var(--good)]">differential</span>
+                      ) : p.ownedPct >= 60 ? (
+                        <span className="text-[var(--muted)]">template</span>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
+
       <Legend
         items={[
           ["Proj MD", "top 11 by xPts from their 15 + captain (double the top starter)"],
+          ["Owned", "% of your mini-league (rivals + you) that has this player"],
           ["vs you", "their projection minus yours — red means they out-project you this matchday"],
           ["Shared", "players in common with your squad, out of 15"],
           ["Their differentials", "players they own that you don't — where they can gain on you"],

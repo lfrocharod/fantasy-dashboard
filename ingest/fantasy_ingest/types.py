@@ -37,6 +37,9 @@ class Player:
     price_momentum: float = 0.0
     status_code: int = 0  # 0 fit, 1 doubt, 2 out
     status_detail: str = ""
+    # UEFA-competition minutes as a share (0..1) of a near-ever-present at the
+    # same club — a start-probability prior that covers every player, no scrape.
+    minutes_prior: float = 0.0
     # set-piece duty best-guess: "", "PK", "PK,CK", "FK", "CK" …
     set_piece: str = ""
     fbref_id: str | None = None
