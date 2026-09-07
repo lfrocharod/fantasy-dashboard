@@ -393,14 +393,15 @@ class DB:
             [
                 (r.sport, r.ext_id, r.name, r.team, ",".join(r.positions), r.primary_pos,
                  r.proj_points, r.adp, r.provider_rank, r.ecr_rank, r.ecr_tier, r.ecr_pos_rank,
-                 r.ecr_std, r.vbd, r.bye_week, r.injury_status, r.outlook, json.dumps(r.raw or {}))
+                 r.ecr_std, r.vbd, r.bye_week, r.injury_status, r.outlook,
+                 json.dumps(_draft_raw(r)))
                 for r in rows
             ],
             atomic_delete="delete from draft_players where sport=%s",
             delete_args=(sport,),
         )
 
-    def replace_draft_picks(self, sport: str, picks: list[dict]) -> None:
+    def replace_draft_picks(self, sport: str, picks: list[dict], source: str = "espn") -> None:
         self._many(
             """insert into draft_picks
                (sport, overall, round, pick_in_round, team_id, team_name, player_ext_id,
@@ -409,13 +410,25 @@ class DB:
             [
                 (sport, p["overall"], p.get("round", 0), p.get("pick_in_round", 0),
                  p.get("team_id", 0), p.get("team_name", ""), str(p["player_ext_id"]),
-                 bool(p.get("is_mine")), p.get("source", "espn"))
+                 bool(p.get("is_mine")), p.get("source", source))
                 for p in picks
             ],
-            atomic_delete="delete from draft_picks where sport=%s and source='espn'",
-            delete_args=(sport,),
+            atomic_delete="delete from draft_picks where sport=%s and source=%s",
+            delete_args=(sport, source),
         )
 
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _draft_raw(r) -> dict:
+    """Merge sport-specific extras (FPL Draft) into the raw JSON blob so no
+    schema change is needed."""
+    raw = dict(r.raw or {})
+    for k in ("owner", "owner_name", "available", "set_piece", "next_opp", "next_fdr",
+              "form", "minutes"):
+        v = getattr(r, k, None)
+        if v not in (None, "", 0, 0.0, False) or k in ("available",):
+            raw[k] = v
+    return raw

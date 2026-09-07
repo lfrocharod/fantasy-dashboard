@@ -14,6 +14,12 @@ export interface DraftConfig {
   scoring: string;
   hasCookies: boolean;
   year: number;
+  // FPL Draft
+  entryId: string | null;
+  mySquad: string[]; // element ext ids
+  standings: unknown[];
+  schedule: unknown[];
+  fplMode: string; // 'c' classic / 'h' head-to-head
 }
 
 const DEFAULT_ROSTER: Record<string, number> = {
@@ -24,27 +30,57 @@ function k(sport: string, key: string) {
   return `draft.${sport}.${key}`;
 }
 
+const FPL_ROSTER: Record<string, number> = { GKP: 2, DEF: 5, MID: 5, FWD: 3 };
+
 export async function getDraftConfig(sport: Sport): Promise<DraftConfig> {
   const s = await getSettings([
     k(sport, "teams"), k(sport, "my_slot"), k(sport, "my_team_id"),
     k(sport, "roster"), k(sport, "scoring"), k(sport, "year"),
     k(sport, "espn_s2"), k(sport, "swid"), k(sport, "league_id"),
+    k(sport, "entry_id"), k(sport, "pl_profile"),
+    k(sport, "my_squad"), k(sport, "standings"), k(sport, "schedule"), k(sport, "mode"),
   ]);
-  let roster = DEFAULT_ROSTER;
+  const fpl = sport === "fpl";
+  let roster = fpl ? FPL_ROSTER : DEFAULT_ROSTER;
   try {
     if (s[k(sport, "roster")]) roster = JSON.parse(s[k(sport, "roster")]);
   } catch {
     /* keep default */
   }
+  let mySquad: string[] = [];
+  let standings: unknown[] = [];
+  let schedule: unknown[] = [];
+  try {
+    if (s[k(sport, "my_squad")]) mySquad = JSON.parse(s[k(sport, "my_squad")]);
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (s[k(sport, "standings")]) standings = JSON.parse(s[k(sport, "standings")]);
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (s[k(sport, "schedule")]) schedule = JSON.parse(s[k(sport, "schedule")]);
+  } catch {
+    /* ignore */
+  }
   return {
     sport,
-    teams: Number(s[k(sport, "teams")]) || 12,
+    teams: Number(s[k(sport, "teams")]) || (fpl ? 8 : 12),
     mySlot: s[k(sport, "my_slot")] ? Number(s[k(sport, "my_slot")]) : null,
     myTeamId: s[k(sport, "my_team_id")] ? Number(s[k(sport, "my_team_id")]) : null,
     roster,
-    scoring: s[k(sport, "scoring")] || "ppr",
-    hasCookies: Boolean(s[k(sport, "espn_s2")] && s[k(sport, "swid")]),
+    scoring: s[k(sport, "scoring")] || (fpl ? "draft" : "ppr"),
+    hasCookies: fpl
+      ? Boolean(s[k(sport, "pl_profile")])
+      : Boolean(s[k(sport, "espn_s2")] && s[k(sport, "swid")]),
     year: Number(s[k(sport, "year")]) || 2026,
+    entryId: s[k(sport, "entry_id")] ?? null,
+    mySquad,
+    standings,
+    schedule,
+    fplMode: s[k(sport, "mode")] || "c",
   };
 }
 

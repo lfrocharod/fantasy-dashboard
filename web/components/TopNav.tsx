@@ -6,7 +6,9 @@ import { usePathname, useRouter } from "next/navigation";
 const LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/ucl", label: "Champions League", short: "UCL" },
-  { href: "/draft", label: "Draft" },
+  { href: "/fpl", label: "FPL Draft", short: "FPL" },
+  { href: "/nfl", label: "NFL", short: "NFL" },
+  { href: "/nba", label: "NBA", short: "NBA" },
   { href: "/settings", label: "Settings" },
 ];
 
