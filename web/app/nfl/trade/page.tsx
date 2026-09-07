@@ -31,6 +31,7 @@ export default function NflTradePage() {
   const [give, setGive] = useState<Set<string>>(new Set());
   const [get, setGet] = useState<Set<string>>(new Set());
 
+
   useEffect(() => {
     loadNfl().then((d) => {
       setPlayers(d.players);

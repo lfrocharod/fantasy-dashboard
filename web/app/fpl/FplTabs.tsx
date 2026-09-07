@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 
 const TABS = [
   { href: "/fpl", label: "Planner" },
+  { href: "/fpl/teams", label: "Team watch" },
+  { href: "/fpl/fixtures", label: "Fixture ticker" },
   { href: "/fpl/managers", label: "Manager rosters" },
   { href: "/fpl/trade", label: "Trade" },
   { href: "/fpl/standings", label: "Standings" },

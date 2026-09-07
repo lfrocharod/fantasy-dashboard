@@ -58,14 +58,77 @@ export function EmptyState({ title, hint }: { title: string; hint?: ReactNode })
 
 export function Legend({ items }: { items: [string, string][] }) {
   return (
-    <dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--muted)]">
-      {items.map(([term, meaning]) => (
-        <div key={term} className="flex gap-1">
-          <dt className="font-semibold text-[var(--text)]">{term}</dt>
-          <dd>{meaning}</dd>
-        </div>
-      ))}
-    </dl>
+    <details className="group text-xs text-[var(--muted)]">
+      <summary className="cursor-pointer select-none list-none font-semibold text-[var(--text)]">
+        <span className="group-open:hidden">▸ What the columns mean</span>
+        <span className="hidden group-open:inline">▾ What the columns mean</span>
+      </summary>
+      <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+        {items.map(([term, meaning]) => (
+          <div key={term} className="flex gap-1">
+            <dt className="font-semibold text-[var(--text)]">{term}</dt>
+            <dd>{meaning}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
+}
+
+export function PageHeader({
+  title,
+  right,
+  sub,
+}: {
+  title: ReactNode;
+  right?: ReactNode;
+  sub?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <div>
+        <h1 className="text-xl font-semibold">{title}</h1>
+        {sub != null && <p className="mt-0.5 text-sm text-[var(--muted)]">{sub}</p>}
+      </div>
+      {right != null && <div className="text-sm text-[var(--muted)]">{right}</div>}
+    </div>
+  );
+}
+
+export function Loading({ rows = 5 }: { rows?: number }) {
+  return (
+    <div className="space-y-2">
+      <div className="skeleton h-8 w-48" />
+      <div className="card space-y-2 p-3">
+        {Array.from({ length: rows }).map((_, i) => (
+          <div key={i} className="skeleton h-6 w-full" style={{ opacity: 1 - i * 0.12 }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function Pill({
+  children,
+  tone = "muted",
+}: {
+  children: ReactNode;
+  tone?: "good" | "warn" | "bad" | "accent" | "muted";
+}) {
+  const c = {
+    good: "var(--good)",
+    warn: "var(--warn)",
+    bad: "var(--bad)",
+    accent: "var(--accent)",
+    muted: "var(--muted)",
+  }[tone];
+  return (
+    <span
+      className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
+      style={{ color: c, background: `color-mix(in srgb, ${c} 14%, transparent)` }}
+    >
+      {children}
+    </span>
   );
 }
 

@@ -65,6 +65,28 @@ def test_parse_players():
     assert teams[52919].name == "Man City"
 
 
+def test_minutes_prior_from_uefa_minutes():
+    feed = {"data": {"value": {"playerList": [
+        {"id": "1", "latinName": "Everpresent", "skill": 3, "tId": "10", "tName": "A",
+         "value": 8.0, "isActive": 1, "minsPlyd": 1200},
+        {"id": "2", "latinName": "Rotation", "skill": 3, "tId": "10", "tName": "A",
+         "value": 6.0, "isActive": 1, "minsPlyd": 1150},
+        {"id": "3", "latinName": "Regular", "skill": 3, "tId": "10", "tName": "A",
+         "value": 6.0, "isActive": 1, "minsPlyd": 1100},
+        {"id": "4", "latinName": "Fringe", "skill": 3, "tId": "10", "tName": "A",
+         "value": 4.5, "isActive": 1, "minsPlyd": 300},
+        {"id": "5", "latinName": "Newbie", "skill": 3, "tId": "10", "tName": "A",
+         "value": 4.0, "isActive": 1, "minsPlyd": 0},
+    ]}}, "meta": {"success": True}}
+    players, _ = fetch.parse_players(feed)
+    by = {p.name: p for p in players}
+    # club reference = 3rd-highest total (1100), floored at 900
+    assert by["Everpresent"].minutes_prior == 1.0  # 1200/1100 capped
+    assert by["Regular"].minutes_prior == 1.0
+    assert 0.25 < by["Fringe"].minutes_prior < 0.32  # 300/1100
+    assert by["Newbie"].minutes_prior == 0.0  # no data -> model falls back
+
+
 def test_parse_teams():
     teams = fetch.parse_teams(TEAMS)
     assert teams[52919].name == "Man City"

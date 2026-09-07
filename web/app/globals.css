@@ -70,9 +70,37 @@ body {
   padding: 0.4rem 0.8rem;
   font-size: 0.875rem;
   cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
 .btn:hover {
   border-color: var(--accent);
+}
+.card {
+  transition: border-color 0.12s ease;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-radius: 8px;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--border) 60%, transparent),
+    transparent
+  );
+  animation: shimmer 1.4s infinite;
 }
 .btn-primary {
   background: var(--accent);
@@ -118,8 +146,18 @@ table.dtable th {
   letter-spacing: 0.02em;
   background: var(--surface);
 }
+table.dtable tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
+}
+table.dtable tbody tr {
+  transition: background 0.12s ease;
+}
 table.dtable tbody tr:hover {
   background: var(--surface-2);
+}
+table.dtable tfoot td {
+  border-top: 2px solid var(--border);
+  border-bottom: none;
 }
 table.dtable th.num,
 table.dtable td.num,

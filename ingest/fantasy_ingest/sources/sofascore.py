@@ -32,6 +32,7 @@ class SofaClient:
             raise SofaError("curl_cffi not installed — pip install curl_cffi")
         self._s = _cr.Session(impersonate="chrome", timeout=25)
         self._delay = delay
+        self._cooldown = 0.0  # extra per-call sleep, grows under sustained throttling
         self._ttl = ttl_hours * 3600
         _CACHE.mkdir(parents=True, exist_ok=True)
 
@@ -46,10 +47,19 @@ class SofaClient:
                 return json.loads(cp.read_text())
             except json.JSONDecodeError:
                 pass
-        for attempt in range(4):
-            time.sleep(self._delay)
-            r = self._s.get(_BASE + path)
+        # Exponential backoff on 403/429 — Sofascore throttles a busy IP for
+        # minutes, so give it real time to recover before giving up.
+        for attempt in range(7):
+            time.sleep(self._delay + self._cooldown)
+            try:
+                r = self._s.get(_BASE + path)
+            except Exception as e:
+                if attempt == 6:
+                    raise SofaError(f"transport error {path}: {e}") from e
+                time.sleep(3 * (attempt + 1))
+                continue
             if r.status_code == 200:
+                self._cooldown = max(0.0, self._cooldown - 0.4)
                 data = r.json()
                 if cache:
                     cp.write_text(json.dumps(data))
@@ -59,7 +69,10 @@ class SofaClient:
                     return None
                 raise SofaError(f"404 {path}")
             if r.status_code in (403, 429):
-                time.sleep(1.5 * (attempt + 1))
+                wait = min(60.0, 2.0 ** attempt)
+                # a sustained throttle: raise the per-call cooldown for a while
+                self._cooldown = min(4.0, self._cooldown + 0.5)
+                time.sleep(wait)
                 continue
             raise SofaError(f"{r.status_code} {path}")
         raise SofaError(f"rate-limited on {path}")

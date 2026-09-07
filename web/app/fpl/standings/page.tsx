@@ -38,6 +38,7 @@ export default function StandingsPage() {
   >([]);
   const [config, setConfig] = useState<DraftConfig | null>(null);
 
+
   useEffect(() => {
     loadBoard().then((d) => {
       setPlayers(d.players);
@@ -75,6 +76,32 @@ export default function StandingsPage() {
       .map((r) => ({ ...r, projRank: projRank.get(r.entry_id) ?? r.rank, gap: leaderFinal - r.finalPts }));
   }, [standings, byEntry]);
 
+  // "catch the leader" — where you sit, and the single best move to gain ground
+  const path = useMemo(() => {
+    const meRow = rows.find((r) => String(r.entry_id) === String(config?.entryId));
+    if (!meRow) return null;
+    const ahead = rows
+      .filter((r) => r.finalPts > meRow.finalPts)
+      .sort((a, b) => a.finalPts - b.finalPts)[0];
+    const leader = rows.reduce((m, r) => (r.finalPts > m.finalPts ? r : m), rows[0]);
+    const myMg = byEntry.get(String(config?.entryId));
+    const myWorstStarter = myMg
+      ? Math.min(...(bestXI(myMg.players).xi.map((p) => p.ros)))
+      : 0;
+    const mineIds = new Set(myMg?.players.map((p) => p.extId) ?? []);
+    const bestFA = players
+      .filter((p) => p.available && !mineIds.has(p.extId) && !p.unavailable)
+      .sort((a, b) => b.ros - a.ros)[0];
+    return {
+      meRow,
+      toNext: ahead ? Math.round(ahead.finalPts - meRow.finalPts) : 0,
+      nextName: ahead?.name,
+      toLeader: Math.round(leader.finalPts - meRow.finalPts),
+      leaderName: leader.name,
+      move: bestFA && bestFA.ros - myWorstStarter > 20 ? { name: bestFA.name, gain: Math.round(bestFA.ros - myWorstStarter) } : null,
+    };
+  }, [rows, config, byEntry, players]);
+
   if (!standings.length) {
     return (
       <p className="card p-3 text-sm text-[var(--muted)]">
@@ -85,6 +112,24 @@ export default function StandingsPage() {
 
   return (
     <div className="space-y-6">
+      {path && (
+        <div className="card p-3 text-sm">
+          <b>Your path.</b> Projected to finish <b>#{path.meRow.projRank}</b>
+          {path.nextName && path.toNext > 0 ? (
+            <> — <b>{path.toNext}</b> pts behind {path.nextName}</>
+          ) : path.meRow.projRank === 1 ? (
+            <> — projected champion, hold your ground</>
+          ) : null}
+          {path.toLeader > 0 && (
+            <span className="text-[var(--muted)]"> ({path.toLeader} behind {path.leaderName})</span>
+          )}
+          {path.move && (
+            <div className="mt-1 text-[var(--good)]">
+              Biggest single move: claim <b>{path.move.name}</b> (+{path.move.gain} rest-of-season).
+            </div>
+          )}
+        </div>
+      )}
       <section className="space-y-2">
         <h1 className="text-xl font-semibold">
           Standings <span className="text-sm font-normal text-[var(--muted)]">· {isH2H ? "head-to-head" : "total points"}</span>

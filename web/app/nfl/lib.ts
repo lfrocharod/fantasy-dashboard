@@ -160,3 +160,179 @@ export async function loadNfl(): Promise<{ players: NflPlayer[]; config: DraftCo
   const d = await r.json();
   return { players: (d.players ?? []).map(toPlayer), config: d.config ?? null };
 }
+
+// ---- fixture ticker + team watch -----------------------------------------
+export interface NflClubFix {
+  team: string;
+  cells: WeekOpp[];
+  avgFdr: number;
+}
+
+export function nflClubFixtures(players: NflPlayer[]): NflClubFix[] {
+  const seen = new Map<string, NflPlayer>();
+  for (const p of players) {
+    if (!p.team || seen.has(p.team)) continue;
+    if (p.matchups.length) seen.set(p.team, p);
+  }
+  return [...seen.entries()]
+    .map(([team, p]) => {
+      const cells = p.matchups;
+      const rated = cells.filter((c) => c.fdr);
+      return {
+        team,
+        cells,
+        avgFdr: rated.length ? rated.reduce((a, c) => a + c.fdr, 0) / rated.length : 3,
+      };
+    })
+    .sort((a, b) => a.avgFdr - b.avgFdr || a.team.localeCompare(b.team));
+}
+
+export interface NflClubDossier {
+  team: string;
+  fixtures: WeekOpp[];
+  avgFdr: number;
+  starters: NflPlayer[]; // fantasy-relevant projected starters
+  bench: NflPlayer[]; // next man up at each spot
+  doubts: NflPlayer[];
+  bye: number;
+}
+
+const STARTER_CAP: Record<string, number> = { QB: 1, RB: 2, WR: 3, TE: 1, K: 1, DST: 1 };
+
+export function nflClubDossiers(players: NflPlayer[]): NflClubDossier[] {
+  const byTeam = new Map<string, NflPlayer[]>();
+  for (const p of players) {
+    if (!p.team) continue;
+    (byTeam.get(p.team) ?? byTeam.set(p.team, []).get(p.team)!).push(p);
+  }
+  const fx = new Map(nflClubFixtures(players).map((c) => [c.team, c]));
+  return [...byTeam.entries()]
+    .map(([team, list]) => {
+      const c = fx.get(team);
+      const starters: NflPlayer[] = [];
+      const bench: NflPlayer[] = [];
+      for (const pos of ["QB", "RB", "WR", "TE", "K", "DST"]) {
+        const ranked = list
+          .filter((p) => p.pos === pos && !OUT_STATUS.has(p.injury))
+          // ESPN "% started" is the crowd's read on who the guy is; break ties on our projection
+          .sort((a, b) => b.pctStarted - a.pctStarted || b.rosProj - a.rosProj);
+        starters.push(...ranked.slice(0, STARTER_CAP[pos]));
+        bench.push(...ranked.slice(STARTER_CAP[pos], STARTER_CAP[pos] + 1));
+      }
+      return {
+        team,
+        fixtures: c?.cells ?? [],
+        avgFdr: c?.avgFdr ?? 3,
+        starters,
+        bench,
+        doubts: list
+          .filter((p) => p.injury !== "ACTIVE")
+          .sort((a, b) => b.rosProj - a.rosProj),
+        bye: list.find((p) => p.bye)?.bye ?? 0,
+      };
+    })
+    .sort((a, b) => a.avgFdr - b.avgFdr || a.team.localeCompare(b.team));
+}
+
+// ---- playoff odds (Monte Carlo) -----------------------------------------
+export interface Standing {
+  team_id: number;
+  name: string;
+  wins: number;
+  losses: number;
+  ties: number;
+  pf: number;
+}
+export interface SchedRow {
+  week: number;
+  home: number;
+  away: number;
+}
+export interface PlayoffOdds {
+  teamId: number;
+  name: string;
+  isMine: boolean;
+  projWins: number;
+  playoffPct: number; // P(finish in a playoff seed)
+  byePct: number; // P(top-2 seed)
+}
+
+function gaussian(mean: number, sd: number): number {
+  // Box–Muller
+  const u = 1 - Math.random();
+  const v = Math.random();
+  return mean + sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+export function simPlayoffs(
+  managers: NflManager[],
+  standings: Standing[],
+  schedule: SchedRow[],
+  slots: Record<string, number>,
+  currentWeek: number,
+  regWeeks: number,
+  playoffTeams: number,
+  myTeamId: number | null,
+  iters = 3000,
+): PlayoffOdds[] {
+  const teamIds = managers.map((m) => m.teamId);
+  const rec0 = new Map(standings.map((s) => [s.team_id, s.wins + 0.5 * s.ties]));
+  const pf0 = new Map(standings.map((s) => [s.team_id, s.pf]));
+  // each team's projected weekly score (best lineup for that week index)
+  const weekScore = new Map<number, number[]>();
+  for (const m of managers) {
+    const arr: number[] = [];
+    for (let w = currentWeek; w <= regWeeks; w++) {
+      arr.push(optimalLineup(m.players, slots, w - currentWeek).total);
+    }
+    weekScore.set(m.teamId, arr);
+  }
+  const remaining = schedule.filter((g) => g.week >= currentWeek && g.week <= regWeeks);
+
+  const madeCount = new Map<number, number>();
+  const byeCount = new Map<number, number>();
+  const winSum = new Map<number, number>();
+  for (const id of teamIds) {
+    madeCount.set(id, 0);
+    byeCount.set(id, 0);
+    winSum.set(id, 0);
+  }
+
+  for (let it = 0; it < iters; it++) {
+    const wins = new Map(teamIds.map((id) => [id, rec0.get(id) ?? 0]));
+    const pf = new Map(teamIds.map((id) => [id, pf0.get(id) ?? 0]));
+    for (const g of remaining) {
+      const idx = g.week - currentWeek;
+      const hs = gaussian(weekScore.get(g.home)?.[idx] ?? 90, 24);
+      const as = gaussian(weekScore.get(g.away)?.[idx] ?? 90, 24);
+      pf.set(g.home, (pf.get(g.home) ?? 0) + Math.max(0, hs));
+      pf.set(g.away, (pf.get(g.away) ?? 0) + Math.max(0, as));
+      if (hs > as) wins.set(g.home, (wins.get(g.home) ?? 0) + 1);
+      else if (as > hs) wins.set(g.away, (wins.get(g.away) ?? 0) + 1);
+      else {
+        wins.set(g.home, (wins.get(g.home) ?? 0) + 0.5);
+        wins.set(g.away, (wins.get(g.away) ?? 0) + 0.5);
+      }
+    }
+    const seeded = [...teamIds].sort((a, b) => {
+      const dw = (wins.get(b) ?? 0) - (wins.get(a) ?? 0);
+      return dw !== 0 ? dw : (pf.get(b) ?? 0) - (pf.get(a) ?? 0);
+    });
+    for (let i = 0; i < seeded.length; i++) {
+      if (i < playoffTeams) madeCount.set(seeded[i], (madeCount.get(seeded[i]) ?? 0) + 1);
+      if (i < 2) byeCount.set(seeded[i], (byeCount.get(seeded[i]) ?? 0) + 1);
+    }
+    for (const id of teamIds) winSum.set(id, (winSum.get(id) ?? 0) + (wins.get(id) ?? 0));
+  }
+
+  return managers
+    .map((m) => ({
+      teamId: m.teamId,
+      name: m.name,
+      isMine: m.teamId === myTeamId,
+      projWins: (winSum.get(m.teamId) ?? 0) / iters,
+      playoffPct: (100 * (madeCount.get(m.teamId) ?? 0)) / iters,
+      byePct: (100 * (byeCount.get(m.teamId) ?? 0)) / iters,
+    }))
+    .sort((a, b) => b.playoffPct - a.playoffPct || b.projWins - a.projWins);
+}

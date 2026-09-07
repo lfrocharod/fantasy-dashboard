@@ -32,11 +32,27 @@ def _team_match(uefa_team: str, fr: FormRow) -> float:
     return sc
 
 
+def _infer_role(nominal: str, sofa_role: str, fr: FormRow) -> str:
+    """Sofascore's per-match position isn't always in the aggregate feed, so
+    when it says nothing, infer 'playing forward' from output: a listed MID/DEF
+    with a striker's underlying rate over a real sample is a leverage pick."""
+    if sofa_role and sofa_role != nominal:
+        return sofa_role
+    if nominal in ("MID", "DEF") and fr.recent_minutes >= 200:
+        npxg90 = fr.recent_npxg / (fr.recent_minutes / 90.0)
+        sh90 = fr.recent_shots / (fr.recent_minutes / 90.0)
+        if npxg90 >= 0.45 and sh90 >= 2.2:
+            return "FWD"
+    return nominal
+
+
 def build_player_form(
     players: list[Player],
     team_names: dict[int, str],
     form_rows: list[FormRow],
+    role_overrides: dict | None = None,
 ) -> tuple[list[PlayerForm], list[tuple[int, str]]]:
+    role_overrides = role_overrides or {}
     out: list[PlayerForm] = []
     unmatched: list[tuple[int, str]] = []
     by_surname: dict[str, list[FormRow]] = {}
@@ -74,10 +90,11 @@ def build_player_form(
         # over it is worse than trusting the roster.
         tscore = _team_match(uefa_team, best)
         team_ok = tscore >= 0.45 or best.recent_minutes == 0
-        role = best.role or p.position
+        ovr = role_overrides.get(str(p.uefa_player_id)) or role_overrides.get(p.name)
+        role = (str(ovr).upper() if ovr else None) or _infer_role(p.position, best.role, best)
         note = ""
-        if best.role and best.role != p.position:
-            note = f"listed {p.position}, playing {best.role}"
+        if role != p.position:
+            note = f"listed {p.position}, playing {role}"
         if not team_ok:
             note = f"now at {best.team}?" + (f" — {note}" if note else "")
         elif 0.45 <= tscore < 0.62 and best.recent_minutes > 0:

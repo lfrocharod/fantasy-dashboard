@@ -32,10 +32,11 @@ export default async function TeamWatchPage() {
   return (
     <div className="space-y-6">
       <p className="text-sm text-[var(--muted)]">
-        One card per club, sorted by easiest fixture run first. Strength rating, next 5 matchdays,
-        the probable XI from start-probabilities, set-piece duty, injury / rotation doubts, and any
-        player our roster still lists here that the form cross-check says has moved on. Use it to
-        decide who to target for a specific run of games.
+        One card per club, sorted by easiest fixture run first. Strength rating, next 5 matchdays, a
+        formation-legal probable XI (likeliest starter at each slot, with start %), the rest of the
+        rotation pool, set-piece duty, injury / rotation doubts, and any player our roster still lists
+        here that the form cross-check says has moved on. Use it to decide who to target for a
+        specific run of games.
       </p>
 
       {teams.map((t) => (
@@ -152,6 +153,20 @@ export default async function TeamWatchPage() {
                 </tbody>
               </table>
             </div>
+
+            {t.bench.length > 0 && (
+              <div className="text-xs text-[var(--muted)]">
+                <span className="font-semibold text-[var(--text)]">Also in the pool: </span>
+                {t.bench
+                  .map(
+                    (p) =>
+                      `${p.name} (${p.position}${
+                        p.startProb ? `, ${Math.round(p.startProb * 100)}%` : ""
+                      })`,
+                  )
+                  .join(", ")}
+              </div>
+            )}
           </div>
         </Section>
       ))}

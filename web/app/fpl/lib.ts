@@ -440,3 +440,159 @@ export async function loadBoard(): Promise<BoardData> {
     config: d.config ?? null,
   };
 }
+
+// ---- fixture ticker + team watch -----------------------------------------
+export interface ClubFix {
+  team: string;
+  cells: { gw: number; opp: string; home: boolean | null; fdr: number }[];
+  avgFdr: number;
+}
+
+/** One fixture run per PL club, from any player on that club (opp/fdr are
+ * team-level, position-independent). */
+export function clubFixtures(players: FplPlayer[]): ClubFix[] {
+  const seen = new Map<string, FplPlayer>();
+  for (const p of players) {
+    if (!p.team || seen.has(p.team)) continue;
+    if (p.gws.length) seen.set(p.team, p);
+  }
+  const out = [...seen.entries()].map(([team, p]) => {
+    const cells = p.gws.map((g) => ({
+      gw: g.gw,
+      opp: g.opp.replace(/ \(.\)$/, ""),
+      home: g.home,
+      fdr: g.fdr,
+    }));
+    const rated = cells.filter((c) => c.fdr);
+    return { team, cells, avgFdr: rated.length ? rated.reduce((a, c) => a + c.fdr, 0) / rated.length : 3 };
+  });
+  return out.sort((a, b) => a.avgFdr - b.avgFdr || a.team.localeCompare(b.team));
+}
+
+export interface ClubDossier {
+  team: string;
+  fixtures: ClubFix["cells"];
+  avgFdr: number;
+  probableXI: FplPlayer[];
+  bench: FplPlayer[];
+  setPieces: { pk: FplPlayer[]; fk: FplPlayer[]; ck: FplPlayer[] };
+  doubts: FplPlayer[];
+  keyPlayers: FplPlayer[];
+}
+
+/** Chance a player starts — modelled p_start if we have it, else a prior from ROS/GW output. */
+function fplStartScore(p: FplPlayer): number {
+  if (p.pStart > 0) return p.pStart;
+  return Math.max(0.12, Math.min(0.7, p.rosPpg / 6));
+}
+
+/**
+ * A plausible XI: one keeper, then the highest-start-score outfielders subject to
+ * 3–5 DEF / 2–5 MID / 1–3 FWD so we never render a nonsense shape. Returns [xi, bench].
+ */
+function fplProbableXI(list: FplPlayer[]): [FplPlayer[], FplPlayer[]] {
+  const pool = [...list]
+    .filter((p) => p.status === "a")
+    .sort((a, b) => fplStartScore(b) - fplStartScore(a) || b.rosPpg - a.rosPpg);
+  const xi = pool.filter((p) => p.pos === "GKP").slice(0, 1);
+  const cap: Record<string, number> = { DEF: 5, MID: 5, FWD: 3 };
+  const min: Record<string, number> = { DEF: 3, MID: 2, FWD: 1 };
+  const count: Record<string, number> = { DEF: 0, MID: 0, FWD: 0 };
+  for (const p of pool) {
+    if (p.pos === "GKP" || xi.length >= 11) continue;
+    if (count[p.pos] == null || count[p.pos] >= cap[p.pos]) continue;
+    const needElsewhere =
+      Math.max(0, min.DEF - count.DEF) +
+      Math.max(0, min.MID - count.MID) +
+      Math.max(0, min.FWD - count.FWD) -
+      Math.max(0, min[p.pos] - count[p.pos]);
+    if (11 - xi.length - 1 < needElsewhere) continue;
+    xi.push(p);
+    count[p.pos] += 1;
+  }
+  const chosen = new Set(xi.map((p) => p.extId));
+  return [xi, pool.filter((p) => !chosen.has(p.extId)).slice(0, 6)];
+}
+
+export function clubDossiers(players: FplPlayer[]): ClubDossier[] {
+  const byTeam = new Map<string, FplPlayer[]>();
+  for (const p of players) {
+    if (!p.team) continue;
+    (byTeam.get(p.team) ?? byTeam.set(p.team, []).get(p.team)!).push(p);
+  }
+  const fx = new Map(clubFixtures(players).map((c) => [c.team, c]));
+  const has = (p: FplPlayer, tag: string) =>
+    (p.setPiece ?? "").split(",").map((x) => x.trim()).includes(tag);
+  return [...byTeam.entries()]
+    .map(([team, list]) => {
+      const c = fx.get(team);
+      const [probableXI, bench] = fplProbableXI(list);
+      return {
+        team,
+        fixtures: c?.cells ?? [],
+        avgFdr: c?.avgFdr ?? 3,
+        probableXI,
+        bench,
+        setPieces: {
+          pk: list.filter((p) => has(p, "P")),
+          fk: list.filter((p) => has(p, "F")),
+          ck: list.filter((p) => has(p, "C")),
+        },
+        doubts: list.filter((p) => p.unavailable || p.status !== "a")
+          .sort((a, b) => b.totalPoints - a.totalPoints),
+        keyPlayers: [...list].sort((a, b) => b.ros - a.ros).slice(0, 5),
+      };
+    })
+    .sort((a, b) => a.avgFdr - b.avgFdr || a.team.localeCompare(b.team));
+}
+
+export const FDR_BG_MAP: Record<number, string> = {
+  1: "rgba(34,197,94,0.32)",
+  2: "rgba(132,204,22,0.24)",
+  3: "rgba(148,163,184,0.14)",
+  4: "rgba(249,115,22,0.24)",
+  5: "rgba(239,68,68,0.30)",
+};
+
+// ---- predict rivals' waiver claims -------------------------------------
+export interface ClaimPrediction {
+  rivalName: string;
+  weakPos: string;
+  weakStarter: string;
+  target: FplPlayer;
+  gain: number;
+}
+
+export function predictClaims(
+  managers: Manager[],
+  players: FplPlayer[],
+  myEntryId: string | null,
+): ClaimPrediction[] {
+  const ownedByAnyone = new Set(
+    managers.flatMap((m) => m.players.map((p) => p.extId)),
+  );
+  const freeAgents = players.filter(
+    (p) => !ownedByAnyone.has(p.extId) && p.status === "a" && !p.unavailable,
+  );
+  const out: ClaimPrediction[] = [];
+  for (const mg of managers) {
+    if (mg.isMine || mg.entryId === String(myEntryId)) continue;
+    const { xi } = bestXI(mg.players, (p) => p.ros);
+    // weakest starter
+    const weak = [...xi].sort((a, b) => a.ros - b.ros)[0];
+    if (!weak) continue;
+    const target = freeAgents
+      .filter((p) => p.pos === weak.pos)
+      .sort((a, b) => b.ros - a.ros)[0];
+    if (target && target.ros - weak.ros > 15) {
+      out.push({
+        rivalName: mg.name,
+        weakPos: weak.pos,
+        weakStarter: weak.name,
+        target,
+        gain: Math.round(target.ros - weak.ros),
+      });
+    }
+  }
+  return out.sort((a, b) => b.gain - a.gain);
+}
