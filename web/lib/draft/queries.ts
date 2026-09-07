@@ -20,6 +20,11 @@ export interface DraftConfig {
   standings: unknown[];
   schedule: unknown[];
   fplMode: string; // 'c' classic / 'h' head-to-head
+  // NFL in-season
+  nflWeek: number;
+  nflPlayoffWeeks: number[];
+  nflSlots: Record<string, number>;
+  nflMyRoster: string[];
 }
 
 const DEFAULT_ROSTER: Record<string, number> = {
@@ -32,6 +37,13 @@ function k(sport: string, key: string) {
 
 const FPL_ROSTER: Record<string, number> = { GKP: 2, DEF: 5, MID: 5, FWD: 3 };
 
+function jsonArr(v: string | undefined): unknown[] {
+  try { return v ? JSON.parse(v) : []; } catch { return []; }
+}
+function jsonObj(v: string | undefined): Record<string, number> {
+  try { return v ? JSON.parse(v) : {}; } catch { return {}; }
+}
+
 export async function getDraftConfig(sport: Sport): Promise<DraftConfig> {
   const s = await getSettings([
     k(sport, "teams"), k(sport, "my_slot"), k(sport, "my_team_id"),
@@ -39,6 +51,7 @@ export async function getDraftConfig(sport: Sport): Promise<DraftConfig> {
     k(sport, "espn_s2"), k(sport, "swid"), k(sport, "league_id"),
     k(sport, "entry_id"), k(sport, "pl_profile"),
     k(sport, "my_squad"), k(sport, "standings"), k(sport, "schedule"), k(sport, "mode"),
+    k(sport, "week"), k(sport, "playoff_weeks"), k(sport, "slots"), k(sport, "my_roster"),
   ]);
   const fpl = sport === "fpl";
   let roster = fpl ? FPL_ROSTER : DEFAULT_ROSTER;
@@ -81,6 +94,10 @@ export async function getDraftConfig(sport: Sport): Promise<DraftConfig> {
     standings,
     schedule,
     fplMode: s[k(sport, "mode")] || "c",
+    nflWeek: Number(s[k(sport, "week")]) || 1,
+    nflPlayoffWeeks: jsonArr(s[k(sport, "playoff_weeks")]) as number[],
+    nflSlots: jsonObj(s[k(sport, "slots")]),
+    nflMyRoster: jsonArr(s[k(sport, "my_roster")]) as string[],
   };
 }
 

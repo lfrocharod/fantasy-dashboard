@@ -15,16 +15,32 @@ _PAGE = {
     "standard": "https://www.fantasypros.com/nfl/rankings/consensus-cheatsheets.php",
 }
 _RE = re.compile(r"var ecrData\s*=\s*(\{.*?\});", re.DOTALL)
+_SCORE_SLUG = {"ppr": "ppr", "half": "half-point-ppr", "standard": "standard"}
 
 
-def fetch(scoring: str = "ppr") -> list[dict]:  # pragma: no cover - network
-    url = _PAGE.get(scoring, _PAGE["ppr"])
+def _scrape(url: str) -> list[dict]:  # pragma: no cover - network
     with httpx.Client(headers={"User-Agent": _UA}, timeout=30, follow_redirects=True) as c:
         html = c.get(url).text
     m = _RE.search(html)
     if not m:
-        raise RuntimeError("FantasyPros: ecrData not found (page layout changed?)")
+        raise RuntimeError(f"FantasyPros: ecrData not found at {url}")
     return json.loads(m.group(1)).get("players", [])
+
+
+def fetch(scoring: str = "ppr") -> list[dict]:  # pragma: no cover - network
+    return _scrape(_PAGE.get(scoring, _PAGE["ppr"]))
+
+
+def fetch_weekly(scoring: str, week: int) -> list[dict]:  # pragma: no cover - network
+    """This week's flex expert-consensus ranks (QB/RB/WR/TE/FLEX in one list)."""
+    slug = _SCORE_SLUG.get(scoring, "ppr")
+    return _scrape(f"https://www.fantasypros.com/nfl/rankings/{slug}-flex.php?week={week}")
+
+
+def fetch_ros(scoring: str) -> list[dict]:  # pragma: no cover - network
+    """Rest-of-season overall expert-consensus ranks."""
+    slug = _SCORE_SLUG.get(scoring, "ppr")
+    return _scrape(f"https://www.fantasypros.com/nfl/rankings/ros-{slug}-overall.php")
 
 
 def index_by_name(rows: list[dict]) -> dict[str, dict]:
