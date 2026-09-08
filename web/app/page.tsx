@@ -116,11 +116,11 @@ export default async function HomePage() {
           {[
             ["/ucl/optimizer", "CL optimizer"],
             ["/ucl/rivals", "CL rivals"],
-            ["/fpl", "FPL planner"],
+            ["/fpl/optimizer", "FPL optimizer"],
             ["/fpl/trade", "FPL trade lab"],
-            ["/nfl", "NFL lineup"],
-            ["/nfl/waivers", "NFL waivers"],
-            ["/nfl/planner", "NFL bye / playoffs"],
+            ["/nfl/optimizer", "NFL optimizer"],
+            ["/nfl/players", "NFL free agents"],
+            ["/nfl/standings", "NFL league"],
           ].map(([href, label]) => (
             <Link key={href} href={href} className="btn">
               {label}

@@ -1,8 +1,12 @@
+import { pickFormationXI } from "@/lib/xi";
+
 export interface GwCell {
   gw: number;
   opp: string;
   home: boolean | null;
-  fdr: number;
+  fdr: number; // position-aware difficulty for this player, 1 (easy) … 5 (hard)
+  fdrAtt?: number; // difficulty of getting goals/assists (opponent's defensive solidity)
+  fdrDef?: number; // difficulty of a clean sheet (opponent's attacking threat)
   xpts: number;
   cs: number;
 }
@@ -279,6 +283,11 @@ export function weakSpots(
   const bar = h === "short" ? 1.5 : h === "medium" ? 6 : 18;
   const out: { out: FplPlayer; in: FplPlayer; gain: number }[] = [];
   for (const s of lineup) {
+    // An elite draft asset (top ~20) whose projection looks weak is almost
+    // always a thin-sample artefact — a new signing, an injury returnee, a
+    // player easing back to full minutes. Their ceiling dwarfs any streamer's;
+    // never tell the user to waive them. (This is Barcola, Wirtz, etc.)
+    if (s.providerRank && s.providerRank <= 20) continue;
     const best = fitFree.filter((p) => p.pos === s.pos).sort((a, b) => val(b) - val(a))[0];
     if (!best) continue;
     const gain = val(best) - val(s);
@@ -444,12 +453,19 @@ export async function loadBoard(): Promise<BoardData> {
 // ---- fixture ticker + team watch -----------------------------------------
 export interface ClubFix {
   team: string;
-  cells: { gw: number; opp: string; home: boolean | null; fdr: number }[];
+  cells: {
+    gw: number;
+    opp: string;
+    home: boolean | null;
+    fdr: number; // blend fallback
+    fdrAtt: number; // attacking-returns difficulty (opp defence)
+    fdrDef: number; // clean-sheet difficulty (opp attack)
+  }[];
   avgFdr: number;
 }
 
-/** One fixture run per PL club, from any player on that club (opp/fdr are
- * team-level, position-independent). */
+/** One fixture run per PL club. The per-GW cell carries both position-neutral
+ * axes (fdrAtt / fdrDef) so the ticker can be viewed for attackers or defenders. */
 export function clubFixtures(players: FplPlayer[]): ClubFix[] {
   const seen = new Map<string, FplPlayer>();
   for (const p of players) {
@@ -462,9 +478,15 @@ export function clubFixtures(players: FplPlayer[]): ClubFix[] {
       opp: g.opp.replace(/ \(.\)$/, ""),
       home: g.home,
       fdr: g.fdr,
+      fdrAtt: g.fdrAtt ?? g.fdr,
+      fdrDef: g.fdrDef ?? g.fdr,
     }));
-    const rated = cells.filter((c) => c.fdr);
-    return { team, cells, avgFdr: rated.length ? rated.reduce((a, c) => a + c.fdr, 0) / rated.length : 3 };
+    const rated = cells.filter((c) => c.fdrAtt);
+    return {
+      team,
+      cells,
+      avgFdr: rated.length ? rated.reduce((a, c) => a + c.fdrAtt, 0) / rated.length : 3,
+    };
   });
   return out.sort((a, b) => a.avgFdr - b.avgFdr || a.team.localeCompare(b.team));
 }
@@ -487,31 +509,19 @@ function fplStartScore(p: FplPlayer): number {
 }
 
 /**
- * A plausible XI: one keeper, then the highest-start-score outfielders subject to
- * 3–5 DEF / 2–5 MID / 1–3 FWD so we never render a nonsense shape. Returns [xi, bench].
+ * A plausible XI shaped to the club's actual formation (see lib/xi.ts): one
+ * keeper, then each line sized by how many clear starters play there.
  */
 function fplProbableXI(list: FplPlayer[]): [FplPlayer[], FplPlayer[]] {
-  const pool = [...list]
-    .filter((p) => p.status === "a")
-    .sort((a, b) => fplStartScore(b) - fplStartScore(a) || b.rosPpg - a.rosPpg);
-  const xi = pool.filter((p) => p.pos === "GKP").slice(0, 1);
-  const cap: Record<string, number> = { DEF: 5, MID: 5, FWD: 3 };
-  const min: Record<string, number> = { DEF: 3, MID: 2, FWD: 1 };
-  const count: Record<string, number> = { DEF: 0, MID: 0, FWD: 0 };
-  for (const p of pool) {
-    if (p.pos === "GKP" || xi.length >= 11) continue;
-    if (count[p.pos] == null || count[p.pos] >= cap[p.pos]) continue;
-    const needElsewhere =
-      Math.max(0, min.DEF - count.DEF) +
-      Math.max(0, min.MID - count.MID) +
-      Math.max(0, min.FWD - count.FWD) -
-      Math.max(0, min[p.pos] - count[p.pos]);
-    if (11 - xi.length - 1 < needElsewhere) continue;
-    xi.push(p);
-    count[p.pos] += 1;
-  }
-  const chosen = new Set(xi.map((p) => p.extId));
-  return [xi, pool.filter((p) => !chosen.has(p.extId)).slice(0, 6)];
+  const pool = list.filter((p) => p.status === "a");
+  const { xi, bench } = pickFormationXI(pool, {
+    isGK: (p) => p.pos === "GKP",
+    isDEF: (p) => p.pos === "DEF",
+    isMID: (p) => p.pos === "MID",
+    isFWD: (p) => p.pos === "FWD",
+    score: fplStartScore,
+  });
+  return [xi, bench];
 }
 
 export function clubDossiers(players: FplPlayer[]): ClubDossier[] {
@@ -578,8 +588,11 @@ export function predictClaims(
   for (const mg of managers) {
     if (mg.isMine || mg.entryId === String(myEntryId)) continue;
     const { xi } = bestXI(mg.players, (p) => p.ros);
-    // weakest starter
-    const weak = [...xi].sort((a, b) => a.ros - b.ros)[0];
+    // weakest starter a rival would realistically move on — not an elite asset
+    // they're holding through a slow start / injury return.
+    const weak = [...xi]
+      .filter((p) => !(p.providerRank && p.providerRank <= 20))
+      .sort((a, b) => a.ros - b.ros)[0];
     if (!weak) continue;
     const target = freeAgents
       .filter((p) => p.pos === weak.pos)

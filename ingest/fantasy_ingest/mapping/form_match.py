@@ -55,18 +55,26 @@ def build_player_form(
     role_overrides = role_overrides or {}
     out: list[PlayerForm] = []
     unmatched: list[tuple[int, str]] = []
-    by_surname: dict[str, list[FormRow]] = {}
-    for fr in form_rows:
+    by_surname: dict[str, list[int]] = {}
+    for i, fr in enumerate(form_rows):
         if fr.norm_name.split():
-            by_surname.setdefault(fr.norm_name.split()[-1], []).append(fr)
+            by_surname.setdefault(fr.norm_name.split()[-1], []).append(i)
 
-    for p in players:
+    # ---- 1. every acceptable (player, form-row) pairing, with a score --------
+    pairs: list[tuple[float, int, int]] = []
+    for pi, p in enumerate(players):
         uefa_team = team_names.get(p.team_id, "")
-        surname = normalise(p.name).split()[-1] if normalise(p.name).split() else ""
-        cands = by_surname.get(surname, []) or form_rows
-        p_tokens = len(normalise(p.name).split())
-        best, best_s = None, 0.0
-        for fr in cands:
+        nn = normalise(p.name)
+        toks_p = nn.split()
+        surname = toks_p[-1] if toks_p else ""
+        p_tokens = len(toks_p)
+        cand_idx = by_surname.get(surname) or range(len(form_rows))
+        # a sub-replacement-price player who has never logged a UEFA minute is an
+        # academy filler; it must not inherit a first-teamer's senior sample on a
+        # fuzzy match (that surfaced Rivas / Cardozo / Abdelkarim in probable XIs).
+        fringe = bool(p.price) and p.price < 4.0 and p.minutes_prior <= 0.02
+        for fi in cand_idx:
+            fr = form_rows[fi]
             ns = _name_score(p.name, fr)
             if ns * 100 < _NAME_FLOOR:
                 continue
@@ -77,12 +85,44 @@ def build_player_form(
             fr_tokens = len(fr.norm_name.split())
             if ts < 0.6 and (ns < 0.94 or abs(fr_tokens - p_tokens) >= 1):
                 continue
-            score = 0.7 * ns + 0.3 * ts
-            if score > best_s:
-                best, best_s = fr, score
-        if not best or best_s < 0.66:
+            # Mononym trap: "Gabriel" (a CB) must not grab "Gabriel Martinelli"
+            # just because they share a club. For a one-word UEFA name, the form
+            # row has to actually BE that name (or carry it as a standalone
+            # token) AND, if a role is known, not contradict the UEFA position
+            # by turning a GK/DEF into an attacker.
+            if p_tokens == 1 and fr_tokens > 1:
+                toks = fr.norm_name.split()
+                if nn != fr.norm_name and nn not in (toks[0], toks[-1]):
+                    continue
+                if p.position in ("GK", "DEF") and fr.role in ("MID", "FWD"):
+                    continue
+            if fringe and fr.recent_starts >= 2 and (ns < 0.96 or ts < 0.62):
+                continue
+            # Prefer a Sofascore row over an Understat one for the same player:
+            # it's the last-N *overall* window (cups + Champions League), not
+            # domestic-only. Small nudge — only decides near-ties.
+            src_bonus = 0.02 if getattr(fr, "source", "") == "sofascore" else 0.0
+            pairs.append((0.7 * ns + 0.3 * ts + src_bonus, pi, fi))
+
+    # ---- 2. greedy one-to-one assignment, highest-confidence pair first -----
+    # Independent per-player matching let a youth name and the real starter both
+    # claim the same form row; resolve globally so each row backs one player.
+    pairs.sort(key=lambda t: -t[0])
+    chosen: dict[int, FormRow] = {}
+    used_rows: set[int] = set()
+    for sc, pi, fi in pairs:
+        if sc < 0.66 or pi in chosen or fi in used_rows:
+            continue
+        chosen[pi] = form_rows[fi]
+        used_rows.add(fi)
+
+    # ---- 3. materialise PlayerForm rows ------------------------------------
+    for pi, p in enumerate(players):
+        best = chosen.get(pi)
+        if best is None:
             unmatched.append((p.uefa_player_id, p.name))
             continue
+        uefa_team = team_names.get(p.team_id, "")
 
         # Only call a player "transferred out" when the club really doesn't
         # match — a soft mismatch (0.4–0.55) is usually a naming quirk or
@@ -103,6 +143,7 @@ def build_player_form(
         out.append(
             PlayerForm(
                 player_id=p.uefa_player_id,
+                source=getattr(best, "source", "understat"),
                 source_team=best.team,
                 team_ok=team_ok,
                 role=role,

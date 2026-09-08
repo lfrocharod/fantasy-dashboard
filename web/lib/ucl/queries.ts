@@ -12,6 +12,8 @@ import {
   teams,
 } from "@/lib/db/schema";
 import { getSettings, KEYS } from "@/lib/settings";
+import { posFdr } from "@/lib/fdr";
+import { pickFormationXI } from "@/lib/xi";
 import type { Position } from "./formation";
 
 export interface PlayerRow {
@@ -168,6 +170,10 @@ export async function getFixtures(matchday: number) {
       awayXg: fixtures.awayXgEst,
       homeGoals: fixtures.homeGoals,
       awayGoals: fixtures.awayGoals,
+      homeAtk: home.attackRating,
+      homeDef: home.defenceRating,
+      awayAtk: away.attackRating,
+      awayDef: away.defenceRating,
     })
     .from(fixtures)
     .innerJoin(home, eq(home.uefaTeamId, fixtures.homeTeamId))
@@ -181,7 +187,9 @@ export interface TickerCell {
   opp: string;
   oppCode: string;
   home: boolean;
-  difficulty: number; // 1 (easiest) .. 5 (hardest)
+  difficulty: number; // 1 (easiest) .. 5 (hardest) — blended
+  attDifficulty: number; // for attackers (getting goals/assists)
+  defDifficulty: number; // for keepers/defenders (clean sheet)
   kickoff: Date | null;
 }
 
@@ -240,20 +248,28 @@ export async function getFixtureTicker(fromMatchday: number, ahead = 5): Promise
   };
 
   for (const f of fx) {
+    const h = posFdr(f.awayAtk, f.awayDef, true, "FWD", "ucl");
+    const hd = posFdr(f.awayAtk, f.awayDef, true, "DEF", "ucl");
     ensure(f.homeId, f.homeName, f.homeCode ?? "").cells.push({
       matchday: f.matchday,
       opp: f.awayName,
       oppCode: f.awayCode ?? "",
       home: true,
       difficulty: rate(f.awayAtk, f.awayDef, true),
+      attDifficulty: h.att,
+      defDifficulty: hd.def,
       kickoff: f.kickoff,
     });
+    const a = posFdr(f.homeAtk, f.homeDef, false, "FWD", "ucl");
+    const ad = posFdr(f.homeAtk, f.homeDef, false, "DEF", "ucl");
     ensure(f.awayId, f.awayName, f.awayCode ?? "").cells.push({
       matchday: f.matchday,
       opp: f.homeName,
       oppCode: f.homeCode ?? "",
       home: false,
       difficulty: rate(f.homeAtk, f.homeDef, false),
+      attDifficulty: a.att,
+      defDifficulty: ad.def,
       kickoff: f.kickoff,
     });
   }
@@ -284,45 +300,39 @@ export interface TeamDossier {
   topPicks: PlayerRow[]; // best xPts this matchday
 }
 
-/** Chance a player starts — real modelled value if we have it, else a prior from xPts. */
+/** Chance a player starts — prefer the composed projection value (blends
+ * recent form + season minutes + price), fall back to the raw form value, then
+ * to a prior from xPts. */
+/** Official Sofascore lineup status baked into the projection, once confirmed
+ * (~1h pre-KO): "start" | "bench" | null. Ground truth — beats every model
+ * number. */
+export function confirmedOf(p: { components?: unknown }): "start" | "bench" | null {
+  const v = (p.components as Record<string, number> | undefined)?.confirmed;
+  return v === 1 ? "start" : v === -1 ? "bench" : null;
+}
+
 function startScore(p: PlayerRow): number {
-  const s = p.startProb ?? p.pStart;
+  const c = confirmedOf(p);
+  if (c === "bench") return 0;
+  if (c === "start") return Math.max(0.99, p.pStart ?? 0.99);
+  const s = p.pStart ?? p.startProb;
   if (s != null && s > 0) return s;
   return Math.max(0.12, Math.min(0.7, (p.xpts ?? 0) / 6));
 }
 
 /**
- * Pick a plausible XI: exactly one keeper, then the highest-start-score outfield
- * players subject to 3–5 DEF / 2–5 MID / 1–3 FWD so we never surface a nonsense
- * shape (six midfielders, no keeper). Returns [xi, bench].
+ * Pick a plausible XI shaped to the team's actual formation: one keeper, then
+ * the lines sized by how many clear starters play in each. See lib/xi.ts.
  */
 function probableXIAndBench(list: PlayerRow[]): [PlayerRow[], PlayerRow[]] {
-  const pool = [...list]
-    .filter((p) => p.teamOk !== false && p.statusCode < 2)
-    .sort((a, b) => startScore(b) - startScore(a) || (b.xpts ?? 0) - (a.xpts ?? 0));
-  const gk = pool.filter((p) => p.position === "GK");
-  const xi: PlayerRow[] = gk.slice(0, 1);
-  const cap: Record<string, number> = { DEF: 5, MID: 5, FWD: 3 };
-  const min: Record<string, number> = { DEF: 3, MID: 2, FWD: 1 };
-  const count: Record<string, number> = { DEF: 0, MID: 0, FWD: 0 };
-  const outfield = pool.filter((p) => p.position !== "GK");
-  for (const p of outfield) {
-    if (xi.length >= 11) break;
-    const c = count[p.position];
-    if (c == null || c >= cap[p.position]) continue;
-    // leave room to still hit the other positions' minimums
-    const slotsLeft = 11 - xi.length;
-    const needElsewhere =
-      Math.max(0, min.DEF - count.DEF) +
-      Math.max(0, min.MID - count.MID) +
-      Math.max(0, min.FWD - count.FWD) -
-      Math.max(0, min[p.position] - c);
-    if (slotsLeft - 1 < needElsewhere) continue;
-    xi.push(p);
-    count[p.position] += 1;
-  }
-  const chosen = new Set(xi.map((p) => p.playerId));
-  const bench = pool.filter((p) => !chosen.has(p.playerId)).slice(0, 6);
+  const pool = list.filter((p) => p.teamOk !== false && p.statusCode < 2);
+  const { xi, bench } = pickFormationXI(pool, {
+    isGK: (p) => p.position === "GK",
+    isDEF: (p) => p.position === "DEF",
+    isMID: (p) => p.position === "MID",
+    isFWD: (p) => p.position === "FWD",
+    score: startScore,
+  });
   return [xi, bench];
 }
 
@@ -458,7 +468,27 @@ export interface RivalReport {
     ownedPct: number; // % of the mini-league (incl. you) that owns them
     mine: boolean;
   }[];
+  captainPicks: { playerId: number; name: string; count: number; mine: boolean }[];
+  strategy: { mode: "protect" | "hold" | "chase" | "free"; text: string; mdsLeft: number } | null;
   rivalCount: number;
+}
+
+/** A rival's saved squad — new rows are [{id,c,s,b}], older ones a bare list. */
+function normSquad(raw: unknown): {
+  ids: number[];
+  captainId: number | null;
+  starterIds: Set<number>;
+} {
+  if (!Array.isArray(raw) || raw.length === 0)
+    return { ids: [], captainId: null, starterIds: new Set() };
+  if (typeof raw[0] === "number")
+    return { ids: raw as number[], captainId: null, starterIds: new Set() };
+  const arr = raw as { id: number; c?: boolean; s?: boolean }[];
+  return {
+    ids: arr.map((x) => x.id),
+    captainId: arr.find((x) => x.c)?.id ?? null,
+    starterIds: new Set(arr.filter((x) => x.s).map((x) => x.id)),
+  };
 }
 
 /**
@@ -478,6 +508,8 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
     templateRisk: [],
     commonThreats: [],
     effectiveOwnership: [],
+    captainPicks: [],
+    strategy: null,
     rivalCount: 0,
   };
   if (!leagueId) return empty;
@@ -488,16 +520,19 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
     .where(and(eq(leagueStandings.leagueId, leagueId), eq(leagueStandings.matchday, matchday)))
     .orderBy(leagueStandings.rank);
 
-  const withSquads = standings.filter(
-    (r) => Array.isArray(r.squad) && (r.squad as number[]).length > 0,
-  );
+  const parsed = new Map(standings.map((r) => [r.entryId, normSquad(r.squad)]));
+  const withSquads = standings.filter((r) => (parsed.get(r.entryId)?.ids.length ?? 0) > 0);
   if (withSquads.length === 0) return empty;
 
   const mySquad = await getMySquad(matchday);
   const myIds = new Set<number>(mySquad.map((r) => r.playerId));
+  const myStarterIds = new Set<number>(
+    mySquad.filter((r) => r.isStarter).map((r) => r.playerId),
+  );
+  const myCaptainId = mySquad.find((r) => r.isCaptain)?.playerId ?? null;
 
   const allIds = new Set<number>(myIds);
-  for (const r of withSquads) for (const id of r.squad as number[]) allIds.add(id);
+  for (const r of withSquads) for (const id of parsed.get(r.entryId)!.ids) allIds.add(id);
 
   const meta = await db
     .select({
@@ -516,14 +551,26 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
     .where(inArray(players.uefaPlayerId, [...allIds]));
   const m = new Map(meta.map((x) => [x.playerId, x]));
 
-  const projectSquad = (ids: number[]): number => {
+  const projectSquad = (
+    ids: number[],
+    captainId: number | null,
+    starterIds: Set<number>,
+  ): number => {
     const rows = ids.map((id) => m.get(id)).filter(Boolean) as typeof meta;
-    const xi = [...rows].sort((a, b) => (b.xpts ?? 0) - (a.xpts ?? 0)).slice(0, 11);
+    // their actual XI if we have starter flags, else our best guess (top 11 by xPts)
+    const xi =
+      starterIds.size >= 11
+        ? rows.filter((r) => starterIds.has(r.playerId))
+        : [...rows].sort((a, b) => (b.xpts ?? 0) - (a.xpts ?? 0)).slice(0, 11);
     const total = xi.reduce((a, r) => a + (r.xpts ?? 0), 0);
-    return total + (xi[0]?.xpts ?? 0); // + captain (double the top starter)
+    // captain doubles once more: their pick if known, else the top XI scorer
+    const capX =
+      (captainId != null ? m.get(captainId)?.xpts : undefined) ??
+      Math.max(0, ...xi.map((r) => r.xpts ?? 0));
+    return total + capX;
   };
 
-  const myProjectedPoints = round(projectSquad([...myIds]));
+  const myProjectedPoints = round(projectSquad([...myIds], myCaptainId, myStarterIds));
   const myRank = standings.find((r) => r.entryId === myEntryId)?.rank ?? null;
 
   const mkP = (id: number, mine: boolean): RivalPlayer | null => {
@@ -543,7 +590,7 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
 
   const rivals: RivalRow[] = rivalStandings
     .map((r) => {
-      const ids = r.squad as number[];
+      const { ids, captainId, starterIds } = parsed.get(r.entryId)!;
       const theirSet = new Set(ids);
       const theirDiff = (ids.filter((id) => !myIds.has(id)).map((id) => mkP(id, false)).filter(Boolean) as RivalPlayer[]).sort(
         (a, b) => b.xpts - a.xpts,
@@ -551,7 +598,7 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
       const myEdges = ([...myIds].filter((id) => !theirSet.has(id)).map((id) => mkP(id, true)).filter(Boolean) as RivalPlayer[]).sort(
         (a, b) => b.xpts - a.xpts,
       );
-      const proj = round(projectSquad(ids));
+      const proj = round(projectSquad(ids, captainId, starterIds));
       return {
         entryId: r.entryId,
         managerName: r.managerName,
@@ -568,7 +615,8 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
     .sort((a, b) => a.rank - b.rank);
 
   const ownCount = new Map<number, number>();
-  for (const r of rivalStandings) for (const id of r.squad as number[]) ownCount.set(id, (ownCount.get(id) ?? 0) + 1);
+  for (const r of rivalStandings)
+    for (const id of parsed.get(r.entryId)!.ids) ownCount.set(id, (ownCount.get(id) ?? 0) + 1);
 
   const templateRisk = [...myIds]
     .map((id) => {
@@ -595,7 +643,8 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
   // effective ownership across the mini-league (your rivals + you)
   const leagueSize = withSquads.length;
   const ownAll = new Map<number, number>();
-  for (const r of withSquads) for (const id of r.squad as number[]) ownAll.set(id, (ownAll.get(id) ?? 0) + 1);
+  for (const r of withSquads)
+    for (const id of parsed.get(r.entryId)!.ids) ownAll.set(id, (ownAll.get(id) ?? 0) + 1);
   const effectiveOwnership = [...allIds]
     .map((id) => {
       const x = m.get(id);
@@ -611,6 +660,61 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
     .filter((r) => r.xpts > 0)
     .sort((a, b) => b.xpts - a.xpts);
 
+  // who the mini-league is captaining this matchday
+  const capCount = new Map<number, number>();
+  for (const r of withSquads) {
+    const cid = parsed.get(r.entryId)?.captainId;
+    if (cid) capCount.set(cid, (capCount.get(cid) ?? 0) + 1);
+  }
+  const captainPicks = [...capCount.entries()]
+    .map(([id, count]) => ({
+      playerId: id,
+      name: m.get(id)?.name ?? String(id),
+      count,
+      mine: myCaptainId === id,
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  // chase / protect: what your table position says about how to play the armband
+  // and differentials over the rest of the league phase
+  const mdsLeft = Math.max(0, 8 - matchday + 1);
+  const meStanding = standings.find((r) => r.entryId === myEntryId);
+  const rank = meStanding?.rank ?? null;
+  const room = mdsLeft * 14; // ~a plausible points swing between two managers per MD
+  let strategy: RivalReport["strategy"] = null;
+  if (rank != null && meStanding) {
+    const behind = standings.find((r) => r.rank === rank + 1);
+    const ahead = standings.find((r) => r.rank === rank - 1);
+    const gapAhead = ahead ? ahead.totalPoints - meStanding.totalPoints : null;
+    const leadOverBehind = behind ? meStanding.totalPoints - behind.totalPoints : null;
+    if (rank === 1) {
+      strategy =
+        (leadOverBehind ?? 999) > room
+          ? {
+              mode: "protect",
+              mdsLeft,
+              text: `You lead by ${leadOverBehind ?? "—"} with ${mdsLeft} MD left — protect it. Own what your rivals own (template), take the safe captain, and don't chase differentials that only help if they blow up.`,
+            }
+          : {
+              mode: "hold",
+              mdsLeft,
+              text: `Lead is only ${leadOverBehind ?? "—"} with ${mdsLeft} MD left — match your nearest rival's captain and their big differentials so a single haul can't flip the table.`,
+            };
+    } else if (gapAhead != null && gapAhead <= room) {
+      strategy = {
+        mode: "chase",
+        mdsLeft,
+        text: `${gapAhead} pts behind ${ahead?.managerName ?? "the spot ahead"} with ${mdsLeft} MD left — you need variance. Fade template, take the aggressive (differential) captain, and prioritise low-owned high-xPts players from the list below.`,
+      };
+    } else {
+      strategy = {
+        mode: "free",
+        mdsLeft,
+        text: `Out of realistic range of a prize place — just play the highest expected points every matchday, no need to hedge or gamble.`,
+      };
+    }
+  }
+
   return {
     ready: true,
     myProjectedPoints,
@@ -619,6 +723,8 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
     templateRisk,
     commonThreats,
     effectiveOwnership,
+    captainPicks,
+    strategy,
     rivalCount: rivalStandings.length,
   };
 }

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the full fantasy refresh once a day
+
+[Timer]
+OnCalendar=*-*-* 06:15
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

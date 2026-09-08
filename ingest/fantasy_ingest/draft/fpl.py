@@ -144,28 +144,64 @@ def _p_start(el: dict, games: int, recent: list[int], depth_bump: float,
     avail = _avail(el, assume_fit)
     if override is not None:
         base = override
+    elif avail <= 0:
+        return 0.0, 0.0
     else:
-        if avail <= 0:
-            return 0.0, 0.0
         starts = _num(el.get("starts"))
         mins = _num(el.get("minutes"))
-        season = 0.7 * min(1.0, starts / max(1, games)) + 0.3 * min(1.0, mins / (max(1, games) * 90.0))
-        if recent:
-            rec = 0.8 * (sum(1 for m in recent if m >= 60) / len(recent)) + \
-                  0.2 * min(1.0, sum(recent) / (len(recent) * 90.0))
-        else:
-            rec = season
         rank = _rank_pstart(el.get("draft_rank"))
-        base = 0.50 * rec + 0.22 * season + 0.28 * rank
-        # Thin sample (new signing, came back from injury, hasn't debuted): the
-        # season/recent minutes say ~0 but that's not "benched", it's "no data".
-        # Fall back to FPL's own expected-role ranking.
-        if mins < 200 and sum(recent) < 120:
-            base = max(base, rank - 0.05)
-        base = min(base, rank + 0.22)       # can't be "nailed" on a fluke cameo
+        recent = list(recent or [])
+        rec_starts = sum(1 for m in recent if m >= 60)
+        start_rate = starts / max(1, games)
+        mins_rate = min(1.0, mins / (max(1, games) * 90.0))
+        season = 0.7 * min(1.0, start_rate) + 0.3 * mins_rate
+
+        if games >= 3:
+            # The season is under way: what the manager has actually done is the
+            # truth. The draft-rank prior is only a small tiebreak now — it was
+            # set before a ball was kicked and gets overruled by real lineups.
+            if recent:
+                rec = 0.75 * (rec_starts / len(recent)) + 0.25 * min(
+                    1.0, sum(recent) / (len(recent) * 90.0)
+                )
+                base = 0.62 * rec + 0.28 * season + 0.10 * rank
+            else:
+                base = 0.68 * season + 0.32 * rank
+            # settled starter — started every one of the last 3+ games
+            if len(recent) >= 3 and all(m >= 60 for m in recent[-3:]):
+                base = max(base, 0.93)
+            # started the most recent game -> at least a coin-flip, more if
+            # well regarded (covers a nailed new signing with one appearance)
+            elif recent and recent[-1] >= 60:
+                base = max(base, 0.5 + 0.4 * rank)
+            # elite name with barely any sample -> probably ramping back up
+            # (injury return / new signing); lean on the pedigree, tentatively
+            elif not recent and rank >= 0.85 and starts == 0:
+                base = max(base, 0.55)
+            # settled bench — no starts and minimal minutes across a real sample
+            if len(recent) >= 3 and rec_starts == 0 and sum(recent) < 90:
+                base = min(base, 0.20)
+            elif starts == 0 and mins < games * 25 and rank < 0.85 and (not recent or recent[-1] < 60):
+                base = min(base, 0.30)
+        else:
+            # only 1-2 GW in: thin, but not nothing. Blend the little we have
+            # with the role prior, and still respect an unambiguous pattern.
+            rec = None
+            if recent:
+                rec = 0.7 * (rec_starts / len(recent)) + 0.3 * min(
+                    1.0, sum(recent) / (len(recent) * 90.0)
+                )
+            base = 0.45 * (rec if rec is not None else 0.0) + 0.55 * rank
+            if recent and all(m >= 60 for m in recent):
+                base = max(base, 0.85)  # started every game so far
+            elif recent and rec_starts == 0 and sum(recent) < 60 and rank < 0.85:
+                base = min(base, 0.28)  # benched every game so far
+            elif not recent and (mins >= 120 or starts >= 1):
+                base = max(base, 0.45)
+
         base += depth_bump
-    p_start = max(0.0, min(0.98, base)) * (1.0 if assume_fit else max(0.0, avail))
-    p_any = min(0.99, p_start + 0.14 * (1 - p_start))
+    p_start = max(0.0, min(0.99, base)) * (1.0 if assume_fit else max(0.0, avail))
+    p_any = min(0.99, p_start + 0.13 * (1 - p_start))
     return round(p_start, 3), round(p_any, 3)
 
 
@@ -180,8 +216,55 @@ def _set_piece(el: dict) -> str:
     return t
 
 
+_BLENDED_STRENGTH: dict[str, tuple[float, float]] = {}
+
+
 def _team_factor(code: str | None) -> tuple[float, float]:
-    return FPL_CLUB_STRENGTH.get(code or "", (1.0, 1.0))
+    return _BLENDED_STRENGTH.get(code or "") or FPL_CLUB_STRENGTH.get(code or "", (1.0, 1.0))
+
+
+def _finished_fixtures(client: httpx.Client) -> list[dict]:  # pragma: no cover - network
+    try:
+        r = client.get(f"{_CLASSIC}/fixtures/")
+        r.raise_for_status()
+        return [f for f in r.json() if f.get("finished") and f.get("team_h_score") is not None]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _blend_club_strength(finished: list[dict], id_to_code: dict[int, str]) -> None:
+    """Move each club's (attack, defence) factor toward what the season's actual
+    results say — goals for / against per game vs the league average. The weight
+    on results grows with games played, so an eyeballed pre-season table gives
+    way to reality by ~GW8. Populates _BLENDED_STRENGTH (empty pre-season)."""
+    _BLENDED_STRENGTH.clear()
+    gf: dict[str, float] = {}
+    ga: dict[str, float] = {}
+    gp: dict[str, int] = {}
+    for f in finished:
+        h, a = id_to_code.get(f.get("team_h")), id_to_code.get(f.get("team_a"))
+        hs, as_ = f.get("team_h_score"), f.get("team_a_score")
+        if not h or not a or hs is None or as_ is None:
+            continue
+        for team, sf, sa in ((h, hs, as_), (a, as_, hs)):
+            gf[team] = gf.get(team, 0.0) + sf
+            ga[team] = ga.get(team, 0.0) + sa
+            gp[team] = gp.get(team, 0) + 1
+    if not gp:
+        return
+    lg = max(0.6, sum(gf.values()) / max(1, sum(gp.values())))  # league goals/game
+    for code, (p_atk, p_dfn) in FPL_CLUB_STRENGTH.items():
+        n = gp.get(code, 0)
+        if n == 0:
+            _BLENDED_STRENGTH[code] = (p_atk, p_dfn)
+            continue
+        r_atk = (gf[code] / n) / lg
+        r_dfn = (ga[code] / n) / lg
+        w = min(0.6, n / 8.0)
+        _BLENDED_STRENGTH[code] = (
+            round((1 - w) * p_atk + w * r_atk, 3),
+            round((1 - w) * p_dfn + w * r_dfn, 3),
+        )
 
 
 def _gw_projection(
@@ -259,6 +342,38 @@ def _fdr_from_strength(opp_code: str, is_home: bool) -> int:
     return max(1, min(5, round(3 + 2.2 * raw)))
 
 
+def _scale_fdr(raw: float) -> int:
+    return max(1, min(5, round(3 + 2.2 * raw)))
+
+
+def _pos_fdr(pos: str, opp_code: str, is_home: bool) -> tuple[int, int, int]:
+    """Position-aware fixture difficulty, 1 (easy) .. 5 (hard).
+
+    Returns (attack_fdr, defence_fdr, position_fdr):
+      * attack_fdr  — how hard to get GOALS / ASSISTS, driven by how solid the
+        opponent is defensively (a stingy back line = red for your forwards).
+      * defence_fdr — how hard to keep a CLEAN SHEET, driven by the opponent's
+        attacking threat.
+      * position_fdr — the blend that matters for this position under FPL
+        scoring. A defender leans on the clean sheet (DEF goal 6 + CS 4 + DefCon)
+        but still gets attacking returns from set-pieces / overlaps, so its
+        attack component is real but ~a third the weight a midfielder gives it.
+    """
+    atk, dfn = _team_factor(opp_code)
+    ha = -0.32 if is_home else 0.32
+    raw_att = 1.05 * (1.0 - dfn) + ha
+    raw_def = 1.05 * (atk - 1.0) + ha
+    if pos == "GKP":
+        blend = raw_def
+    elif pos == "DEF":
+        blend = 0.66 * raw_def + 0.34 * raw_att
+    elif pos == "MID":
+        blend = 0.76 * raw_att + 0.24 * raw_def
+    else:  # FWD
+        blend = raw_att
+    return _scale_fdr(raw_att), _scale_fdr(raw_def), _scale_fdr(blend)
+
+
 def _rank_output(rank, pos: str) -> float:
     """Rough expected points/90 by FPL draft_rank — a fallback for players with
     too few minutes for a real rate (new signings, injury returnees)."""
@@ -308,6 +423,8 @@ def build(next_gw: int, roster: dict[str, int], teams: int, league_id: str | Non
     with _client() as c:
         data = bootstrap(c)
         fx = fixtures_by_gw(c)
+        _blend_club_strength(_finished_fixtures(c),
+                             {t["id"]: t["short_name"] for t in data["teams"]})
         cur_gw = data.get("events", {}).get("current") or (next_gw - 1)
         rec = recent_minutes(c, cur_gw + 1)
         ownership: dict[int, int] = {}
@@ -324,7 +441,8 @@ def build(next_gw: int, roster: dict[str, int], teams: int, league_id: str | Non
     sc.update({k: v for k, v in (data.get("settings", {}).get("scoring", {}) or {}).items()
                if k in _SCORING})
     club = {t["id"]: t["short_name"] for t in data["teams"]}
-    games = max(1, (data.get("events", {}).get("current") or next_gw) - 1)
+    # completed gameweeks = everything before the one we're picking for
+    games = max(1, next_gw - 1)
     gw_list = list(range(next_gw, next_gw + horizon))
 
     # depth charts: {(team, element_type): [elements]}
@@ -364,7 +482,7 @@ def build(next_gw: int, roster: dict[str, int], teams: int, league_id: str | Non
                 continue
             gx = fx_x = gcs = 0.0
             opps = []
-            off_fdr = 3
+            off_fdr = att_fdr = def_fdr = 3
             for f in fixtures:
                 ish = f["h"] == el["team"]
                 oc = club.get(f["a"] if ish else f["h"], "")
@@ -373,10 +491,11 @@ def build(next_gw: int, roster: dict[str, int], teams: int, league_id: str | Non
                 gx += x
                 fx_x += fxx
                 gcs = max(gcs, cs)
-                off_fdr = (f["h_fdr"] if ish else f["a_fdr"]) or _fdr_from_strength(oc, ish)
+                att_fdr, def_fdr, off_fdr = _pos_fdr(pos, oc, ish)
                 opps.append(f"{oc} ({'H' if ish else 'A'})")
             gws.append({"gw": gw, "opp": " + ".join(opps),
                         "home": fixtures[0]["h"] == el["team"], "fdr": off_fdr,
+                        "fdrAtt": att_fdr, "fdrDef": def_fdr,
                         "xpts": round(gx, 2), "cs": gcs})
             fit_gws.append(round(fx_x, 2))
 

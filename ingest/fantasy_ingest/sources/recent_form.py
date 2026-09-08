@@ -51,6 +51,7 @@ class FormRow:
     avg_rating: float = 0.0
     matches_14d: int = 0
     comps: list[str] = field(default_factory=list)
+    source: str = "understat"
 
 
 def _num(v, d: float = 0.0) -> float:
@@ -60,17 +61,31 @@ def _num(v, d: float = 0.0) -> float:
         return d
 
 
-def _build_squad_index(client: SofaClient, uefa_teams: dict[int, str], log) -> dict:
+def _build_squad_index(
+    client: SofaClient, uefa_teams: dict[int, str], log, deadline: float = 0.0,
+    only_uids: set[int] | None = None,
+) -> dict:
     """normalised player name -> {ss_id, pos, ss_team, ss_team_id}.
 
     `uefa_teams` is {uefa_team_id: name}. We resolve the Sofascore squad from a
     hardcoded id map (search is too unreliable for short UEFA names), falling
-    back to search only for a club not in the map.
+    back to search only for a club not in the map. Stops early once `deadline`
+    (unix seconds, 0 = none) passes so a fully-throttled Sofascore can't hang
+    the whole ingest before the per-player loop even starts.
     """
     from ..model.club_strength import SS_TEAM_ID
 
     idx: dict[str, dict] = {}
+    fails = 0
     for uid, name in uefa_teams.items():
+        if only_uids is not None and uid not in only_uids:
+            continue
+        if deadline and time.time() > deadline:
+            log(f"  squad index: time budget hit at {len(idx)} players")
+            break
+        if fails >= 6:
+            log("  squad index: Sofascore is blocking hard, giving up on the rest")
+            break
         tid = SS_TEAM_ID.get(uid)
         if not tid:
             try:
@@ -82,7 +97,9 @@ def _build_squad_index(client: SofaClient, uefa_teams: dict[int, str], log) -> d
             continue
         try:
             squad = client.team_players(tid)
+            fails = 0
         except SofaError as e:
+            fails += 1
             log(f"  Sofascore squad {name!r} ({tid}) failed: {e}")
             continue
         for row in squad:
@@ -107,13 +124,31 @@ def _aggregate_player(client: SofaClient, ss_id: int, last_n: int) -> dict:
     ev = client.player_last_events(ss_id)
     events = ev.get("events", []) or []
     now = time.time()
-    played = sorted(
-        (e for e in events if (e.get("startTimestamp") or 0) < now - 3600),
-        key=lambda e: -(e.get("startTimestamp") or 0),
-    )[:last_n]
-    stat_map = ev.get("statisticsMap", {}) or {}
     team_map = ev.get("playedForTeamMap", {}) or {}
     bench_map = ev.get("onBenchMap", {}) or {}
+    stat_map = ev.get("statisticsMap", {}) or {}
+
+    def _is_senior(e: dict) -> bool:
+        # drop reserve / academy / youth appearances so a fringe first-teamer's
+        # Castilla / U21 / "B" minutes aren't read as senior form.
+        blob = " ".join(
+            str(x).lower() for x in (
+                (e.get("tournament") or {}).get("name", ""),
+                ((e.get("tournament") or {}).get("uniqueTournament") or {}).get("name", ""),
+                team_map.get(str(e.get("id"))) or team_map.get(e.get("id")) or "",
+                (e.get("homeTeam") or {}).get("name", ""),
+                (e.get("awayTeam") or {}).get("name", ""),
+            )
+        )
+        bad = ("castilla", "u19", "u21", "u23", "u-19", "u-21", "youth",
+               "primavera", "reserve", "atlético b", "atletico b", " ii", "-b ")
+        return not any(t in blob for t in bad)
+
+    played = sorted(
+        (e for e in events
+         if (e.get("startTimestamp") or 0) < now - 3600 and _is_senior(e)),
+        key=lambda e: -(e.get("startTimestamp") or 0),
+    )[:last_n]
 
     agg = {
         "matches": 0, "starts": 0, "minutes": 0.0, "goals": 0.0, "assists": 0.0,
@@ -155,15 +190,29 @@ def fetch_form_rows(
     last_n: int = 5,
     min_price: float = 4.5,
     time_budget_s: float = 420.0,
+    only_uids: set[int] | None = None,
+    delay: float = 0.18,
     log=print,
 ) -> list[FormRow]:  # pragma: no cover - network
     """Best-effort: Sofascore throttles a busy IP for a long time, so this runs
     against a wall-clock budget and returns whatever it managed to pull. The
-    projection layer already has a season-xG + price prior to fall back on."""
+    projection layer already has a season-xG + price prior to fall back on.
+
+    `only_uids` limits the scrape to a set of UEFA team ids (used as a targeted
+    top-up for clubs a reliable source like Understat doesn't cover); a bigger
+    `delay` trades speed for a much lower chance of tripping the rate limit.
+    """
     deadline = time.time() + time_budget_s
-    client = SofaClient()
+    client = SofaClient(delay=delay)
+    if only_uids is not None:
+        uefa_players = [p for p in uefa_players if getattr(p, "team_id", None) in only_uids]
     try:
-        squad_idx = _build_squad_index(client, team_names, log)
+        # give the squad-index build at most ~40% of the budget; the rest is for
+        # the per-player pulls that actually matter.
+        squad_idx = _build_squad_index(
+            client, team_names, log, deadline=time.time() + 0.4 * time_budget_s,
+            only_uids=only_uids,
+        )
     except SofaError as e:
         log(f"  Sofascore squad index failed ({e}) — skipping recent-form scrape")
         return []
@@ -223,6 +272,7 @@ def fetch_form_rows(
             recent_xa=round(agg["xa"], 2), recent_shots=agg["shots"],
             avg_rating=round(agg["rating_sum"] / agg["rating_n"], 2) if agg["rating_n"] else 0.0,
             matches_14d=agg["m14"], comps=list(dict.fromkeys(agg["comps"])),
+            source="sofascore",
         )
         if fr.recent_minutes > 0:
             fr.season_npxg90 = fr.recent_npxg / (fr.recent_minutes / 90.0)

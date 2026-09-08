@@ -5,10 +5,12 @@ import {
   getFixtures,
   getLeagueTable,
   getMySquad,
+  confirmedOf,
   type SquadRow,
 } from "@/lib/ucl/queries";
 import { getSetting, getSettings, KEYS } from "@/lib/settings";
 import { POSITIONS } from "@/lib/ucl/formation";
+import { FDR_TEXT, posFdr, type Pos } from "@/lib/fdr";
 
 interface Check {
   ok: boolean;
@@ -17,8 +19,12 @@ interface Check {
 
 function buildChecklist(squad: SquadRow[], opt: Record<string, unknown>): Check[] {
   const checks: Check[] = [];
+  const squadIds = new Set(squad.map((r) => r.playerId));
   const cap = squad.find((r) => r.isCaptain);
-  const safe = (opt.captains as { safePick?: { playerId?: number; name?: string } } | undefined)?.safePick;
+  const rawSafe = (opt.captains as { safePick?: { playerId?: number; name?: string } } | undefined)?.safePick;
+  // only trust the model's pick if it's actually one of YOUR players — a stale
+  // pre-season run can name a dream-team player you never owned.
+  const safe = rawSafe && squadIds.has(rawSafe.playerId ?? -1) ? rawSafe : undefined;
   checks.push({
     ok: !!cap && (!safe || cap.playerId === safe.playerId),
     text: cap
@@ -28,20 +34,27 @@ function buildChecklist(squad: SquadRow[], opt: Record<string, unknown>): Check[
       : "No captain set",
   });
   const starters = squad.filter((r) => r.isStarter);
-  const flagged = starters.filter((r) => (r.statusCode ?? 0) >= 1 || (r.startProb ?? 1) < 0.5);
+  const flagged = starters.filter((r) => {
+    const c = confirmedOf(r);
+    if (c === "start") return false; // officially in the XI — no flag
+    if (c === "bench") return true; // officially benched — definitely flag
+    return (r.statusCode ?? 0) >= 1 || (r.startProb ?? 1) < 0.5;
+  });
   checks.push({
     ok: flagged.length === 0,
     text: flagged.length
-      ? `${flagged.length} starter(s) injured / rotation risk: ${flagged.map((r) => r.name).join(", ")}`
+      ? `${flagged.length} starter(s) benched / injured / rotation risk: ${flagged.map((r) => r.name).join(", ")}`
       : "No injury or rotation flags in your XI",
   });
   const benched = starters.length < 11;
   checks.push({ ok: !benched, text: benched ? `Only ${starters.length} starters set` : "Full XI selected" });
   const timing = opt.matchdayTiming as { days?: number; liveOptions?: string[] } | undefined;
-  if (timing?.days && timing.days > 1 && timing.liveOptions?.length) {
+  const squadNames = new Set(squad.map((r) => r.name));
+  const liveOpts = (timing?.liveOptions ?? []).filter((n) => squadNames.has(n));
+  if (timing?.days && timing.days > 1 && liveOpts.length) {
     checks.push({
       ok: true,
-      text: `Bench your day-${timing.days} players as live options: ${timing.liveOptions.slice(0, 3).join(", ")}`,
+      text: `Bench your day-${timing.days} players as live options: ${liveOpts.slice(0, 3).join(", ")}`,
     });
   }
   const transfers = opt.transfers as unknown[] | undefined;
@@ -78,10 +91,23 @@ export default async function UclOverview() {
     );
   }
 
-  const oppByTeam: Record<string, { opp: string; home: boolean }> = {};
+  const oppByTeam: Record<
+    string,
+    { opp: string; home: boolean; oppAtk: number; oppDef: number }
+  > = {};
   for (const f of fixtures) {
-    oppByTeam[f.homeTeam] = { opp: f.awayTeam, home: true };
-    oppByTeam[f.awayTeam] = { opp: f.homeTeam, home: false };
+    oppByTeam[f.homeTeam] = {
+      opp: f.awayTeam,
+      home: true,
+      oppAtk: f.awayAtk ?? 1,
+      oppDef: f.awayDef ?? 1,
+    };
+    oppByTeam[f.awayTeam] = {
+      opp: f.homeTeam,
+      home: false,
+      oppAtk: f.homeAtk ?? 1,
+      oppDef: f.homeDef ?? 1,
+    };
   }
 
   const captainPick = [...squad].sort((a, b) => (b.xpts ?? 0) - (a.xpts ?? 0))[0];
@@ -126,7 +152,7 @@ export default async function UclOverview() {
         </div>
         <Legend
           items={[
-            ["Opp", "this matchday's opponent — (H) home, (A) away; blank = no fixture"],
+            ["Opp colour", "position-aware fixture difficulty (green easy … red hard): forwards weigh the opponent's defence, keepers their attack, defenders mostly clean-sheet risk plus some set-piece upside, midfielders mostly attacking. (H) home, (A) away"],
             ["xPts", "expected points this matchday (our model)"],
             ["xMin", "expected minutes played"],
             ["P(start)", "chance of starting"],
@@ -180,7 +206,7 @@ function SquadTable({
 }: {
   rows: SquadRow[];
   captainId?: number;
-  oppByTeam: Record<string, { opp: string; home: boolean }>;
+  oppByTeam: Record<string, { opp: string; home: boolean; oppAtk: number; oppDef: number }>;
 }) {
   const ordered = POSITIONS.flatMap((pos) =>
     rows
@@ -206,6 +232,9 @@ function SquadTable({
       <tbody>
         {ordered.map((r) => {
           const fx = oppByTeam[r.teamName];
+          const fdr = fx
+            ? posFdr(fx.oppAtk, fx.oppDef, fx.home, r.position as Pos, "ucl")
+            : null;
           return (
           <tr key={r.playerId}>
             <td>
@@ -215,12 +244,32 @@ function SquadTable({
               {r.name} <StatusDot code={r.statusCode} detail={r.statusDetail} />
             </td>
             <td>{r.teamName}</td>
-            <td className="text-[var(--muted)]">
+            <td
+              className="font-medium"
+              style={{ color: fdr ? FDR_TEXT[fdr.pos] : "var(--muted)" }}
+              title={
+                fdr
+                  ? `${r.position} difficulty ${fdr.pos}/5 — goals/assists ${fdr.att}/5, clean sheet ${fdr.def}/5`
+                  : "no fixture"
+              }
+            >
               {fx ? `${fx.opp} (${fx.home ? "H" : "A"})` : "–"}
             </td>
             <td className="num">{fmt(r.price)}</td>
             <td className="num">{fmt(r.uefaForm)}</td>
-            <td className="num">{r.pStart != null ? `${Math.round(r.pStart * 100)}%` : "–"}</td>
+            <td className="num">
+              {(() => {
+                const c = confirmedOf(r);
+                const pct = c === "start" ? 100 : c === "bench" ? 0 : r.pStart != null ? Math.round(r.pStart * 100) : null;
+                return (
+                  <>
+                    {pct != null ? `${pct}%` : "–"}
+                    {c === "start" && <span className="ml-1 text-[var(--good)]" title="confirmed starting XI">✓</span>}
+                    {c === "bench" && <span className="ml-1 text-[var(--muted)]" title="confirmed on the bench">⑂</span>}
+                  </>
+                );
+              })()}
+            </td>
             <td className="num">{fmt(r.expMinutes, 0)}</td>
             <td className="num font-semibold">{fmt(r.xpts)}</td>
             <td>{r.playerId === captainId ? "🅲" : r.isCaptain ? "(c)" : ""}</td>

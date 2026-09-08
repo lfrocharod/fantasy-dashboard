@@ -126,7 +126,10 @@ export default function PlayersPage() {
           </thead>
           <tbody>
             {rows.map((p) => {
-              const sp = p.startProb ?? p.pStart ?? null;
+              const cmp = p.components as Record<string, number> | undefined;
+              const conf = cmp?.confirmed === 1 ? "start" : cmp?.confirmed === -1 ? "bench" : null;
+              const sp = conf === "start" ? 1 : conf === "bench" ? 0 : (p.startProb ?? p.pStart ?? null);
+              const disagree = conf ? 0 : Number(cmp?.start_disagreement ?? 0);
               const lev = p.role && p.role !== p.position && ["FWD", "MID"].includes(p.role);
               const l4 =
                 p.recentMatches != null && p.recentMatches > 0
@@ -185,7 +188,27 @@ export default function PlayersPage() {
                       {l4 != null ? `${fmt(l4, 0)} / ${p.recentMatches}` : "–"}
                     </td>
                     <td className="num hide-sm">{p.avgRating ? fmt(p.avgRating, 1) : "–"}</td>
-                    <td className="num">{sp != null ? `${Math.round(sp * 100)}%` : "–"}</td>
+                    <td className="num">
+                      {sp != null ? `${Math.round(sp * 100)}%` : "–"}
+                      {conf === "start" && (
+                        <span className="ml-1 text-[var(--good)]" title="named in the confirmed starting XI">
+                          ✓
+                        </span>
+                      )}
+                      {conf === "bench" && (
+                        <span className="ml-1 text-[var(--muted)]" title="confirmed on the bench">
+                          ⑂
+                        </span>
+                      )}
+                      {disagree >= 0.4 && (
+                        <span
+                          className="ml-1 text-[var(--warn)]"
+                          title="start-probability sources disagree — rotation / fitness risk"
+                        >
+                          ⚠
+                        </span>
+                      )}
+                    </td>
                     <td className="num font-semibold">{fmt(p.xpts)}</td>
                     <td className="num hide-sm">{fmt(p.xptsCaptain)}</td>
                     <td className="num">{fmt(p.value, 2)}</td>
@@ -209,6 +232,8 @@ export default function PlayersPage() {
           ["L5 G+A", "goals + assists over the last 5 matches (all competitions) / matches counted"],
           ["Rtg", "average match rating over those games (Sofascore, ~10 scale)"],
           ["Start%", "estimated chance of starting"],
+          ["✓ / ⑂ (next to Start%)", "named in the confirmed starting XI / confirmed on the bench (official lineup, ~1h before kick-off)"],
+          ["⚠ (next to Start%)", "our start-probability sources disagree (recent lineups vs season minutes vs price) — treat as a rotation or fitness question"],
           ["xPts / xPts(C)", "expected points, and if captained"],
           ["Value", "xPts per €m"],
           ["DIFF", "low ownership + high projection — a rank-gaining differential"],

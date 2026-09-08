@@ -4,12 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
-  { href: "/fpl", label: "Planner" },
+  { href: "/fpl", label: "Overview" },
+  { href: "/fpl/players", label: "Players & FA" },
   { href: "/fpl/teams", label: "Team watch" },
   { href: "/fpl/fixtures", label: "Fixture ticker" },
-  { href: "/fpl/managers", label: "Manager rosters" },
+  { href: "/fpl/optimizer", label: "Optimizer" },
+  { href: "/fpl/rivals", label: "Rivals" },
+  { href: "/fpl/standings", label: "League" },
   { href: "/fpl/trade", label: "Trade" },
-  { href: "/fpl/standings", label: "Standings" },
 ];
 
 export function FplTabs() {

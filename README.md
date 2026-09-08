@@ -90,12 +90,57 @@ Then run `./run.sh` again — it resolves the league id from the code, pulls you
 squad and the standings, and the optimizer starts producing transfer advice.
 The cookie expires after a while; when Settings shows `public_only`, re-paste it.
 
-### Keeping it fresh
-Add a cron entry on your machine (runs when the laptop is on):
-```cron
-*/30 8-23 * * *  cd ~/fantasy-dashboard/ingest && ./run.sh --skip-sources >> /tmp/ingest.log 2>&1
-7 6 * * *        cd ~/fantasy-dashboard/ingest && ./run.sh >> /tmp/ingest.log 2>&1
+## Updating
+
+Two independent things update:
+
+### Code (features / fixes)
+`git push` → **Vercel redeploys the web app automatically** (root dir `web`).
+The ingest job picks up new code the next time you run it — just `git pull` on
+the laptop that runs it.
+
+### Data (projections, squads, prices, form, standings)
+The web app only *reads* the database. It stays current only while the ingest
+job keeps writing to it, and that job **must run from a home connection** (UEFA
+and ESPN block datacenter IPs, so no cloud cron). One command does every league:
+
+```bash
+cd ~/fantasy-dashboard/ingest
+./update.sh            # CL (with the recent-form scrape) + FPL + NFL
+./update.sh --fast     # skip the slow scrape — CL in ~1 min
+./update.sh --nfl      # just one league (--cl / --fpl / --nfl)
 ```
+
+`update.sh` runs each league in turn; a failure in one is logged and the others
+still run. It needs `DATABASE_URL` + `WEB_CRYPTO_KEY` in `web/.env.local` (already
+there from deploy) and creates its Python venv on first run.
+
+**Automate it** so you never think about it — pick one:
+
+*macOS (launchd, survives reboots, runs when the lid opens):*
+`~/Library/LaunchAgents/com.fantasy.update.plist` with `StartCalendarInterval`
+entries every 30 min, `ProgramArguments` = `/bin/bash -lc "cd ~/fantasy-dashboard/ingest && ./update.sh --fast"`,
+then `launchctl load` it. Add a second agent for the daily full `./update.sh`.
+
+*Linux / macOS (cron, runs only while the machine is on):*
+```cron
+*/30 8-23 * * *  cd ~/fantasy-dashboard/ingest && ./update.sh --fast >> /tmp/fantasy.log 2>&1
+15  6    * * *  cd ~/fantasy-dashboard/ingest && ./update.sh       >> /tmp/fantasy.log 2>&1
+```
+
+*Anywhere:* leave `watch -n 1800 './update.sh --fast'` running in a terminal.
+
+A good rhythm: `--fast` every ~30 min during the day for prices/ownership/news,
+one full `./update.sh` in the early morning for the recent-form scrape, and a
+manual `./update.sh --cl` right before a Champions League deadline. **Cadence
+doesn't matter for correctness** — the app just shows whatever the last run
+wrote, with its timestamp on the home page.
+
+### Refreshing your logins
+The UEFA session cookie (Settings) and the ESPN `espn_s2` / `SWID` cookies
+(Draft board → Setup) expire every few weeks. When a league's data stops moving
+or Settings shows `public_only`, re-paste them and run `./update.sh` for that
+league.
 
 ## The projection model
 

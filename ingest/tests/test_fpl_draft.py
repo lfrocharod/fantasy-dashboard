@@ -3,6 +3,7 @@ from fantasy_ingest.draft.fpl import (
     _depth_bump,
     _gw_projection,
     _p_start,
+    _pos_fdr,
     _rank_pstart,
     _set_piece,
 )
@@ -35,9 +36,10 @@ def test_nailed_starter_high_pstart():
 
 
 def test_new_signing_gets_role_prior_not_cameo_score():
-    # elite draft_rank, barely any minutes, no recent data -> still a starter
+    # elite draft_rank, barely any minutes, no recent data -> tentatively a
+    # starter on pedigree (not written off as a bench body)
     ps, _pa = _p_start(_el(draft_rank=8, starts=0, minutes=26), 3, [], 0.0, None, False)
-    assert ps >= 0.7
+    assert ps >= 0.5
 
 
 def test_deep_bench_stays_low_even_after_a_cameo():
@@ -131,3 +133,43 @@ class _FakeClient:
 def test_parse_choices_skips_empty():
     picks = parse_choices(_FakeClient(), "1")
     assert len(picks) == 1 and picks[0]["player_ext_id"] == 42 and picks[0]["source"] == "fpl"
+
+
+def test_pos_fdr_is_position_aware():
+    # ARS: elite defence (0.56), strong attack (1.28). Away fixture.
+    fwd = _pos_fdr("FWD", "ARS", is_home=False)
+    gk = _pos_fdr("GKP", "ARS", is_home=False)
+    dfd = _pos_fdr("DEF", "ARS", is_home=False)
+    mid = _pos_fdr("MID", "ARS", is_home=False)
+    # forward: hard to score on that back line
+    assert fwd[0] >= 4 and fwd[2] == fwd[0]
+    # keeper: their attack is strong-ish -> some clean-sheet risk, but the
+    # attacking axis (which kills the forward) doesn't apply
+    assert gk[2] == gk[1] and gk[2] < fwd[2]
+    # defender sits between keeper and midfielder because of the set-piece upside
+    assert gk[2] <= dfd[2] <= mid[2]
+
+    # A leaky minnow (COV: attack 0.82, defence 1.18) at home -> green for attackers
+    weak = _pos_fdr("FWD", "COV", is_home=True)
+    assert weak[2] <= 2
+
+
+def test_split_auth_extracts_bearer_and_cookie():
+    from fantasy_ingest.draft.fpl_league import has_auth, split_auth
+
+    jwt = "eyJhbGciOi.eyJzdWIiOi.SflKxwRJ_signature-part"
+    # bare token
+    assert split_auth(jwt) == ("", jwt)
+    assert has_auth(jwt)
+    # "Bearer <token>"
+    assert split_auth(f"Bearer {jwt}")[1] == jwt
+    # a whole curl blob with -b cookie and an x-api-authorization header
+    blob = (
+        "curl 'https://draft.premierleague.com/api/entry/1/my-team' "
+        f"-b 'a=b; c=d' -H 'x-api-authorization: Bearer {jwt}'"
+    )
+    cookie, bearer = split_auth(blob)
+    assert bearer == jwt and cookie == "a=b; c=d"
+    # a plain cookie string is not auth
+    assert split_auth("a=b; c=d") == ("a=b; c=d", None)
+    assert not has_auth("a=b; c=d")

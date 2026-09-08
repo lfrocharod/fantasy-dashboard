@@ -10,6 +10,7 @@ import math
 import random
 
 from .. import MODEL_VERSION
+from ..sources.blend import Signal, compose
 from ..types import Player, PlayerStat, Position, Projection, Team
 from ..ucl import scoring
 from .params import ModelParams
@@ -74,6 +75,100 @@ def start_probability(player: Player, stat: PlayerStat | None) -> float:
     return round(base, 3)
 
 
+def compose_start(
+    player: Player, stat: PlayerStat | None, form, confirmed: str | None = None
+) -> tuple[float, float, str]:
+    """Blend every start-probability signal we have into one number.
+
+    Returns (p_start, disagreement, why). Sources, in rough order of trust:
+      * sofascore_form   — starts / minutes in the last few matches (all comps)
+      * uefa_minutes     — this player's UEFA-competition minutes vs a club
+                           ever-present (covers everyone, no scrape)
+      * understat_mins   — domestic-league minutes share
+      * a flat 0.70 prior anchors players we know nothing about.
+    status_code 1 (knock / doubt) scales the result down afterwards.
+    """
+    if player.status_code >= 2:
+        return 0.0, 0.0, "ruled out"
+
+    # An official lineup is ground truth — it beats every model signal.
+    if confirmed == "start":
+        return (0.9 if player.status_code == 1 else 0.99), 0.0, "confirmed XI"
+    if confirmed == "bench":
+        return 0.03, 0.0, "confirmed benched"
+
+    sigs: list[Signal] = []
+    rm = getattr(form, "recent_matches", 0) if form is not None else 0
+    has_form = rm >= 2
+    solid_form = rm >= 4  # enough games to override a season-long role prior
+    if has_form:
+        start_rate = form.recent_starts / rm
+        rate = 0.65 * start_rate + 0.35 * min(1.0, form.recent_minutes / (rm * 90.0))
+        # confidence scales with SAMPLE SIZE — a 2-game sample is weak evidence,
+        # a 5-game one is strong. (Kane on 2 domestic games shouldn't outweigh
+        # a season of being Bayern's nailed starter.)
+        sigs.append(Signal("sofascore_form", rate, confidence=min(0.9, 0.22 + 0.14 * rm)))
+    mp = getattr(player, "minutes_prior", 0.0) or 0.0
+    if has_form:
+        if rm >= 3 and form.recent_starts == rm:
+            nailed = 0.965 - 0.06 * (1 if getattr(form, "matches_14d", 0) >= 3 else 0)
+            # a perfect record on a cheap player who never featured in this
+            # competition last season is often reserve/academy form matched to
+            # a similar name — trust it much less.
+            conf = 0.45 if (mp == 0 and player.price and player.price < 5.5) else 0.9
+            sigs.append(Signal("settled_xi", nailed, confidence=conf))
+        elif rm >= 3 and start_rate <= 0.34:
+            sigs.append(Signal("settled_xi", 0.22, confidence=0.75))
+    if mp > 0:
+        # last season's competition minutes as a role prior. Give it real weight
+        # unless we have a solid recent-form sample that supersedes it.
+        conf = 0.22 if solid_form else (0.42 if has_form else 0.50)
+        sigs.append(Signal("uefa_minutes", mp, confidence=conf))
+    if stat and stat.matches > 0 and not solid_form:
+        sigs.append(
+            Signal("understat_mins", min(1.0, stat.minutes / (stat.matches * 90.0)),
+                   confidence=min(0.5, 0.28 + 0.04 * stat.matches))
+        )
+    # price is a coarse role prior: a premium-priced player is almost always a
+    # starter. In CL Fantasy a €9m+ price tag = a genuine star, so weight it
+    # hard for that bracket — it rescues Kane / Mbappé / Haaland when the
+    # domestic-form scrape is thin or stale.
+    if player.price:
+        premium = player.price >= 9.0
+        sigs.append(
+            Signal("price_role", min(0.96, 0.30 + 0.06 * player.price),
+                   confidence=(0.5 if premium else 0.25) if has_form else (0.6 if premium else 0.42))
+        )
+    # floor-priced, zero competition minutes, no recent form -> a deep-squad /
+    # academy body. Without this they sit at the ~0.6 prior and clutter the
+    # predicted XI above thin-data first-teamers. Barely-owned €5-5.5 bodies on
+    # a club we already have form for (so their blank is real, not un-scraped)
+    # get the same treatment — that's the Cardozo / Yáñez / Assomo bracket.
+    owned = (getattr(player, "selected_pct", 0.0) or 0.0)
+    if not has_form and mp == 0 and player.price and (
+        player.price <= 4.5 or (player.price <= 5.5 and owned < 1.0)
+    ):
+        sigs.append(Signal("deep_squad", 0.18, confidence=0.55))
+
+    settled = any(s.source == "settled_xi" for s in sigs)
+    c = compose(
+        sigs,
+        prior=0.68,
+        prior_weight=0.0 if settled else (0.05 if has_form else 0.12),
+        lo=0.05,
+        hi=0.98,
+    )
+    if c is None:
+        base = 0.70
+        disagree, why = 0.0, "prior only"
+    else:
+        base, disagree, why = c.value, c.disagreement, c.why()
+    if player.status_code == 1:  # knock / doubt
+        base *= 0.55
+        why += " · fitness doubt"
+    return round(base, 3), disagree, why
+
+
 def _opponent_factor(opp: Team, is_home: bool, params: ModelParams) -> float:
     """How much this fixture inflates/deflates attacking output: leaky opponent
     and home advantage push it up."""
@@ -97,18 +192,17 @@ def project_player(
     *,
     rng: random.Random | None = None,
     form=None,
+    confirmed: str | None = None,
 ) -> Projection:
     pos: Position = player.position
     if player.status_code >= 2:
         return blank_projection(player, matchday)
-    # Transferred away / not at this club any more -> not a real option.
-    if form is not None and not form.team_ok:
+    # Transferred away / not at this club any more -> not a real option. A
+    # confirmed lineup overrides a stale "wrong club" form match.
+    if form is not None and not form.team_ok and not confirmed:
         return blank_projection(player, matchday)
 
-    if form is not None and form.start_prob > 0:
-        p_start = form.start_prob
-    else:
-        p_start = start_probability(player, stat)
+    p_start, start_disagree, _start_why = compose_start(player, stat, form, confirmed)
     exp_minutes, p_any, p60 = _minutes_model(p_start, params)
     minutes_frac = exp_minutes / 90.0
 
@@ -260,6 +354,8 @@ def project_player(
             "form_component": round(form_component, 2),
             "cs_prob": round(cs_prob, 3),
             "opp_factor": round(opp_factor, 3),
+            "start_disagreement": round(start_disagree, 3),
+            "confirmed": 1.0 if confirmed == "start" else (-1.0 if confirmed == "bench" else 0.0),
         },
     )
 

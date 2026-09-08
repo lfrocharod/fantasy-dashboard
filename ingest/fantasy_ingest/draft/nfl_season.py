@@ -9,10 +9,12 @@ standings / my roster / current week.
 
 from __future__ import annotations
 
+import os
+
 import httpx
 
 from ..sources.domestic_xg import normalise
-from . import espn_nfl, fantasypros
+from . import espn_nfl, fantasypros, nflverse
 from .types import ESPN_POS, ESPN_SLOT, DraftRow
 
 _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0 Safari/537.36"
@@ -67,8 +69,14 @@ def parse_league(data: dict) -> dict:
     sett = data.get("settings", {})
     ss = sett.get("scheduleSettings", {})
     reg = int(ss.get("matchupPeriodCount") or 14)
-    rounds = 2 if (ss.get("playoffTeamCount") or 4) <= 4 else 3
+    playoff_teams = int(ss.get("playoffTeamCount") or 4)
+    rounds = 2 if playoff_teams <= 4 else 3
     playoff_weeks = list(range(reg + 1, reg + 1 + rounds))
+    # ESPN's `playoffSeedingRule` names the SEEDING TIE-BREAKER, not the primary
+    # rule — nearly every league seeds by head-to-head record and uses this only
+    # to break ties. Default to record; the web has a toggle to override.
+    seeding_tiebreak = ss.get("playoffSeedingRule") or "TOTAL_POINTS_SCORED"
+    seeding_rule = "H2H_RECORD"
 
     slots: dict[str, int] = {}
     for sid, n in sett.get("rosterSettings", {}).get("lineupSlotCounts", {}).items():
@@ -105,13 +113,15 @@ def parse_league(data: dict) -> dict:
 
     return {
         "week": int(week), "reg_weeks": reg, "playoff_weeks": playoff_weeks,
+        "playoff_teams": playoff_teams, "seeding_rule": seeding_rule,
+        "seeding_tiebreak": seeding_tiebreak,
         "slots": slots, "teams": teams,
         "rosters": rosters, "slot_of": slot_of, "owner_of": owner_of,
         "schedule": schedule,
     }
 
 
-def parse_standings(data: dict) -> list[dict]:
+def parse_standings(data: dict, seeding_rule: str = "H2H_RECORD") -> list[dict]:
     out = []
     for t in data.get("teams", []):
         rec = t.get("record", {}).get("overall", {})
@@ -121,6 +131,8 @@ def parse_standings(data: dict) -> list[dict]:
             "pf": round(_num(rec.get("pointsFor")), 1), "pa": round(_num(rec.get("pointsAgainst")), 1),
             "streak": rec.get("streakLength", 0), "streak_type": rec.get("streakType", ""),
         })
+    if seeding_rule == "TOTAL_POINTS_SCORED":
+        return sorted(out, key=lambda r: (-r["pf"], -r["wins"]))
     return sorted(out, key=lambda r: (-r["wins"], -r["pf"]))
 
 
@@ -180,11 +192,14 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
           my_team_id: int | None) -> tuple[list[DraftRow], dict]:  # pragma: no cover - network
     lg = fetch_league(year, league_id, espn_s2, swid)
     L = parse_league(lg)
-    standings = parse_standings(lg)
+    standings = parse_standings(lg, L["seeding_rule"])
     week = L["week"]
 
     raw_players = espn_nfl.fetch_players(year, total=500, page=200)
-    sched = _pro_schedule(year, list(range(week, week + 4)))
+    # weeks 1-14 covers every possible bye + gives the full 32-team set;
+    # week..week+3 covers the near-term matchup ratings.
+    sched = _pro_schedule(year, sorted(set(range(1, 15)) | set(range(week, week + 4))))
+    bye_by_abbr = _bye_index(sched)
     abbr_to_id = {v: k for k, v in _PRO_ABBR.items()}
 
     # FantasyPros weekly + ROS ranks
@@ -198,6 +213,26 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
     except Exception as e:  # noqa: BLE001
         print(f"[draft] FP ROS skipped: {e}", flush=True)
 
+    # usage: snap share / target share / opportunity (nflverse, best-effort).
+    # nflverse only cuts a season's release once games have been played. Pin it
+    # with NFLVERSE_SEASON, else use the league year, else (very early season /
+    # no data yet) fall back to last year's usage as a prior.
+    usage_stale = False
+    try:
+        pin = os.environ.get("NFLVERSE_SEASON")
+        uses_season = int(pin) if pin else year
+        usage = nflverse.fetch_usage(uses_season)
+        if not usage and not pin and week <= 3:
+            uses_season = year - 1
+            usage = nflverse.fetch_usage(uses_season)
+            usage_stale = bool(usage)
+        print(f"[draft] nflverse usage ({uses_season}"
+              f"{' — last season, prior only' if usage_stale else ''}): "
+              f"{len(usage)} players", flush=True)
+    except Exception as e:  # noqa: BLE001
+        usage = {}
+        print(f"[draft] nflverse usage skipped: {e}", flush=True)
+
     weeks_left = max(1, L["reg_weeks"] - week + 1)
     rows: list[DraftRow] = []
     for pe in raw_players:
@@ -208,6 +243,11 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
             continue
         name = p.get("fullName", "")
         pro_team = p.get("proTeamId")
+        team_abbr = _PRO_ABBR.get(pro_team, "")
+        # not on an NFL roster (proTeamId 0 / unknown) -> not a real fantasy
+        # option; drop entirely. DSTs always have a team.
+        if not team_abbr and pos != "DST":
+            continue
         own = p.get("ownership", {}) or {}
         season_proj = espn_nfl._season_proj(p.get("stats", []), year)
         espn_wk = _weekly_proj(p, week)
@@ -227,8 +267,9 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
                 0.55 * ros_proj + 0.45 * _rank_to_pts(int(_num(rec_r["rank_ecr"])), pos) * weeks_left, 1
             )
 
-        bye = p.get("byeWeek") or _bye_for(pro_team)
-        team_abbr = _PRO_ABBR.get(pro_team, "")
+        bye = bye_by_abbr.get(team_abbr) or p.get("byeWeek") or _bye_for(pro_team)
+        inj = _norm_inj(p.get("injuryStatus"))
+        u = usage.get((nflverse.norm_name(name), team_abbr), {})
         uses_rush = pos in _POS_USES_RUSH
         # this week's opponent + a run of the next few weeks' matchups
         wk_opps = []
@@ -249,7 +290,7 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
             provider_rank=int(_num((rec_r or {}).get("rank_ecr"))) or None,
             ecr_rank=int(_num((rec_r or {}).get("rank_ecr"))) or None,
             ecr_tier=int(_num((rec_r or {}).get("tier"))) or None,
-            injury_status=p.get("injuryStatus", "ACTIVE"),
+            injury_status=inj,
             outlook="",
             owner=str(L["owner_of"].get(pid, "")) if L["owner_of"].get(pid) else "",
             owner_name=L["teams"].get(L["owner_of"].get(pid), ""),
@@ -263,12 +304,16 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
                 "weekProj": wk_proj, "rosProj": ros_proj, "seasonProj": season_proj,
                 "bye": bye, "pctOwned": round(own.get("percentOwned", 0.0), 1),
                 "pctStarted": round(own.get("percentStarted", 0.0), 1),
-                "injury": p.get("injuryStatus", "ACTIVE"),
+                "injury": inj,
                 "slot": ESPN_SLOT.get(L["slot_of"].get(pid), ""),
                 "ownerTeamId": L["owner_of"].get(pid),
                 "ownerName": L["teams"].get(L["owner_of"].get(pid), ""),
                 "week": week, "onBye": bye == week,
                 "matchups": wk_opps, "usesRush": uses_rush,
+                "snapPct": u.get("snap_pct"), "snapTrend": u.get("snap_trend"),
+                "targetShare": u.get("target_share"), "wopr": u.get("wopr"),
+                "touches": u.get("touches"), "usageGames": u.get("games", 0),
+                "usageStale": usage_stale if u else False,
             },
         ))
 
@@ -277,6 +322,7 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
 
     meta = {
         "week": week, "reg_weeks": L["reg_weeks"], "playoff_weeks": L["playoff_weeks"],
+        "playoff_teams": L["playoff_teams"], "seeding_rule": L["seeding_rule"],
         "slots": L["slots"], "teams": L["teams"], "schedule": L["schedule"],
         "standings": standings,
         "my_roster": [str(x) for x in L["rosters"].get(my_team_id or -1, [])],
@@ -333,7 +379,8 @@ _PRO_ABBR = {
     17: "NE", 18: "NO", 19: "NYG", 20: "NYJ", 21: "PHI", 22: "ARI", 23: "PIT", 24: "LAC",
     25: "SF", 26: "SEA", 27: "TB", 28: "WSH", 29: "CAR", 30: "JAX", 33: "BAL", 34: "HOU",
 }
-# 2025/26 bye weeks by proTeamId (fallback when ESPN omits byeWeek)
+# Last-ditch fallback only (used if the live schedule fetch fails). Bye weeks
+# change every season — the real source is _bye_index() off the pro schedule.
 _BYE = {
     1: 5, 2: 7, 3: 5, 4: 10, 5: 9, 6: 10, 7: 12, 8: 8, 9: 5, 10: 10, 11: 11, 12: 10,
     13: 8, 14: 8, 15: 12, 16: 6, 17: 14, 18: 11, 19: 14, 20: 9, 21: 9, 22: 8, 23: 5,
@@ -343,3 +390,34 @@ _BYE = {
 
 def _bye_for(pro_team: int | None) -> int:
     return _BYE.get(pro_team or -1, 0)
+
+
+def _bye_index(sched: dict[int, dict[str, tuple[str, bool]]]) -> dict[str, int]:
+    """{team_abbr: bye_week} — the first scheduled week in which a team has no
+    game. Authoritative for the actual season, unlike a hardcoded table."""
+    all_teams: set[str] = set()
+    for wm in sched.values():
+        all_teams |= set(wm)
+    out: dict[str, int] = {}
+    for wk in sorted(sched):
+        missing = all_teams - set(sched[wk])
+        for t in missing:
+            out.setdefault(t, wk)
+    return out
+
+
+# ESPN injury designations -> the small set the app reasons about.
+_NORM_INJ = {
+    "ACTIVE": "ACTIVE", "": "ACTIVE",
+    "QUESTIONABLE": "QUESTIONABLE", "DAY_TO_DAY": "QUESTIONABLE",
+    "DOUBTFUL": "DOUBTFUL",
+    "OUT": "OUT",
+    "INJURY_RESERVE": "IR", "IR": "IR",
+    "PHYSICALLY_UNABLE_TO_PERFORM": "IR", "PUP": "IR",
+    "NON_FOOTBALL_INJURY": "IR", "NFI": "IR", "NON_FOOTBALL_ILLNESS": "IR",
+    "SUSPENSION": "SUSPENSION",
+}
+
+
+def _norm_inj(v: str | None) -> str:
+    return _NORM_INJ.get((v or "").upper(), (v or "ACTIVE").upper())

@@ -14,7 +14,7 @@ import json
 import os
 import sys
 import traceback
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import MODEL_VERSION
@@ -177,6 +177,18 @@ def run(args: argparse.Namespace) -> int:
             if not form_by_id and not args.dry_run:
                 form_by_id = db.load_player_form()
 
+            # ---- 3b. confirmed XIs (matchday only) ------------
+            # Once Sofascore marks a lineup `confirmed` (~1h pre-KO) it's ground
+            # truth and overrides the model. Cheap (~40 calls) and only fires in
+            # the matchday window, so it's safe to run even on --fast.
+            confirmed_xi: dict[int, str] = {}
+            if not args.dry_run:
+                try:
+                    confirmed_xi = _confirmed_xi(players, teams, fixtures, matchday)
+                except Exception as e:  # noqa: BLE001
+                    notes.append(f"confirmed XI unavailable ({type(e).__name__})")
+                    _log(notes[-1])
+
             # ---- 4. team strength -----------------------------
             # Start from static club priors (coefficients + squad quality), then
             # blend in whatever the finished UCL games say — weight grows with
@@ -204,7 +216,10 @@ def run(args: argparse.Namespace) -> int:
             ] or [matchday]
             proj_by_md: dict[int, list] = {}
             for md in plan_mds:
-                pr = _build_projections(players, teams, fixtures, stats, md, params, form_by_id)
+                pr = _build_projections(
+                    players, teams, fixtures, stats, md, params, form_by_id,
+                    confirmed_xi if md == matchday else None,
+                )
                 proj_by_md[md] = pr
                 if not args.dry_run:
                     db.replace_projections(md, pr, MODEL_VERSION)
@@ -343,7 +358,13 @@ def _enrich_rival_squads(client: UefaClient, entries, matchday, *, my_guid, note
             continue
         try:
             picks, _bank = fetch.parse_my_team(client.get_my_team(e.entry_id, matchday), matchday)
-            e.squad = [pk.player_id for pk in picks]
+            # keep starter / captain / bench-order so the rival projection uses
+            # their ACTUAL XI + captain, not our guess at their best 11.
+            e.squad = [
+                {"id": pk.player_id, "c": bool(pk.is_captain), "s": bool(pk.is_starter),
+                 "b": int(pk.bench_order or 0)}
+                for pk in picks
+            ]
             if e.squad:
                 ok += 1
         except (UefaAuthError, KeyError, ValueError) as ex:
@@ -412,8 +433,26 @@ def _fixture_context(db, teams, matchday: int) -> dict[int, tuple[str, bool, int
     return out
 
 
-def _build_projections(players, teams, fixtures, stats, matchday, params, form_by_id=None):
+def _confirmed_xi(players, teams, fixtures, matchday: int) -> dict[int, str]:
+    """{uefa_player_id: "start"|"bench"} from Sofascore's confirmed lineups for
+    the upcoming matchday. Empty outside the matchday window or if nothing is
+    confirmed yet."""
+    from .sources.confirmed_xi import fetch_confirmed_xi, within_matchday_window
+
+    md_fx = [f for f in fixtures if f.matchday == matchday and f.status != "finished"]
+    if not md_fx or not within_matchday_window(md_fx):
+        return {}
+    team_names = {tid: t.name for tid, t in teams.items()}
+    got = fetch_confirmed_xi(md_fx, players, team_names, log=_log)
+    if got:
+        _log(f"confirmed XI: applied to {len(got)} players for MD{matchday}")
+    return got
+
+
+def _build_projections(players, teams, fixtures, stats, matchday, params, form_by_id=None,
+                       confirmed_by_id=None):
     form_by_id = form_by_id or {}
+    confirmed_by_id = confirmed_by_id or {}
     fx: dict[int, tuple[Fixture, bool]] = {}
     for f in fixtures:
         if f.matchday != matchday:
@@ -434,41 +473,85 @@ def _build_projections(players, teams, fixtures, stats, matchday, params, form_b
         out.append(project_player(
             p, stats.get(p.uefa_player_id), team, opp, is_home, matchday, params,
             form=form_by_id.get(p.uefa_player_id),
+            confirmed=confirmed_by_id.get(p.uefa_player_id),
         ))
     return out
 
 
 def _form_source(db, env: Env, players, teams, dry):
+    """Recent-form for every CL player. The *recent window* is the player's last
+    N matches **across all competitions** (Champions League + domestic league +
+    domestic cups + super cups) — so it always reflects what a manager just saw,
+    not a stale domestic-only slice.
+
+      1. Sofascore — last-N-overall match logs (minutes / xG / xA / goals /
+         rating / role), for *every* CL club, slow-paced with a circuit breaker.
+         This is the authoritative recent-window source.
+      2. Understat — domestic match logs, big-5 only. Optional depth layer
+         (RECENT_FORM_SOURCE=both); Sofascore rows win per player because they
+         carry the cup + CL games Understat can't see.
+      3. Whatever is already stored in `player_form` (merged downstream) so a
+         time-boxed run only ever *adds* coverage.
+
+    Any source failing just means less fresh data, never a failed run.
+    """
     from .mapping.form_match import build_player_form
 
     team_names = {tid: t.name for tid, t in teams.items()}
     n = env.recent_form_lookback
-
-    if env.recent_form_source == "understat":
-        from .sources.understat_form import fetch_form_rows as fetch_us
-
-        leagues = [x.strip() for x in env.source_leagues.split(",") if x.strip()]
-        _log(f"form: Understat (domestic), last {n}, leagues {leagues}")
-        rows = fetch_us(leagues, env.fbref_season, last_n=n)
-    else:
-        from .sources.recent_form import fetch_form_rows as fetch_ss
-
-        budget = float(os.environ.get("SOFA_FORM_BUDGET_S", "600") or 600)
-        _log(f"form: Sofascore (best-effort, {budget:.0f}s budget), last {n}, "
-             f"price >= {env.recent_form_min_price}")
-        rows = fetch_ss(
-            players, team_names, last_n=n, min_price=env.recent_form_min_price,
-            time_budget_s=budget, log=lambda m: _log(m),
-        )
-        if not rows:  # throttled — keep whatever's already in the DB
-            _log("  no fresh form rows; projections use stored form + season xG + prior")
-            return db.load_player_form() if not dry else {}
-
+    leagues = [x.strip() for x in env.source_leagues.split(",") if x.strip()]
+    src = (env.recent_form_source or "sofascore").lower()
     try:
         overrides = json.loads(db.get_settings(["ucl.role_overrides"]).get("ucl.role_overrides") or "{}")
     except (ValueError, TypeError):
         overrides = {}
-    form, unmatched = build_player_form(players, team_names, rows, overrides)
+
+    us_rows: list = []
+    ss_rows: list = []
+
+    # ---- 1. Understat (big-5 domestic) — optional depth layer -------------
+    if src in ("both", "understat", "understat_only"):
+        try:
+            from .sources.understat_form import fetch_form_rows as fetch_us
+
+            _log(f"form: Understat (domestic depth), last {n}, season {env.fbref_season}")
+            us_rows = fetch_us(leagues, env.fbref_season, last_n=n)
+            _log(f"  Understat: {len(us_rows)} player logs")
+        except Exception as e:  # noqa: BLE001
+            _log(f"  Understat unavailable ({type(e).__name__}: {e})")
+
+    # ---- 2. Sofascore — last-N-overall, EVERY CL club --------------------
+    if src != "understat_only":
+        try:
+            from .sources.recent_form import fetch_form_rows as fetch_ss
+
+            budget = float(os.environ.get("SOFA_FORM_BUDGET_S", "2200") or 2200)
+            dly = float(os.environ.get("SOFA_FORM_DELAY_S", "1.2") or 1.2)
+            n_clubs = len({p.team_id for p in players if p.price >= env.recent_form_min_price})
+            _log(f"form: Sofascore last-{n}-overall — all {n_clubs} CL clubs, "
+                 f"{budget:.0f}s budget, {dly:.1f}s pacing (incremental: cached "
+                 f"fixtures are free, so coverage builds run-over-run)")
+            ss_rows = fetch_ss(
+                players, team_names, last_n=n, min_price=env.recent_form_min_price,
+                time_budget_s=budget, only_uids=None, delay=dly,
+                log=lambda m: _log(m),
+            )
+            _log(f"  Sofascore: {len(ss_rows)} player logs")
+        except Exception as e:  # noqa: BLE001
+            _log(f"  Sofascore unavailable ({type(e).__name__}) — falling back to "
+                 f"Understat + stored form")
+
+    # Sofascore's all-comps window supersedes Understat's domestic-only one:
+    # both feeds are passed to the matcher, which prefers the Sofascore row per
+    # player (it carries the cup + CL games Understat can't see).
+    all_rows = ss_rows + us_rows
+
+    if not all_rows:
+        _log("  no fresh form rows; projections use stored form + UEFA-minutes prior")
+        return db.load_player_form() if not dry else {}
+
+    form, unmatched = build_player_form(players, team_names, all_rows, overrides)
+    form_by_pid = {f.player_id: f for f in form}
     xfer = [f for f in form if not f.team_ok]
     _log(f"  fresh form: matched {len(form)}/{len(players)} this run "
          f"({len(unmatched)} unmatched); {len(xfer)} transferred/role-mismatch")
@@ -477,13 +560,33 @@ def _form_source(db, env: Env, players, teams, dry):
         _log(f"  MISMATCH  {p.name if p else f.player_id}: {f.role_note}")
     if not dry and form:
         db.replace_player_form(form)
-    # The scrape is time-boxed and only refreshes a slice each run, but
-    # `player_form` is an upsert store — merge this run's rows over everything
-    # we've accumulated so projections see the full history, not just today's
-    # slice. Fresh rows win per player.
+
+    # `player_form` is an upsert store, so a time-boxed run only refreshes a
+    # slice — merge this run's rows over everything accumulated so projections
+    # see full history. BUT: for a club we genuinely just re-scraped from
+    # Sofascore (senior, all-comps), a *stored* row for a player who did NOT
+    # match a fresh senior sample is almost always a stale academy/reserve
+    # artifact from an older Understat pull (Rivas, Gerard Martín, N. Brown…).
+    # Evict those so they can't outrank real first-teamers in the predicted XI.
+    pmap = {p.uefa_player_id: p for p in players}
+    scraped_teams = {
+        pmap[pid].team_id for pid, f in form_by_pid.items()
+        if pid in pmap and f.source == "sofascore" and f.recent_matches > 0
+    }
     merged = db.load_player_form() if not dry else {}
-    merged.update({f.player_id: f for f in form})
-    _log(f"  form coverage after merge with stored: {len(merged)}/{len(players)}")
+    stale = [
+        pid for pid, f in merged.items()
+        if pid not in form_by_pid
+        and pid in pmap and pmap[pid].team_id in scraped_teams
+        and (f.source != "sofascore" or f.recent_matches <= 2)
+    ]
+    for pid in stale:
+        merged.pop(pid, None)
+    if stale and not dry:
+        db.delete_player_form(stale)
+    merged.update(form_by_pid)
+    _log(f"  form coverage after merge with stored: {len(merged)}/{len(players)} "
+         f"({len(scraped_teams)} clubs re-scraped, {len(stale)} stale rows evicted)")
     return merged
 
 
@@ -558,9 +661,18 @@ def _optimizer(db, players, teams, proj_by_md, matchday, params, picks_override,
 
     def eligible(pid: int) -> bool:
         fm = form_by_id.get(pid)
+        if fm is not None and not fm.team_ok:
+            return False  # genuinely at another club now
+        # Prefer the COMPOSED start prob (blends form + minutes + price + an
+        # official lineup when one is out) over the raw recent-form rate — a
+        # nailed or confirmed starter with a thin form sample must not be
+        # filtered out of the transfer pool, and a confirmed-benched star must.
+        pr = proj.get(pid)
+        if pr is not None and pr.p_start is not None:
+            return pr.p_start >= min_start
         if fm is None:
-            return True  # no form data -> don't exclude, projection prior handles it
-        return fm.team_ok and (fm.start_prob >= min_start or fm.recent_matches == 0)
+            return True  # no signal at all -> let the projection prior decide
+        return fm.start_prob >= min_start or fm.recent_matches == 0
 
     pool = [
         op for p in players
@@ -572,8 +684,6 @@ def _optimizer(db, players, teams, proj_by_md, matchday, params, picks_override,
     ideal = suggest_initial_squad(pool, matchday=matchday, horizon=horizon)
 
     # Pre-season (team not yet locked) or no squad -> the ideal squad IS the advice.
-    from datetime import datetime
-
     deadline = db.get_settings([Keys.DEADLINE]).get(Keys.DEADLINE)
     pre_season = False
     if deadline:
@@ -668,7 +778,12 @@ def _optimizer(db, players, teams, proj_by_md, matchday, params, picks_override,
                 "liveOptions": [t["name"] for t in late[:4]],
             }
 
-    if len(squad) < 15 or pre_season:
+    # Only surface the from-scratch ideal squad AS the whole recommendation when
+    # there's no real 15 to analyse. If the user has picked a squad — even
+    # before the MD1 deadline — the captain / best XI / live-option advice must
+    # be about THEIR players, not a theoretical dream team. The ideal squad is
+    # still attached below (as `idealSquad`) for "if you rebuilt from scratch".
+    if len(squad) < 15:
         if not ideal:
             return None
         ideal["preSeason"] = True
@@ -692,13 +807,17 @@ def _optimizer(db, players, teams, proj_by_md, matchday, params, picks_override,
         free_transfers = int(db.get_settings(["ucl.free_transfers"]).get("ucl.free_transfers") or 2)
     except ValueError:
         free_transfers = 2
+    # Before the MD1 deadline the squad isn't locked — every change is free, so
+    # the planner shouldn't be pricing in −4 hits for the 3rd+ move.
+    ft_effective = 15 if pre_season else free_transfers
     starters = {pk.player_id for pk in picks if pk.is_starter}
     captain = next((pk.player_id for pk in picks if pk.is_captain), None)
     out = optimise(
-        squad, pool, matchday=matchday, bank=bank, free_transfers=free_transfers,
+        squad, pool, matchday=matchday, bank=bank, free_transfers=ft_effective,
         horizon=horizon, current_starter_ids=starters or None, current_captain_id=captain,
     )
     out["preSeason"] = False
+    out["deadlineOpen"] = pre_season  # squad not locked yet — free to change
     out["freeTransfers"] = free_transfers
     if ideal:
         owned = {p.player_id for p in squad}

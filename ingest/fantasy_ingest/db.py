@@ -199,6 +199,14 @@ class DB:
             ],
         )
 
+    def delete_player_form(self, player_ids: list[int]) -> None:
+        """Drop stored form for these players (used to evict stale youth/reserve
+        rows once a fresher, more complete scrape supersedes their club)."""
+        self._many(
+            "delete from player_form where player_id = %s",
+            [(pid,) for pid in player_ids],
+        )
+
     def load_player_form(self) -> dict[int, PlayerForm]:
         with self.conn() as c:
             rows = c.execute(

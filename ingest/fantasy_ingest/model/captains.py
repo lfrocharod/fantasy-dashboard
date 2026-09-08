@@ -17,6 +17,10 @@ def analyse_captains(rows: list[dict], *, top_n: int = 6) -> dict:
         xp = r.get("xpts") or 0.0
         if xp <= 0:
             continue
+        # you effectively never captain a goalkeeper — their ceiling is a save
+        # count, not a haul. Keep them out of every captain suggestion.
+        if r.get("position") == "GK":
+            continue
         hi = r.get("xptsHigh") or xp
         lo = r.get("xptsLow") or xp
         cands.append(
@@ -36,7 +40,12 @@ def analyse_captains(rows: list[dict], *, top_n: int = 6) -> dict:
     cands.sort(key=lambda c: -c["score"])
     shortlist = cands[:top_n]
     safe = max(shortlist, key=lambda c: (0.6 * c["ev"] + 0.4 * c["floor"]), default=None)
-    diff_pool = [c for c in cands if c["owned"] < 15] or cands
+    # a differential captain still has to be a *plausible* captain — within ~65%
+    # of the best pick's EV — not a low-owned lottery ticket.
+    top_ev = shortlist[0]["ev"] if shortlist else 0.0
+    diff_pool = [c for c in cands if c["owned"] < 15 and c["ev"] >= 0.65 * top_ev] or [
+        c for c in cands if c["owned"] < 15
+    ] or cands
     differential = max(diff_pool, key=lambda c: c["ceiling"], default=None)
     return {
         "candidates": shortlist,

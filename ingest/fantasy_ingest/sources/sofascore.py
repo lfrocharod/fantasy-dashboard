@@ -34,6 +34,8 @@ class SofaClient:
         self._delay = delay
         self._cooldown = 0.0  # extra per-call sleep, grows under sustained throttling
         self._ttl = ttl_hours * 3600
+        self._block_streak = 0  # consecutive fully-failed calls (no 200)
+        self._calls = 0
         _CACHE.mkdir(parents=True, exist_ok=True)
 
     def _cache_path(self, path: str) -> Path:
@@ -47,19 +49,31 @@ class SofaClient:
                 return json.loads(cp.read_text())
             except json.JSONDecodeError:
                 pass
+        # Circuit breaker: once Sofascore has hard-blocked ~10 calls in a row,
+        # stop grinding through multi-minute backoffs for every remaining
+        # request — fail fast and let the caller fall back to stored data. Retry
+        # for real only every 25th call in case the block lifts.
+        self._calls += 1
+        if self._block_streak >= 10 and self._calls % 25 != 0:
+            raise SofaError(f"circuit-open (blocked x{self._block_streak}) {path}")
+
         # Exponential backoff on 403/429 — Sofascore throttles a busy IP for
-        # minutes, so give it real time to recover before giving up.
-        for attempt in range(7):
+        # minutes; give it some time to recover, but fewer attempts once we're
+        # clearly being blocked.
+        max_attempts = 3 if self._block_streak >= 4 else 6
+        for attempt in range(max_attempts):
             time.sleep(self._delay + self._cooldown)
             try:
                 r = self._s.get(_BASE + path)
             except Exception as e:
-                if attempt == 6:
+                if attempt == max_attempts - 1:
+                    self._block_streak += 1
                     raise SofaError(f"transport error {path}: {e}") from e
                 time.sleep(3 * (attempt + 1))
                 continue
             if r.status_code == 200:
                 self._cooldown = max(0.0, self._cooldown - 0.4)
+                self._block_streak = 0
                 data = r.json()
                 if cache:
                     cp.write_text(json.dumps(data))
@@ -69,12 +83,12 @@ class SofaClient:
                     return None
                 raise SofaError(f"404 {path}")
             if r.status_code in (403, 429):
-                wait = min(60.0, 2.0 ** attempt)
-                # a sustained throttle: raise the per-call cooldown for a while
+                wait = min(45.0, 2.0 ** attempt)
                 self._cooldown = min(4.0, self._cooldown + 0.5)
                 time.sleep(wait)
                 continue
             raise SofaError(f"{r.status_code} {path}")
+        self._block_streak += 1
         raise SofaError(f"rate-limited on {path}")
 
     # -- convenience -----------------------------------------------------
@@ -115,14 +129,24 @@ class SofaClient:
     def player_last_events(self, player_id: int) -> dict:
         return self.get(f"/player/{player_id}/events/last/0") or {}
 
+    def team_events_next(self, team_id: int) -> list[dict]:
+        d = self.get(f"/team/{team_id}/events/next/0", allow_404=True) or {}
+        return d.get("events", []) or []
+
+    def team_events_last(self, team_id: int) -> list[dict]:
+        d = self.get(f"/team/{team_id}/events/last/0", allow_404=True) or {}
+        return d.get("events", []) or []
+
     def player_match_stats(self, event_id: int, player_id: int) -> dict | None:
         d = self.get(
             f"/event/{event_id}/player/{player_id}/statistics", allow_404=True
         )
         return (d or {}).get("statistics") if d else None
 
-    def event_lineups(self, event_id: int) -> dict | None:
-        return self.get(f"/event/{event_id}/lineups", allow_404=True)
+    def event_lineups(self, event_id: int, *, fresh: bool = False) -> dict | None:
+        # near kickoff a lineup flips from predicted -> confirmed within the
+        # hour, so a matchday pull must bypass the disk cache.
+        return self.get(f"/event/{event_id}/lineups", cache=not fresh, allow_404=True)
 
     def lineup_slot(self, event_id: int, player_id: int) -> dict | None:
         """This player's row in a match lineup: {position, substitute, ...}."""

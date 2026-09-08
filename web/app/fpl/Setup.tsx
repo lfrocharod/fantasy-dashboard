@@ -54,17 +54,26 @@ export function FplSetup({ onSaved }: { onSaved: () => void }) {
       </div>
       <div className="border-t border-[var(--border)] pt-3">
         <div className="text-xs text-[var(--muted)]">
-          <b>Optional</b> — the FPL Draft API is public, so league standings,
-          ownership and squads all sync without a cookie. Only add{" "}
-          <code>pl_profile</code> (DevTools → Application → Cookies →
-          draft.premierleague.com) if a call starts returning 403.
+          <b>Login token</b> — optional. Standings, ownership and rosters sync
+          without it, but it&apos;s what lets us read your{" "}
+          <b>live Pick Team</b> (this week&apos;s starting XI + captain) before the
+          deadline, instead of just your last fielded team.
           {hasCookie && <b className="text-[var(--good)]"> stored ✓</b>}
+          <div className="mt-1">
+            Sign in at <span className="font-mono">draft.premierleague.com</span>,
+            open <b>Pick Team</b>, then <b>F12 → Network</b> → reload → right-click
+            any <span className="font-mono">api/</span> request →{" "}
+            <b>Copy → Copy as cURL</b> → paste the whole thing below. (Or just the{" "}
+            <span className="font-mono">x-api-authorization: Bearer …</span> value.)
+            Stored AES-encrypted. The token lasts ~8 h, so re-paste it when you want
+            a pre-deadline look; after each deadline your real XI syncs on its own.
+          </div>
         </div>
-        <input
-          className="input mt-2 w-full font-mono text-xs"
+        <textarea
+          className="input mt-2 h-20 w-full font-mono text-[11px]"
           value={f.plProfile}
-          onChange={set("plProfile")}
-          placeholder="pl_profile = eyJ…  (or paste the whole cookie string)"
+          onChange={(e) => setF((s) => ({ ...s, plProfile: e.target.value }))}
+          placeholder="paste the curl command, or  Bearer eyJ…"
         />
       </div>
       <div className="flex items-center gap-3">

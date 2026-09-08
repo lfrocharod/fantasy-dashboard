@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the fast fantasy refresh every 30 min during the day
+
+[Timer]
+# every 30 minutes, 08:00–23:00 local
+OnCalendar=*-*-* 08..23:00,30:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

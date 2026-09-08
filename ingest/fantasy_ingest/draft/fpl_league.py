@@ -8,25 +8,65 @@ Most endpoints on draft.premierleague.com are readable without auth. The
 
 from __future__ import annotations
 
+import re
+
 import httpx
 
 _BASE = "https://draft.premierleague.com/api"
 _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0 Safari/537.36"
 
+_JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 
-def _client(cookie: str | None = None) -> httpx.Client:
+
+def split_auth(blob: str | None) -> tuple[str, str | None]:
+    """Pull a cookie string and/or a Bearer token out of whatever the user
+    pasted — a bare token, a `Bearer …` value, an `x-api-authorization:` line,
+    a `Cookie:` header, or a whole `curl` command copied from DevTools.
+
+    Returns (cookie_string, bearer_token). FPL's account API now authenticates
+    with the Bearer token (from `x-api-authorization`), not a session cookie.
+    """
+    if not blob:
+        return "", None
+    s = blob.strip()
+
+    bearer = None
+    m = re.search(r"[Bb]earer\s+(" + _JWT_RE.pattern + r")", s)
+    if m:
+        bearer = m.group(1)
+    elif _JWT_RE.fullmatch(s):
+        bearer = s
+
+    cookie = ""
+    # curl copies the cookie jar as  -b '...'  or  --cookie '...'
+    cm = re.search(r"(?:-b|--cookie)\s+'([^']+)'", s) or re.search(r'(?:-b|--cookie)\s+"([^"]+)"', s)
+    if cm:
+        cookie = cm.group(1)
+    else:
+        hm = re.search(r"[Cc]ookie:\s*([^\r\n']+)", s)
+        if hm:
+            cookie = hm.group(1).strip()
+        elif "=" in s and ";" in s and "\n" not in s and "curl" not in s:
+            cookie = s  # looks like a bare "a=b; c=d" string
+    return cookie, bearer
+
+
+def _client(auth: str | None = None) -> httpx.Client:
+    cookie_str, bearer = split_auth(auth)
     cookies = {}
-    if cookie:
-        # accept either a bare pl_profile value or a full "a=b; c=d" cookie string
-        if "=" in cookie:
-            for part in cookie.split(";"):
-                if "=" in part:
-                    k, _, v = part.strip().partition("=")
-                    cookies[k] = v
-        else:
-            cookies["pl_profile"] = cookie
-    return httpx.Client(headers={"User-Agent": _UA}, cookies=cookies, timeout=30,
-                        follow_redirects=True)
+    for part in cookie_str.split(";"):
+        if "=" in part:
+            k, _, v = part.strip().partition("=")
+            cookies[k] = v
+    headers = {"User-Agent": _UA}
+    if bearer:
+        headers["x-api-authorization"] = f"Bearer {bearer}"
+    return httpx.Client(headers=headers, cookies=cookies, timeout=30, follow_redirects=True)
+
+
+def has_auth(auth: str | None) -> bool:
+    """True when the pasted blob carries a usable Bearer token."""
+    return split_auth(auth)[1] is not None
 
 
 def _get(c: httpx.Client, path: str) -> dict:
@@ -90,8 +130,59 @@ def parse_choices(client: httpx.Client, league_id: str) -> list[dict]:
     } for c in ch if c.get("element")]
 
 
-def fetch_my_squad(client: httpx.Client, entry_id: str, gw: int) -> list[dict]:
-    """Needs the pl_profile cookie for a team that isn't yours to be visible;
-    yours is always visible when authenticated."""
-    d = _get(client, f"entry/{entry_id}/event/{gw}")
-    return d.get("picks", []) or []
+def _picks_to_lineup(picks: list[dict], source: str) -> list[dict]:
+    out = []
+    for p in picks or []:
+        if not p.get("element"):
+            continue
+        slot = int(p.get("position") or 0)
+        out.append({
+            "element": p["element"],
+            "slot": slot,
+            "starter": 1 <= slot <= 11,
+            "captain": bool(p.get("is_captain")),
+            "vice": bool(p.get("is_vice_captain")),
+            "source": source,
+        })
+    out.sort(key=lambda x: x["slot"] or 99)
+    return out
+
+
+def fetch_my_squad(
+    client: httpx.Client, entry_id: str, next_gw: int, authed: bool, log=lambda _m: None
+) -> list[dict]:
+    """The lineup you set on FPL's "Pick Team" tab.
+
+    Each pick: element id, `position` 1-15 (1-11 = the starting XI in the
+    formation you chose, 12-15 = bench order), and captain / vice flags.
+
+    With a logged-in Bearer token we read `entry/{id}/my-team` — the LIVE
+    editable team for the upcoming gameweek, i.e. exactly what Pick Team shows.
+    Without one the API only exposes completed gameweeks, so we fall back to the
+    most recent one you actually fielded.
+    """
+    if authed:
+        try:
+            d = _get(client, f"entry/{entry_id}/my-team")
+            lu = _picks_to_lineup(d.get("picks", []), "my-team")
+            if lu:
+                return lu
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403):
+                log("  my-team: 401/403 — the token is missing or expired. Copy a "
+                    "fresh one (DevTools -> Network -> an api/ request -> "
+                    "x-api-authorization: Bearer ...) into Settings. Using last "
+                    "fielded XI for now.")
+        except Exception:  # noqa: BLE001,S110
+            pass
+    for gw in (next_gw, next_gw - 1, next_gw - 2):
+        if gw < 1:
+            continue
+        try:
+            d = _get(client, f"entry/{entry_id}/event/{gw}")
+        except Exception:  # noqa: BLE001,S112
+            continue
+        lu = _picks_to_lineup(d.get("picks", []), f"event/{gw}")
+        if lu:
+            return lu
+    return []

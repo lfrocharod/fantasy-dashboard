@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Legend } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import type { DraftConfig } from "@/lib/draft/queries";
@@ -10,7 +11,6 @@ import {
   groupTeams,
   loadNfl,
   optimalLineup,
-  startSitCall,
   weekPoints,
   type NflPlayer,
 } from "./lib";
@@ -35,27 +35,17 @@ function InjTag({ s }: { s: string }) {
   const short = { QUESTIONABLE: "Q", DOUBTFUL: "D", OUT: "O", IR: "IR", SUSPENSION: "SUS" }[s] ?? s[0];
   return <span className="ml-1 text-[10px] font-semibold text-[var(--bad)]">{short}</span>;
 }
-function Opp({ opp, fdr }: { opp: string; fdr: number }) {
-  return (
-    <span
-      className="rounded px-1 text-xs"
-      style={fdr ? { background: FDR_BG[fdr] } : undefined}
-      title={fdr ? `matchup ${fdr}/5` : ""}
-    >
-      {opp || "—"}
-    </span>
-  );
-}
 
 // crude win prob from projected margin (NFL weekly stdev ~ 28)
 function winProb(margin: number): number {
   return Math.round(100 / (1 + Math.exp(-margin / 16)));
 }
 
-export default function NflLineupPage() {
+const POS_SORT = ["QB", "RB", "WR", "TE", "K", "DST"];
+
+export default function NflOverviewPage() {
   const [players, setPlayers] = useState<NflPlayer[]>([]);
   const [config, setConfig] = useState<DraftConfig | null>(null);
-
 
   useEffect(() => {
     loadNfl().then((d) => {
@@ -76,7 +66,9 @@ export default function NflLineupPage() {
 
   const teams = useMemo(() => groupTeams(players, config?.myTeamId ?? null), [players, config]);
   const schedule = (config?.schedule ?? []) as Match[];
-  const myMatch = schedule.find((m) => m.week === week && (m.home === config?.myTeamId || m.away === config?.myTeamId));
+  const myMatch = schedule.find(
+    (m) => m.week === week && (m.home === config?.myTeamId || m.away === config?.myTeamId),
+  );
   const oppId = myMatch ? (myMatch.home === config?.myTeamId ? myMatch.away : myMatch.home) : null;
   const oppTeam = teams.find((t) => t.teamId === oppId);
 
@@ -85,7 +77,7 @@ export default function NflLineupPage() {
     () => (oppTeam ? optimalLineup(oppTeam.players, slots, 0) : null),
     [oppTeam, slots],
   );
-  const starterIds = useMemo(
+  const optIds = useMemo(
     () => new Set(mine.starters.map((s) => s.p?.extId).filter(Boolean) as string[]),
     [mine],
   );
@@ -100,20 +92,48 @@ export default function NflLineupPage() {
   }
 
   const margin = theirs ? mine.total - theirs.total : 0;
+  const changes =
+    mine.starters.filter((s) => s.p && (s.p.slot === "BE" || s.p.slot === "IR" || !s.p.slot)).length +
+    myRoster.filter((p) => !optIds.has(p.extId) && p.slot && p.slot !== "BE" && p.slot !== "IR").length;
 
-  // changes vs the lineup currently set in ESPN (slot === "BE" means benched)
-  const optIds = new Set(mine.starters.map((s) => s.p?.extId).filter(Boolean) as string[]);
-  const toStart = mine.starters
-    .filter((s) => s.p && (s.p.slot === "BE" || s.p.slot === "IR" || !s.p.slot))
-    .map((s) => s.p!);
-  const toBench = myRoster.filter(
-    (p) => !optIds.has(p.extId) && p.slot && p.slot !== "BE" && p.slot !== "IR",
+  const injured = myRoster.filter((p) => p.injury !== "ACTIVE" && optIds.has(p.extId));
+  const byes = myRoster.filter((p) => p.onBye && optIds.has(p.extId));
+
+  const ordered = [...myRoster].sort(
+    (a, b) => POS_SORT.indexOf(a.pos) - POS_SORT.indexOf(b.pos) || weekPoints(b, 0) - weekPoints(a, 0),
   );
+
+  const byPoints = (config?.nflSeedingRule ?? "H2H_RECORD") === "TOTAL_POINTS_SCORED";
+  const checks: { ok: boolean; text: string; href?: string }[] = [
+    {
+      ok: changes === 0,
+      text: changes === 0 ? "ESPN lineup matches the optimal one" : `${changes} lineup change(s) recommended`,
+      href: "/nfl/optimizer",
+    },
+    ...(byPoints
+      ? [
+          {
+            ok: true,
+            text: "Playoffs seed by total points — start your highest-ceiling lineup, not the safe floor",
+          },
+        ]
+      : []),
+    {
+      ok: injured.length === 0,
+      text: injured.length
+        ? `${injured.length} starter(s) carrying an injury tag: ${injured.map((p) => p.name).join(", ")}`
+        : "No injury tags on your projected starters",
+    },
+    {
+      ok: byes.length === 0,
+      text: byes.length ? `${byes.length} projected starter(s) on BYE — fill the slot` : "No starters on bye this week",
+    },
+  ];
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-xl font-semibold">Week {week} lineup</h1>
+        <h1 className="text-xl font-semibold">Week {week} overview</h1>
         <span className="text-sm text-[var(--muted)]">
           projected <b>{fmt(mine.total, 0)}</b>
           {theirs && (
@@ -127,63 +147,30 @@ export default function NflLineupPage() {
         </span>
       </div>
 
-      {(toStart.length > 0 || toBench.length > 0) && (
-        <div className="card p-3 text-sm">
-          <b className="text-[var(--warn)]">Lineup changes to make in ESPN:</b>
-          <ul className="mt-1 space-y-0.5">
-            {toStart.map((p) => (
-              <li key={p.extId}>
-                ▲ Start <b>{p.name}</b> ({p.pos}, {fmt(weekPoints(p, 0))} proj)
-              </li>
-            ))}
-            {toBench.map((p) => (
-              <li key={p.extId} className="text-[var(--muted)]">
-                ▼ Bench {p.name} ({p.slot}, {fmt(weekPoints(p, 0))} proj)
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* ---- OPTIMAL LINEUP ---- */}
       <section className="space-y-2">
-        <div className="card table-wrap">
-          <table className="dtable">
-            <thead>
-              <tr>
-                <th>Slot</th>
-                <th>Player</th>
-                <th>Matchup</th>
-                <th className="num">Proj</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mine.starters.map((s, i) => (
-                <tr key={i}>
-                  <td className="text-xs text-[var(--muted)]">{s.slot}</td>
-                  <td className="font-medium">
-                    {s.p ? (
-                      <>
-                        <Tag pos={s.p.pos} /> {s.p.name}{" "}
-                        <span className="text-[var(--muted)]">{s.p.team}</span>
-                        <InjTag s={s.p.injury} />
-                      </>
-                    ) : (
-                      <span className="text-[var(--bad)]">— empty —</span>
-                    )}
-                  </td>
-                  <td>{s.p && <Opp opp={s.p.matchups[0]?.opp ?? ""} fdr={s.p.matchups[0]?.fdr ?? 0} />}</td>
-                  <td className="num font-semibold">{s.p ? fmt(weekPoints(s.p, 0)) : "–"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <h2 className="text-sm font-semibold text-[var(--muted)]">THIS WEEK — checklist</h2>
+        <div className="card divide-y divide-[var(--border)]">
+          {checks.map((c, i) => (
+            <div key={i} className="flex items-center gap-2 px-3 py-2 text-sm">
+              <span
+                className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white"
+                style={{ background: c.ok ? "var(--good)" : "var(--warn)" }}
+              >
+                {c.ok ? "OK" : "DO"}
+              </span>
+              <span>{c.text}</span>
+              {c.href && !c.ok && (
+                <Link href={c.href} className="ml-auto text-xs text-[var(--accent)]">
+                  open Optimizer →
+                </Link>
+              )}
+            </div>
+          ))}
         </div>
       </section>
 
-      {/* ---- START / SIT ---- */}
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold text-[var(--muted)]">START / SIT — every rostered player</h2>
+        <h2 className="text-sm font-semibold text-[var(--muted)]">YOUR ROSTER</h2>
         <div className="card table-wrap">
           <table className="dtable">
             <thead>
@@ -192,97 +179,46 @@ export default function NflLineupPage() {
                 <th>Matchup</th>
                 <th className="num">Wk proj</th>
                 <th className="num hide-sm">ROS</th>
-                <th>Call</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {[...myRoster]
-                .sort((a, b) => weekPoints(b, 0) - weekPoints(a, 0))
-                .map((p) => {
-                  const call = startSitCall(p, starterIds);
-                  return (
-                    <tr key={p.extId}>
-                      <td className="font-medium">
-                        <Tag pos={p.pos} /> {p.name} <span className="text-[var(--muted)]">{p.team}</span>
-                        <InjTag s={p.injury} />
-                        {p.onBye && <span className="ml-1 text-[10px] text-[var(--warn)]">BYE</span>}
-                      </td>
-                      <td>
-                        <Opp opp={p.matchups[0]?.opp ?? ""} fdr={p.matchups[0]?.fdr ?? 0} />
-                      </td>
-                      <td className="num font-semibold">{fmt(weekPoints(p, 0))}</td>
-                      <td className="num hide-sm">{fmt(p.rosProj, 0)}</td>
-                      <td
-                        className="text-xs font-semibold"
-                        style={{
-                          color:
-                            call === "START"
-                              ? "var(--good)"
-                              : call === "FLEX?"
-                                ? "var(--warn)"
-                                : "var(--muted)",
-                        }}
+              {ordered.map((p) => {
+                const m = p.matchups[0];
+                const starting = optIds.has(p.extId);
+                return (
+                  <tr key={p.extId} style={starting ? undefined : { opacity: 0.55 }}>
+                    <td className="font-medium">
+                      <Tag pos={p.pos} /> {p.name} <span className="text-[var(--muted)]">{p.team}</span>
+                      <InjTag s={p.injury} />
+                      {p.onBye && <span className="ml-1 text-[10px] text-[var(--warn)]">BYE</span>}
+                    </td>
+                    <td>
+                      <span
+                        className="rounded px-1 text-xs font-medium"
+                        style={m?.fdr ? { background: FDR_BG[m.fdr] } : undefined}
+                        title={m?.fdr ? `matchup ${m.fdr}/5` : ""}
                       >
-                        {call}
-                      </td>
-                    </tr>
-                  );
-                })}
+                        {p.onBye ? "BYE" : m?.opp || "—"}
+                      </span>
+                    </td>
+                    <td className="num font-semibold">{fmt(weekPoints(p, 0))}</td>
+                    <td className="num hide-sm">{fmt(p.rosProj, 0)}</td>
+                    <td className="text-[10px] text-[var(--muted)]">{starting ? "start" : "bench"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </section>
 
-      {/* ---- OPPONENT ---- */}
-      {theirs && oppTeam && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold text-[var(--muted)]">
-            {oppTeam.name} — their projected starters
-          </h2>
-          <p className="text-sm text-[var(--muted)]">
-            You&apos;re {margin >= 4 ? "a clear favourite — play your safe floor" : margin <= -4 ? "the underdog — play ceiling / make a differential move" : "in a coin-flip — every start/sit call matters"}.
-          </p>
-          <div className="card table-wrap">
-            <table className="dtable">
-              <thead>
-                <tr>
-                  <th>Slot</th>
-                  <th>Player</th>
-                  <th>Matchup</th>
-                  <th className="num">Proj</th>
-                </tr>
-              </thead>
-              <tbody>
-                {theirs.starters.map((s, i) => (
-                  <tr key={i}>
-                    <td className="text-xs text-[var(--muted)]">{s.slot}</td>
-                    <td>
-                      {s.p ? (
-                        <>
-                          <Tag pos={s.p.pos} /> {s.p.name}{" "}
-                          <span className="text-[var(--muted)]">{s.p.team}</span>
-                        </>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td>{s.p && <Opp opp={s.p.matchups[0]?.opp ?? ""} fdr={s.p.matchups[0]?.fdr ?? 0} />}</td>
-                    <td className="num">{s.p ? fmt(weekPoints(s.p, 0)) : "–"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
       <Legend
         items={[
           ["Matchup colour", "1 (green) easy … 5 (red) hard — opponent defence vs that position"],
-          ["Proj", "projected PPR points this week (ESPN + FantasyPros blend)"],
-          ["ROS", "rest-of-season projected points"],
-          ["Call", "START = in your optimal XI · FLEX? = viable flex swing · SIT = leave it"],
-          ["Win %", "from the projected margin vs this week's opponent (weekly stdev ~16)"],
+          ["Wk proj / ROS", "projected PPR points this week / rest of season"],
+          ["dimmed row", "not in your optimal lineup this week"],
+          ["Win %", "from the projected margin vs this week's opponent"],
         ]}
       />
     </div>

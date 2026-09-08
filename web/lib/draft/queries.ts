@@ -17,12 +17,18 @@ export interface DraftConfig {
   // FPL Draft
   entryId: string | null;
   mySquad: string[]; // element ext ids
+  fplLineup: {
+    source: string; // "my-team" (live Pick Team) | "event/N" (last fielded) | ""
+    picks: { extId: string; slot: number; starter: boolean; captain: boolean; vice: boolean }[];
+  };
   standings: unknown[];
   schedule: unknown[];
   fplMode: string; // 'c' classic / 'h' head-to-head
   // NFL in-season
   nflWeek: number;
   nflPlayoffWeeks: number[];
+  nflPlayoffTeams: number;
+  nflSeedingRule: string; // "H2H_RECORD" | "TOTAL_POINTS_SCORED"
   nflSlots: Record<string, number>;
   nflMyRoster: string[];
 }
@@ -43,6 +49,16 @@ function jsonArr(v: string | undefined): unknown[] {
 function jsonObj(v: string | undefined): Record<string, number> {
   try { return v ? JSON.parse(v) : {}; } catch { return {}; }
 }
+function parseLineup(v: string | undefined): DraftConfig["fplLineup"] {
+  try {
+    const o = v ? JSON.parse(v) : null;
+    if (o && Array.isArray(o.picks)) return { source: String(o.source ?? ""), picks: o.picks };
+    if (Array.isArray(o)) return { source: "", picks: o }; // legacy shape
+  } catch {
+    /* ignore */
+  }
+  return { source: "", picks: [] };
+}
 
 export async function getDraftConfig(sport: Sport): Promise<DraftConfig> {
   const s = await getSettings([
@@ -50,8 +66,9 @@ export async function getDraftConfig(sport: Sport): Promise<DraftConfig> {
     k(sport, "roster"), k(sport, "scoring"), k(sport, "year"),
     k(sport, "espn_s2"), k(sport, "swid"), k(sport, "league_id"),
     k(sport, "entry_id"), k(sport, "pl_profile"),
-    k(sport, "my_squad"), k(sport, "standings"), k(sport, "schedule"), k(sport, "mode"),
+    k(sport, "my_squad"), k(sport, "my_lineup"), k(sport, "standings"), k(sport, "schedule"), k(sport, "mode"),
     k(sport, "week"), k(sport, "playoff_weeks"), k(sport, "slots"), k(sport, "my_roster"),
+    k(sport, "playoff_teams"), k(sport, "seeding_rule"),
   ]);
   const fpl = sport === "fpl";
   let roster = fpl ? FPL_ROSTER : DEFAULT_ROSTER;
@@ -91,11 +108,14 @@ export async function getDraftConfig(sport: Sport): Promise<DraftConfig> {
     year: Number(s[k(sport, "year")]) || 2026,
     entryId: s[k(sport, "entry_id")] ?? null,
     mySquad,
+    fplLineup: parseLineup(s[k(sport, "my_lineup")]),
     standings,
     schedule,
     fplMode: s[k(sport, "mode")] || "c",
     nflWeek: Number(s[k(sport, "week")]) || 1,
     nflPlayoffWeeks: jsonArr(s[k(sport, "playoff_weeks")]) as number[],
+    nflPlayoffTeams: Number(s[k(sport, "playoff_teams")]) || 4,
+    nflSeedingRule: s[k(sport, "seeding_rule")] || "H2H_RECORD",
     nflSlots: jsonObj(s[k(sport, "slots")]),
     nflMyRoster: jsonArr(s[k(sport, "my_roster")]) as string[],
   };

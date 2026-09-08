@@ -9,20 +9,24 @@
 #   ./run.sh --skip-sources  # FAST (~1 min): UEFA data + squad + projections from
 #                            #   season xG (cached) + priors + club strength.
 #                            #   This is the everyday command.
-#   ./run.sh                 # + the slow Understat/Sofascore scrape for recent
-#                            #   form (hot streaks, role checks). Best-effort and
-#                            #   time-boxed — SOFA_FORM_BUDGET_S=600 to allow more.
+#   ./run.sh                 # + recent form: each player's last N matches OVERALL
+#                            #   (Champions League + domestic league + cups), from
+#                            #   Sofascore, for every CL club. Slow-paced with a
+#                            #   circuit breaker; fixtures are disk-cached so a
+#                            #   re-run only pulls new games and coverage builds
+#                            #   run-over-run. First cold run is partial.
 #   ./run.sh --matchday 2    # force a matchday
 #
-# Recent-form scraping is fragile (Sofascore throttles a busy IP). It is now:
-#   - prioritised by ownership/price, so the budget covers players that matter;
-#   - merged over everything already stored in `player_form` (upsert store), so a
-#     partial run keeps prior coverage instead of shrinking the pool;
-#   - backed by a UEFA-minutes start-probability prior for every player, so even
-#     a fully-throttled run still separates nailed starters from fringe.
-# Tunables: SOFA_FORM_BUDGET_S (default 600), RECENT_FORM_MIN_PRICE (default 4.5).
-# Set `ucl.role_overrides` in settings ({"<uefa id or name>": "FWD"}) to hand-fix
-# the handful of role-leverage picks (e.g. Raphinha).
+# Recent form is never fatal — a source failing just means less fresh data; the
+# run always completes and merges the fresh slice over what's stored.
+#   1. Sofascore (default): last-N-overall match logs — minutes / xG / xA / goals
+#      / rating / role — across every competition, every CL club.
+#   2. Understat (RECENT_FORM_SOURCE=both): big-5 domestic logs as a depth layer;
+#      the matcher prefers the Sofascore row per player (it has the CL/cup games).
+# Tunables: RECENT_FORM_SOURCE (sofascore* | both | understat_only),
+#   SOFA_FORM_BUDGET_S (2200), SOFA_FORM_DELAY_S (1.2), RECENT_FORM_LOOKBACK (5),
+#   FBREF_SEASON (auto), SOURCE_LEAGUES, RECENT_FORM_MIN_PRICE. `ucl.role_overrides`
+#   in settings ({"<uefa id or name>": "FWD"}) hand-fixes role-leverage picks.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -54,8 +58,10 @@ for a in "$@"; do [ "$a" = "--skip-sources" ] && want_sources=0; done
 if ! .venv/bin/python -c "import fantasy_ingest, curl_cffi" 2>/dev/null; then
   .venv/bin/pip -q install -e .
 fi
-# The Understat fallback (RECENT_FORM_SOURCE=understat) needs the heavy stack.
-if [ "$want_sources" = 1 ] && [ "${RECENT_FORM_SOURCE:-sofascore}" = "understat" ] \
+# The Understat depth layer (RECENT_FORM_SOURCE=both|understat|understat_only)
+# needs the heavy stack; the default sofascore path only needs curl_cffi.
+case "${RECENT_FORM_SOURCE:-sofascore}" in both|understat|understat_only) us_dep=1 ;; *) us_dep=0 ;; esac
+if [ "$want_sources" = 1 ] && [ "$us_dep" = 1 ] \
    && ! .venv/bin/python -c "import soccerdata" 2>/dev/null; then
   echo "installing Understat deps ([sources]) …"
   .venv/bin/pip -q install -e ".[sources]"
