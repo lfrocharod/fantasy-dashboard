@@ -46,6 +46,12 @@ class Env:
         db = env("DATABASE_URL")
         if not db:
             raise RuntimeError("DATABASE_URL not set")
+        # Understat / FBref season = the start year of the current campaign
+        # (e.g. "2026" for 2026/27). European seasons roll over in July.
+        import datetime as _dt
+
+        _now = _dt.datetime.now(tz=_dt.UTC)
+        _season = str(_now.year if _now.month >= 7 else _now.year - 1)
         return cls(
             database_url=db,
             uefa_email=env("UEFA_EMAIL"),
@@ -55,8 +61,13 @@ class Env:
                 "SOURCE_LEAGUES",
                 "ENG-Premier League,ESP-La Liga,GER-Bundesliga,ITA-Serie A,FRA-Ligue 1",
             ),
-            fbref_season=env("FBREF_SEASON"),
+            fbref_season=env("FBREF_SEASON", _season),
             skip_sources=(env("SKIP_SOURCES") or "").lower() in ("1", "true", "yes"),
+            # Recent form is the last-N matches OVERALL (CL + domestic + cups),
+            # which only Sofascore carries; it's slow-paced + circuit-broken +
+            # incrementally cached so it covers all clubs without a hard block.
+            # "both" adds Understat domestic logs as a big-5 depth layer;
+            # "understat_only" is the offline/debug fallback.
             recent_form_source=(env("RECENT_FORM_SOURCE", "sofascore") or "sofascore").lower(),
             recent_form_lookback=int(env("RECENT_FORM_LOOKBACK", "5") or 5),
             recent_form_min_price=float(env("RECENT_FORM_MIN_PRICE", "4.5") or 4.5),

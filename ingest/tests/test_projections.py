@@ -32,6 +32,24 @@ def test_striker_beats_benchwarmer():
     assert starter.p_start > fringe.p_start
 
 
+def test_confirmed_lineup_overrides_the_model():
+    # a nailed-looking starter who's actually benched -> ~0, and vice versa.
+    nailed = _player("FWD")
+    nailed.minutes_prior = 0.97
+    benched = project_player(nailed, _stat(minutes=1400, matches=16), STRONG, WEAK,
+                             True, 5, PARAMS, confirmed="bench")
+    assert benched.p_start < 0.1
+    assert benched.components["confirmed"] == -1.0
+
+    rotation = _player("FWD", pid=11)
+    rotation.minutes_prior = 0.25
+    starting = project_player(rotation, _stat(pid=11, minutes=300, matches=6), STRONG,
+                              WEAK, True, 5, PARAMS, confirmed="start")
+    assert starting.p_start >= 0.95
+    assert starting.components["confirmed"] == 1.0
+    assert starting.xpts > benched.xpts
+
+
 def test_injury_zeroes_start_probability():
     assert start_probability(_player("MID", status=2), _stat()) == 0.0
     out = project_player(_player("MID", status=2), _stat(), STRONG, WEAK, True, 5, PARAMS)

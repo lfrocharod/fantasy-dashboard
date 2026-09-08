@@ -1,6 +1,16 @@
 from fantasy_ingest.mapping.form_match import build_player_form
+from fantasy_ingest.sources.recent_form import FormRow, normalise
 from fantasy_ingest.sources.understat_form import aggregate_match_rows
 from fantasy_ingest.types import Player
+
+
+def _fr(name, team, *, role="MID", matches=5, starts=5, minutes=None, source="sofascore"):
+    return FormRow(
+        name=name, norm_name=normalise(name), team=team, norm_team=normalise(team),
+        role=role, recent_matches=matches, recent_starts=starts,
+        recent_minutes=minutes if minutes is not None else 90.0 * matches,
+        source=source,
+    )
 
 
 def _mr(player, team, date, minutes, pos, g=0, a=0, npxg=0.0, xa=0.0, shots=0):
@@ -48,3 +58,44 @@ def test_build_player_form_flags_transfer_and_role():
     assert "Bayern" in by_id[2].role_note
 
     assert 3 in [pid for pid, _ in unmatched]
+
+
+def test_one_to_one_youth_does_not_steal_starters_form_row():
+    # A real starter and a cheap academy filler share a surname at the same club.
+    # Only one Sofascore row exists (the starter's). Global assignment must give
+    # it to the starter; the youth is left unmatched, not handed senior form.
+    players = [
+        Player(uefa_player_id=1, name="Dean Huijsen", team_id=10, position="DEF", price=6.0),
+        Player(uefa_player_id=2, name="Huijsen", team_id=10, position="DEF", price=3.8,
+               minutes_prior=0.0),
+    ]
+    team_names = {10: "Real Madrid"}
+    rows = [_fr("Dean Huijsen", "Real Madrid", role="DEF")]
+    form, unmatched = build_player_form(players, team_names, rows)
+    by_id = {f.player_id: f for f in form}
+    assert by_id[1].recent_starts == 5
+    assert 2 in [pid for pid, _ in unmatched]
+
+
+def test_fringe_filler_cannot_inherit_senior_sample_on_fuzzy_name():
+    players = [
+        Player(uefa_player_id=9, name="Karim Abdelghani", team_id=20, position="FWD",
+               price=3.9, minutes_prior=0.0),
+    ]
+    team_names = {20: "Barcelona"}
+    # a different first-teamer who shares the surname bucket and has real minutes
+    rows = [_fr("Youssef Abdelghani", "Barcelona", role="FWD", starts=4, matches=4)]
+    _form, unmatched = build_player_form(players, team_names, rows)
+    assert 9 in [pid for pid, _ in unmatched]
+
+
+def test_sofascore_row_preferred_over_understat_for_same_player():
+    players = [Player(uefa_player_id=1, name="Pedri", team_id=10, position="MID", price=8.0)]
+    team_names = {10: "Barcelona"}
+    rows = [
+        _fr("Pedri", "Barcelona", matches=3, starts=3, source="understat"),
+        _fr("Pedri", "Barcelona", matches=5, starts=5, source="sofascore"),
+    ]
+    [pf] = build_player_form(players, team_names, rows)[0]
+    assert pf.source == "sofascore"
+    assert pf.recent_matches == 5

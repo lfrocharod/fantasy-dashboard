@@ -4,13 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
-  { href: "/nfl", label: "Lineup" },
-  { href: "/nfl/waivers", label: "Waivers" },
-  { href: "/nfl/trade", label: "Trade" },
+  { href: "/nfl", label: "Overview" },
+  { href: "/nfl/players", label: "Players & FA" },
   { href: "/nfl/teams", label: "Team watch" },
   { href: "/nfl/fixtures", label: "Fixture ticker" },
-  { href: "/nfl/planner", label: "Bye / playoffs" },
-  { href: "/nfl/draft", label: "Draft board" },
+  { href: "/nfl/optimizer", label: "Optimizer" },
+  { href: "/nfl/rivals", label: "Rivals" },
+  { href: "/nfl/standings", label: "League" },
+  { href: "/nfl/trade", label: "Trade" },
 ];
 
 export function NflTabs() {

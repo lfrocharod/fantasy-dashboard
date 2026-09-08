@@ -105,6 +105,7 @@ def _sync_fpl(db: DB, env: Env, cfg: dict) -> int:
     from .fpl_league import (
         _client,
         fetch_my_squad,
+        has_auth,
         league_details,
         parse_choices,
         parse_standings,
@@ -114,24 +115,50 @@ def _sync_fpl(db: DB, env: Env, cfg: dict) -> int:
     if not league_id:
         _log("fpl sync skipped — set draft.fpl.league_id in Settings")
         return 0
-    cookie = _fpl_cookie(cfg, env)
+    auth = _fpl_cookie(cfg, env)
+    authed = has_auth(auth)
     entry_id = cfg.get("entry_id")
-    with _client(cookie) as c:
-        det = league_details(c, league_id)
-        standings = parse_standings(det)
-        picks = parse_choices(c, league_id)
+    with _client(auth) as c:
+        # draft.premierleague.com increasingly wants a live session cookie even
+        # for the "public" league endpoints. A stale/expired token must NOT sink
+        # the whole FPL refresh — the player board + projections already built
+        # fine before this. Fall back to whatever's stored and carry on.
+        try:
+            det = league_details(c, league_id)
+            standings = parse_standings(det)
+        except Exception as e:  # noqa: BLE001
+            _log(f"fpl standings: using stored ({type(e).__name__}) — re-paste your "
+                 "x-api-authorization Bearer token in Settings if this persists")
+            det = {}
+            raw = db.get_settings(["draft.fpl.standings"]).get("draft.fpl.standings")
+            standings = json.loads(raw) if raw else []
+        try:
+            picks = parse_choices(c, league_id)
+        except Exception as e:  # noqa: BLE001
+            _log(f"fpl draft board: keeping stored ({type(e).__name__})")
+            picks = []
         my_ids: list[int] = []
+        my_lineup: list[dict] = []
         if entry_id:
             try:
                 ev = _bootstrap_events(c)
-                gw = ev.get("current") or ev.get("next") or 1
-                my_ids = [p["element"] for p in fetch_my_squad(c, entry_id, gw)]
+                next_gw = ev.get("next") or ev.get("current") or 1
+                my_lineup = fetch_my_squad(c, entry_id, next_gw, authed=authed, log=_log)
+                my_ids = [p["element"] for p in my_lineup]
+                if my_lineup:
+                    src = my_lineup[0].get("source", "?")
+                    _log(f"fpl lineup: {len(my_ids)} picks from {src}"
+                         + ("" if authed else "  (no login token — paste your "
+                            "x-api-authorization Bearer token in Settings to read "
+                            "your live Pick Team, not last week's)"))
             except Exception as e:  # noqa: BLE001
                 _log(f"fpl my-squad skipped: {e}")
     for p in picks:
         p["is_mine"] = str(p.get("team_id")) == str(entry_id)
-    db.replace_draft_picks("fpl", picks, source="fpl")
-    db.set_setting("draft.fpl.standings", json.dumps(standings))
+    if picks:  # never wipe a good stored board with an auth-failed empty pull
+        db.replace_draft_picks("fpl", picks, source="fpl")
+    if standings:
+        db.set_setting("draft.fpl.standings", json.dumps(standings))
     # H2H schedule (which manager you face each gameweek)
     le_name = {}
     le_entry = {}
@@ -150,14 +177,25 @@ def _sync_fpl(db: DB, env: Env, cfg: dict) -> int:
         "away_pts": m.get("league_entry_2_points"),
         "finished": bool(m.get("finished")),
     } for m in det.get("matches", []) if m.get("event")]
-    db.set_setting("draft.fpl.schedule", json.dumps(sched))
-    db.set_setting("draft.fpl.mode", det.get("league", {}).get("scoring", "c"))
+    if sched:
+        db.set_setting("draft.fpl.schedule", json.dumps(sched))
+    if det.get("league", {}).get("scoring"):
+        db.set_setting("draft.fpl.mode", det["league"]["scoring"])
     if my_ids:
         db.set_setting("draft.fpl.my_squad", json.dumps([str(i) for i in my_ids]))
-    db.set_setting("draft.fpl.teams", str(len(det.get("league_entries", [])) or 8))
+        db.set_setting("draft.fpl.my_lineup", json.dumps({
+            "source": my_lineup[0].get("source", "?") if my_lineup else "",
+            "picks": [
+                {"extId": str(p["element"]), "slot": p["slot"], "starter": p["starter"],
+                 "captain": p["captain"], "vice": p["vice"]}
+                for p in my_lineup
+            ],
+        }))
+    if det.get("league_entries"):
+        db.set_setting("draft.fpl.teams", str(len(det["league_entries"])))
     _log(f"fpl: {len(picks)} draft picks · {len(standings)} standings rows · "
          f"{len(my_ids)} in your squad")
-    return len(picks)
+    return 0
 
 
 def _bootstrap_events(c) -> dict:
@@ -186,10 +224,12 @@ def build_board(db: DB, sport: str, cfg: dict, env: Env | None = None) -> None:
                 db.set_setting(f"draft.nfl.{k}", json.dumps(meta[k]))
             db.set_setting("draft.nfl.week", str(meta["week"]))
             db.set_setting("draft.nfl.reg_weeks", str(meta["reg_weeks"]))
+            db.set_setting("draft.nfl.playoff_teams", str(meta["playoff_teams"]))
+            db.set_setting("draft.nfl.seeding_rule", meta["seeding_rule"])
             db.set_setting("draft.nfl.my_roster", json.dumps(meta["my_roster"]))
             _log(f"wrote {len(rows)} players · week {meta['week']} · "
                  f"{len(meta['my_roster'])} on your roster · "
-                 f"playoffs weeks {meta['playoff_weeks']}")
+                 f"playoffs weeks {meta['playoff_weeks']} · seeding {meta['seeding_rule']}")
             return
 
         from . import nfl

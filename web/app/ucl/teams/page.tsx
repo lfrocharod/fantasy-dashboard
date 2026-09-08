@@ -1,6 +1,20 @@
 import { EmptyState, Legend, PosBadge, Section } from "@/components/ui";
 import { fmt } from "@/lib/format";
-import { getCurrentMatchday, getTeamDossiers } from "@/lib/ucl/queries";
+import { confirmedOf, getCurrentMatchday, getTeamDossiers } from "@/lib/ucl/queries";
+
+/** Displayed start chance: 100/0 when the official lineup is out, else the
+ * composed projection, else the raw form value. Keeps this column consistent
+ * with the XI the model actually picked. */
+function startPct(p: {
+  components?: unknown;
+  pStart: number | null;
+  startProb: number | null;
+}): number | null {
+  const c = confirmedOf(p);
+  if (c === "start") return 1;
+  if (c === "bench") return 0;
+  return p.pStart ?? p.startProb ?? null;
+}
 
 export const dynamic = "force-dynamic";
 
@@ -119,7 +133,8 @@ export default async function TeamWatchPage() {
                 </thead>
                 <tbody>
                   {t.probableXI.map((p) => {
-                    const sp = p.startProb ?? 0;
+                    const sp = startPct(p);
+                    const conf = confirmedOf(p);
                     const spiece = (p.setPiece ?? "").replace("PK2", "PK²");
                     return (
                       <tr key={p.playerId}>
@@ -139,7 +154,15 @@ export default async function TeamWatchPage() {
                             </span>
                           )}
                         </td>
-                        <td className="num">{sp ? `${Math.round(sp * 100)}%` : "–"}</td>
+                        <td className="num">
+                          {sp != null ? `${Math.round(sp * 100)}%` : "–"}
+                          {conf === "start" && (
+                            <span className="ml-1 text-[var(--good)]" title="confirmed starting XI">✓</span>
+                          )}
+                          {conf === "bench" && (
+                            <span className="ml-1 text-[var(--muted)]" title="confirmed on the bench">⑂</span>
+                          )}
+                        </td>
                         <td className="num hide-sm">
                           {p.recentMatches
                             ? fmt((p.recentGoals ?? 0) + (p.recentAssists ?? 0), 0)
@@ -158,12 +181,10 @@ export default async function TeamWatchPage() {
               <div className="text-xs text-[var(--muted)]">
                 <span className="font-semibold text-[var(--text)]">Also in the pool: </span>
                 {t.bench
-                  .map(
-                    (p) =>
-                      `${p.name} (${p.position}${
-                        p.startProb ? `, ${Math.round(p.startProb * 100)}%` : ""
-                      })`,
-                  )
+                  .map((p) => {
+                    const sp = startPct(p);
+                    return `${p.name} (${p.position}${sp != null ? `, ${Math.round(sp * 100)}%` : ""})`;
+                  })
                   .join(", ")}
               </div>
             )}
@@ -177,6 +198,7 @@ export default async function TeamWatchPage() {
           ["tier / atk / def", "club strength: atk >1 scores more than average, def >1 concedes more"],
           ["PK / FK / CK", "penalty / free-kick / corner duty (best guess — edit set_piece_roles to correct)"],
           ["→FWD", "our position label vs the role they've actually been playing"],
+          ["✓ / ⑂", "in the confirmed starting XI / confirmed benched (official lineup, ~1h pre-KO)"],
           ["Hot", "recent goal involvement per 90"],
           ["moved on", "our roster still lists them here but recent match data doesn't — verify before picking"],
         ]}

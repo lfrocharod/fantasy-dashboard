@@ -17,12 +17,59 @@ export default async function RivalsPage() {
     );
   }
 
+  const STRAT_TONE: Record<string, string> = {
+    protect: "var(--good)",
+    hold: "var(--warn)",
+    chase: "var(--accent)",
+    free: "var(--muted)",
+  };
+
   return (
     <div className="space-y-6">
+      {r.strategy && (
+        <div
+          className="card p-3 text-sm"
+          style={{ borderLeft: `3px solid ${STRAT_TONE[r.strategy.mode]}` }}
+        >
+          <b style={{ color: STRAT_TONE[r.strategy.mode] }}>
+            {r.strategy.mode === "protect"
+              ? "PROTECT"
+              : r.strategy.mode === "hold"
+                ? "HOLD"
+                : r.strategy.mode === "chase"
+                  ? "CHASE"
+                  : "FREE ROLL"}
+          </b>{" "}
+          {r.strategy.text}
+        </div>
+      )}
+
+      {r.captainPicks.length > 0 && (
+        <div className="card p-3 text-sm">
+          <b className="text-[var(--muted)]">Armband across the league: </b>
+          {r.captainPicks.map((c, i) => (
+            <span key={c.playerId}>
+              {i > 0 && " · "}
+              <span className={c.mine ? "font-semibold text-[var(--accent)]" : ""}>
+                {c.name} ({c.count}/{r.rivalCount + 1}){c.mine ? " — you" : ""}
+              </span>
+            </span>
+          ))}
+          <div className="mt-1 text-xs text-[var(--muted)]">
+            {r.strategy?.mode === "chase"
+              ? "You're chasing — captaining the same player as the field locks in the gap. Go off-template."
+              : r.strategy?.mode === "protect"
+                ? "You're protecting — captaining with the field caps your downside. Match the popular pick."
+                : "Match the field to neutralise the armband, or differ to create a swing."}
+          </div>
+        </div>
+      )}
+
       <p className="text-sm text-[var(--muted)]">
         Projected matchday {md} scores for your {r.rivalCount} mini-league rival
-        {r.rivalCount === 1 ? "" : "s"}, from their saved squads (top 11 by xPts + captain).
-        Your projected score: <strong>{fmt(r.myProjectedPoints)}</strong>
+        {r.rivalCount === 1 ? "" : "s"}, from their saved squads — their actual XI and captain where
+        UEFA exposes them, otherwise a top-11-by-xPts estimate. Your projected score:{" "}
+        <strong>{fmt(r.myProjectedPoints)}</strong>
         {r.myRank ? ` · currently rank ${r.myRank}` : ""}.
       </p>
 
@@ -182,7 +229,7 @@ export default async function RivalsPage() {
 
       <Legend
         items={[
-          ["Proj MD", "top 11 by xPts from their 15 + captain (double the top starter)"],
+          ["Proj MD", "their projected matchday points — actual XI + captain when available, else top 11 by xPts + top scorer doubled"],
           ["Owned", "% of your mini-league (rivals + you) that has this player"],
           ["vs you", "their projection minus yours — red means they out-project you this matchday"],
           ["Shared", "players in common with your squad, out of 15"],

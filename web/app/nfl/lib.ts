@@ -29,6 +29,22 @@ export interface NflPlayer {
   nextOpp: string;
   nextFdr: number;
   matchups: WeekOpp[];
+  // usage (nflverse, last ~4 games) — 0 until the season has games played
+  snapPct: number; // 0..1 offensive snap share
+  snapTrend: number; // last game vs prior mean (+ rising, − falling)
+  targetShare: number; // 0..1
+  wopr: number; // weighted opportunity rating (~0..0.9)
+  touches: number; // carries + receptions per game
+  usageGames: number;
+  usageStale: boolean; // true = last season's numbers, shown as a prior
+}
+
+/** A one-word usage read for skill players: "workhorse" / "rotational" / "" (K/DST/unknown). */
+export function usageTag(p: NflPlayer): "" | "workhorse" | "rotational" {
+  if (p.usageGames < 1 || p.pos === "K" || p.pos === "DST" || p.pos === "QB") return "";
+  const heavy = p.snapPct >= 0.75 || p.wopr >= 0.55 || p.touches >= 16;
+  const light = p.snapPct > 0 && p.snapPct < 0.45 && p.wopr < 0.35 && p.touches < 9;
+  return heavy ? "workhorse" : light ? "rotational" : "";
 }
 
 export const FLEX_POS = new Set(["RB", "WR", "TE"]);
@@ -69,6 +85,13 @@ export function toPlayer(p: Record<string, unknown>): NflPlayer {
     nextOpp: String(raw.next_opp ?? ""),
     nextFdr: Number(raw.next_fdr ?? 0),
     matchups: (raw.matchups as WeekOpp[]) ?? [],
+    snapPct: Number(raw.snapPct ?? 0),
+    snapTrend: Number(raw.snapTrend ?? 0),
+    targetShare: Number(raw.targetShare ?? 0),
+    wopr: Number(raw.wopr ?? 0),
+    touches: Number(raw.touches ?? 0),
+    usageGames: Number(raw.usageGames ?? 0),
+    usageStale: raw.usageStale === true,
   };
 }
 
@@ -89,8 +112,9 @@ export function optimalLineup(
   roster: NflPlayer[],
   slots: Record<string, number>,
   weekIdx = 0,
+  scoreFn?: (p: NflPlayer) => number,
 ): { starters: { slot: string; p: NflPlayer | null }[]; bench: NflPlayer[]; total: number } {
-  const score = (p: NflPlayer) => weekPoints(p, weekIdx);
+  const score = scoreFn ?? ((p: NflPlayer) => weekPoints(p, weekIdx));
   const avail = roster.filter((p) => score(p) > 0).sort((a, b) => score(b) - score(a));
   const used = new Set<string>();
   const starters: { slot: string; p: NflPlayer | null }[] = [];
@@ -159,6 +183,77 @@ export async function loadNfl(): Promise<{ players: NflPlayer[]; config: DraftCo
   const r = await fetch("/api/draft/board?sport=nfl", { cache: "no-store" });
   const d = await r.json();
   return { players: (d.players ?? []).map(toPlayer), config: d.config ?? null };
+}
+
+// ---- proactive trade finder --------------------------------------------------
+export interface NflTradeIdea {
+  rivalName: string;
+  rivalTeamId: number;
+  give: NflPlayer;
+  get: NflPlayer;
+  myGain: number; // ROS points added to your optimal lineup
+  theirGain: number; // ROS points added to theirs (positive = they'd want it too)
+}
+
+/** Sum of a roster's best starting lineup by rest-of-season projection. */
+function xiRos(roster: NflPlayer[], slots: Record<string, number>): number {
+  return optimalLineup(roster, slots, 0, (p) => (OUT_STATUS.has(p.injury) ? 0 : p.rosProj)).total;
+}
+
+/**
+ * Scan every rival for 1-for-1 swaps that improve BOTH optimal lineups (or
+ * improve yours while staying roughly flat for them — the ones they'd accept).
+ * Position-matched; ranked by combined gain so the most mutually-appealing
+ * trades surface first.
+ */
+export function nflTradeIdeas(
+  me: NflManager,
+  rivals: NflManager[],
+  slots: Record<string, number>,
+): NflTradeIdea[] {
+  const myBase = xiRos(me.players, slots);
+  // realistic to give: everyone outside my top 6 by ROS
+  const givable = [...me.players]
+    .filter((p) => !OUT_STATUS.has(p.injury) && p.pos !== "K" && p.pos !== "DST")
+    .sort((a, b) => b.rosProj - a.rosProj)
+    .slice(6);
+  const ideas: NflTradeIdea[] = [];
+  for (const rv of rivals) {
+    const theirBase = xiRos(rv.players, slots);
+    const theirGivable = [...rv.players]
+      .filter((p) => !OUT_STATUS.has(p.injury) && p.pos !== "K" && p.pos !== "DST")
+      .sort((a, b) => b.rosProj - a.rosProj)
+      .slice(4);
+    for (const give of givable) {
+      for (const get of theirGivable) {
+        if (give.pos !== get.pos) continue;
+        const myGain =
+          xiRos([...me.players.filter((p) => p.extId !== give.extId), get], slots) - myBase;
+        const theirGain =
+          xiRos([...rv.players.filter((p) => p.extId !== get.extId), give], slots) - theirBase;
+        if (myGain > 4 && theirGain > -3) {
+          ideas.push({
+            rivalName: rv.name,
+            rivalTeamId: rv.teamId,
+            give,
+            get,
+            myGain: Math.round(myGain),
+            theirGain: Math.round(theirGain),
+          });
+        }
+      }
+    }
+  }
+  const seen = new Set<string>();
+  return ideas
+    .sort((a, b) => b.myGain + b.theirGain - (a.myGain + a.theirGain))
+    .filter((t) => {
+      const k = `${t.rivalTeamId}|${t.get.extId}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .slice(0, 10);
 }
 
 // ---- fixture ticker + team watch -----------------------------------------
@@ -253,6 +348,7 @@ export interface PlayoffOdds {
   name: string;
   isMine: boolean;
   projWins: number;
+  projPf: number; // projected season points-for
   playoffPct: number; // P(finish in a playoff seed)
   byePct: number; // P(top-2 seed)
 }
@@ -273,8 +369,10 @@ export function simPlayoffs(
   regWeeks: number,
   playoffTeams: number,
   myTeamId: number | null,
+  seedingRule: string = "H2H_RECORD",
   iters = 3000,
 ): PlayoffOdds[] {
+  const byPoints = seedingRule === "TOTAL_POINTS_SCORED";
   const teamIds = managers.map((m) => m.teamId);
   const rec0 = new Map(standings.map((s) => [s.team_id, s.wins + 0.5 * s.ties]));
   const pf0 = new Map(standings.map((s) => [s.team_id, s.pf]));
@@ -292,10 +390,12 @@ export function simPlayoffs(
   const madeCount = new Map<number, number>();
   const byeCount = new Map<number, number>();
   const winSum = new Map<number, number>();
+  const pfSum = new Map<number, number>();
   for (const id of teamIds) {
     madeCount.set(id, 0);
     byeCount.set(id, 0);
     winSum.set(id, 0);
+    pfSum.set(id, 0);
   }
 
   for (let it = 0; it < iters; it++) {
@@ -315,6 +415,10 @@ export function simPlayoffs(
       }
     }
     const seeded = [...teamIds].sort((a, b) => {
+      if (byPoints) {
+        const dp = (pf.get(b) ?? 0) - (pf.get(a) ?? 0);
+        return dp !== 0 ? dp : (wins.get(b) ?? 0) - (wins.get(a) ?? 0);
+      }
       const dw = (wins.get(b) ?? 0) - (wins.get(a) ?? 0);
       return dw !== 0 ? dw : (pf.get(b) ?? 0) - (pf.get(a) ?? 0);
     });
@@ -322,7 +426,10 @@ export function simPlayoffs(
       if (i < playoffTeams) madeCount.set(seeded[i], (madeCount.get(seeded[i]) ?? 0) + 1);
       if (i < 2) byeCount.set(seeded[i], (byeCount.get(seeded[i]) ?? 0) + 1);
     }
-    for (const id of teamIds) winSum.set(id, (winSum.get(id) ?? 0) + (wins.get(id) ?? 0));
+    for (const id of teamIds) {
+      winSum.set(id, (winSum.get(id) ?? 0) + (wins.get(id) ?? 0));
+      pfSum.set(id, (pfSum.get(id) ?? 0) + (pf.get(id) ?? 0));
+    }
   }
 
   return managers
@@ -331,8 +438,9 @@ export function simPlayoffs(
       name: m.name,
       isMine: m.teamId === myTeamId,
       projWins: (winSum.get(m.teamId) ?? 0) / iters,
+      projPf: (pfSum.get(m.teamId) ?? 0) / iters,
       playoffPct: (100 * (madeCount.get(m.teamId) ?? 0)) / iters,
       byePct: (100 * (byeCount.get(m.teamId) ?? 0)) / iters,
     }))
-    .sort((a, b) => b.playoffPct - a.playoffPct || b.projWins - a.projWins);
+    .sort((a, b) => b.playoffPct - a.playoffPct || b.projPf - a.projPf);
 }

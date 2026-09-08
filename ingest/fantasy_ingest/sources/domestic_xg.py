@@ -152,6 +152,7 @@ def fetch_understat_rows(leagues: list[str], season: str | None) -> list[SourceR
     c_player = _col(df, "player", "player_name")
     c_team = _col(df, "team", "team_title")
     c_min = _col(df, "minutes", "time")
+    c_games = _col(df, "games", "matches", "apps", "appearances")
     c_xg = _col(df, "xg")
     c_xa = _col(df, "xa")
     c_shots = _col(df, "shots")
@@ -161,6 +162,11 @@ def fetch_understat_rows(leagues: list[str], season: str | None) -> list[SourceR
         if minutes < 1:
             continue
         npxg = float(r[c_xg] or 0) if c_xg else 0.0  # understat xg already excludes pens in npg; keep xg as proxy
+        # appearances matter: 270 min over 3 games reads "nailed", over 12 games
+        # reads "fringe". Fall back to a min-based estimate if the column moved.
+        games = int(float(r[c_games] or 0)) if c_games else 0
+        if not games and minutes:
+            games = max(1, round(minutes / 70.0))
         rows.append(
             SourceRow(
                 name=str(r[c_player]),
@@ -168,7 +174,7 @@ def fetch_understat_rows(leagues: list[str], season: str | None) -> list[SourceR
                 team=str(r[c_team]),
                 norm_team=normalise(r[c_team]),
                 minutes=minutes,
-                matches=0,
+                matches=games,
                 npxg90=_per90(npxg, minutes),
                 xag90=_per90(r[c_xa] if c_xa else 0.0, minutes),
                 shots90=_per90(r[c_shots] if c_shots else 0.0, minutes),

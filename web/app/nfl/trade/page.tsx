@@ -4,7 +4,15 @@ import { useEffect, useMemo, useState } from "react";
 import { Legend } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import type { DraftConfig } from "@/lib/draft/queries";
-import { OUT_STATUS, POS_COLOR, groupTeams, loadNfl, type NflPlayer } from "../lib";
+import {
+  OUT_STATUS,
+  POS_COLOR,
+  groupTeams,
+  loadNfl,
+  nflTradeIdeas,
+  optimalLineup,
+  type NflPlayer,
+} from "../lib";
 
 function Chip({ p, on, toggle }: { p: NflPlayer; on: boolean; toggle: () => void }) {
   return (
@@ -75,14 +83,35 @@ export default function NflTradePage() {
     return { meWeek: Math.round(meWeek * 10) / 10, meRos: Math.round(meRos), warns, verdict, needPos };
   }, [giveP, getP, me]);
 
-  // buy-low / sell-high: ROS value vs current % started (perceived value)
-  const buyLow = useMemo(
-    () =>
-      players
-        .filter((p) => !p.available && p.rosProj > 120 && p.pctStarted < 55 && !OUT_STATUS.has(p.injury))
-        .sort((a, b) => b.rosProj - a.rosProj)
-        .slice(0, 6),
-    [players],
+  const slots = useMemo(
+    () => config?.nflSlots ?? { QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, DST: 1, K: 1 },
+    [config],
+  );
+
+  // What THIS rival can most afford to move: their rostered players who don't
+  // make their own optimal starting lineup, ranked by VOR (points above a
+  // replacement starter AT THAT POSITION — so a QB and an RB are comparable;
+  // ranking by raw projection just floods the list with QBs). We also tag
+  // whether the player fills one of your roster holes.
+  const theirSurplus = useMemo(() => {
+    if (!their) return [];
+    const starters = new Set(
+      optimalLineup(their.players, slots, 0).starters.map((s) => s.p?.extId).filter(Boolean) as string[],
+    );
+    const myByPos = me?.byPos ?? {};
+    const need = new Set(
+      ["RB", "WR", "TE", "QB"].filter((k) => (myByPos[k]?.[Math.max(0, (slots[k] ?? 1))]?.rosProj ?? 0) < 100),
+    );
+    return their.players
+      .filter((p) => !starters.has(p.extId) && !OUT_STATUS.has(p.injury) && p.pos !== "K" && p.pos !== "DST")
+      .sort((a, b) => b.vor - a.vor)
+      .slice(0, 8)
+      .map((p) => ({ p, fillsNeed: need.has(p.pos) }));
+  }, [their, me, slots]);
+
+  const ideas = useMemo(
+    () => (me ? nflTradeIdeas(me, rivals, slots) : []),
+    [me, rivals, slots],
   );
 
   const toggle = (s: Set<string>, setter: (x: Set<string>) => void, id: string) => {
@@ -113,6 +142,65 @@ export default function NflTradePage() {
           ))}
         </select>
       </div>
+
+      {ideas.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold text-[var(--muted)]">
+            TRADES WORTH PROPOSING — both lineups improve
+          </h2>
+          <div className="card table-wrap">
+            <table className="dtable">
+              <thead>
+                <tr>
+                  <th>You give</th>
+                  <th>You get</th>
+                  <th>From</th>
+                  <th className="num">You +</th>
+                  <th className="num hide-sm">Them +</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ideas.map((t, i) => (
+                  <tr key={i}>
+                    <td>
+                      <span
+                        className="mr-1 rounded px-0.5 text-[9px] font-bold text-white"
+                        style={{ background: POS_COLOR[t.give.pos] }}
+                      >
+                        {t.give.pos}
+                      </span>
+                      {t.give.name}
+                    </td>
+                    <td className="font-medium">
+                      <span
+                        className="mr-1 rounded px-0.5 text-[9px] font-bold text-white"
+                        style={{ background: POS_COLOR[t.get.pos] }}
+                      >
+                        {t.get.pos}
+                      </span>
+                      {t.get.name} <span className="text-[var(--muted)]">{t.get.team}</span>
+                    </td>
+                    <td className="text-xs">{t.rivalName}</td>
+                    <td className="num font-semibold text-[var(--good)]">+{fmt(t.myGain, 0)}</td>
+                    <td
+                      className="num hide-sm"
+                      style={{ color: t.theirGain >= 0 ? "var(--good)" : "var(--muted)" }}
+                    >
+                      {t.theirGain >= 0 ? "+" : ""}
+                      {fmt(t.theirGain, 0)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-[var(--muted)]">
+            1-for-1 swaps that raise your best-lineup ROS total. <b>Them +</b> is the same for the
+            rival — a positive number means they gain too, so it&apos;s an easy sell; a small negative
+            is still worth floating.
+          </p>
+        </section>
+      )}
 
       <div className="grid gap-3 md:grid-cols-2">
         <div className="card p-2">
@@ -170,21 +258,24 @@ export default function NflTradePage() {
         </div>
       )}
 
-      {buyLow.length > 0 && (
+      {theirSurplus.length > 0 && (
         <section className="space-y-2">
-          <h2 className="text-sm font-semibold text-[var(--muted)]">BUY-LOW TARGETS (owned, high ROS value, low usage)</h2>
+          <h2 className="text-sm font-semibold text-[var(--muted)]">
+            {their?.name.toUpperCase()} — MOVABLE VALUE (their non-starters, by positional value)
+          </h2>
           <div className="card table-wrap">
             <table className="dtable">
               <thead>
                 <tr>
                   <th>Player</th>
-                  <th>Owner</th>
-                  <th className="num">ROS</th>
-                  <th className="num hide-sm">% started</th>
+                  <th className="num">VOR</th>
+                  <th className="num hide-sm">ROS</th>
+                  <th className="num hide-sm">Wk</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {buyLow.map((p) => (
+                {theirSurplus.map(({ p, fillsNeed }) => (
                   <tr key={p.extId}>
                     <td className="font-medium">
                       <span
@@ -195,9 +286,12 @@ export default function NflTradePage() {
                       </span>
                       {p.name} <span className="text-[var(--muted)]">{p.team}</span>
                     </td>
-                    <td className="text-xs">{p.ownerName}</td>
-                    <td className="num font-semibold">{fmt(p.rosProj, 0)}</td>
-                    <td className="num hide-sm">{fmt(p.pctStarted, 0)}</td>
+                    <td className="num font-semibold">{fmt(p.vor, 0)}</td>
+                    <td className="num hide-sm">{fmt(p.rosProj, 0)}</td>
+                    <td className="num hide-sm">{fmt(p.weekProj, 0)}</td>
+                    <td className="text-xs">
+                      {fillsNeed && <span className="text-[var(--good)]">fills your need</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -210,7 +304,8 @@ export default function NflTradePage() {
         items={[
           ["This week / ROS", "change in your projected points if the trade goes through"],
           ["✚", "currently OUT / IR / suspended"],
-          ["Buy-low", "a rival's player whose rest-of-season projection outstrips how often they're being started — value you may be able to pry loose"],
+          ["VOR", "value over replacement — rest-of-season points above a replacement-level starter AT THAT POSITION (so a QB and an RB are comparable — ranking by raw projection just shows QBs)"],
+          ["Movable value", "the selected rival's players who don't make their own optimal lineup — what they can most afford to trade you"],
           ["Thin spots", "positions where your 3rd-best player projects under a startable line"],
         ]}
       />

@@ -96,7 +96,9 @@ class LeagueEntry:
     total_points: int
     rank: int
     prev_rank: int = 0
-    squad: list[int] = field(default_factory=list)
+    # [{"id": int, "c": bool captain, "s": bool starter, "b": int bench_order}, …]
+    # (older rows may still be a bare list[int]; the reader handles both)
+    squad: list = field(default_factory=list)
 
 
 @dataclass(slots=True)
