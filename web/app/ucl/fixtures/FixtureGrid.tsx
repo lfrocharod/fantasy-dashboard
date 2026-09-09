@@ -2,15 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { Legend } from "@/components/ui";
+import { FDR_BG as DIFF_BG } from "@/lib/fdr";
 import type { TickerRow } from "@/lib/ucl/queries";
-
-const DIFF_BG: Record<number, string> = {
-  1: "rgba(34,197,94,0.32)",
-  2: "rgba(132,204,22,0.24)",
-  3: "rgba(148,163,184,0.20)",
-  4: "rgba(249,115,22,0.26)",
-  5: "rgba(239,68,68,0.34)",
-};
 
 type View = "att" | "def" | "blend";
 const LABEL: Record<View, string> = {

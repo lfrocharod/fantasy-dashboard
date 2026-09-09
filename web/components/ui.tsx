@@ -132,6 +132,66 @@ export function Pill({
   );
 }
 
+export interface CheckItem {
+  ok: boolean;
+  text: ReactNode;
+  href?: string;
+  linkText?: string;
+}
+
+/** The OK / DO checklist shared by the three overview pages. */
+export function Checklist({ items }: { items: CheckItem[] }) {
+  return (
+    <div className="card divide-y divide-[var(--border)]">
+      {items.map((c, i) => (
+        <div key={i} className="flex items-center gap-2 px-3 py-2 text-sm">
+          <span
+            className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white"
+            style={{ background: c.ok ? "var(--good)" : "var(--warn)" }}
+          >
+            {c.ok ? "OK" : "DO"}
+          </span>
+          <span>{c.text}</span>
+          {c.href && !c.ok && (
+            <a href={c.href} className="ml-auto shrink-0 text-xs text-[var(--accent)]">
+              {c.linkText ?? "open →"}
+            </a>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Compact "lo–hi" outcome band, with the mean bolded when given. */
+export function Range({
+  lo,
+  hi,
+  mean,
+  digits = 0,
+}: {
+  lo: number;
+  hi: number;
+  mean?: number;
+  digits?: number;
+}) {
+  if (!(hi > 0)) return <span className="text-[var(--muted)]">–</span>;
+  const f = (n: number) => n.toFixed(digits);
+  return (
+    <span className="tabular-nums text-xs text-[var(--muted)]">
+      {f(lo)}
+      {mean != null && (
+        <>
+          {" · "}
+          <b className="text-[var(--text)]">{f(mean)}</b>
+        </>
+      )}
+      {" · "}
+      {f(hi)}
+    </span>
+  );
+}
+
 export function Section({ title, children, right }: { title: string; children: ReactNode; right?: ReactNode }) {
   return (
     <section className="space-y-3">

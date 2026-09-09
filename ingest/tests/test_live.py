@@ -129,6 +129,39 @@ def test_captain_locked_once_they_have_played():
     assert "×2" in out["captain"]["note"]
 
 
+def test_armband_can_move_off_a_played_captain_to_a_later_game():
+    # (C) played on day 1 and banked 4; a day-2 XI player projects 9 -> switching
+    # keeps the 4 as base and doubles the 9 instead (+5).
+    players = _squad_players()
+    proj = _proj(players, xpts=3.0)
+    ids = [p.uefa_player_id for p in players]
+    for pr in proj:
+        if pr.player_id == ids[10]:  # FWD5 @ club 5, day 2, still upcoming
+            pr.xpts = 9.0
+    fx = _fx("finished", "finished", "upcoming")
+    for p in players[:11]:
+        if p.team_id <= 4:
+            p.live_points, p.live_played = 4, True  # captain (club 1) banked 4
+    cap = build_live_state(players, TEAMS, fx, proj, _picks(players), 1)["captain"]
+    assert cap["locked"] is False
+    assert cap["recommendation"] == "switch"
+    assert cap["switch"]["toXpts"] == 9.0 and cap["switch"]["gain"] == 5.0
+    assert "keeps 4 as base" in cap["note"]
+
+
+def test_keep_the_played_captain_when_the_haul_beats_the_later_option():
+    players = _squad_players()
+    proj = _proj(players, xpts=3.0)  # the only day-2 XI player projects just 3
+    fx = _fx("finished", "finished", "upcoming")
+    for p in players[:11]:
+        if p.team_id <= 4:
+            p.live_points, p.live_played = 12, True  # captain hauled
+    cap = build_live_state(players, TEAMS, fx, proj, _picks(players), 1)["captain"]
+    assert cap["recommendation"] == "keep"
+    assert cap["switch"] is None
+    assert "already beats" in cap["note"]
+
+
 def test_captain_blank_loses_the_double_no_vice():
     # UCL Fantasy 2025/26 has no vice-captain: a blanked (C) that wasn't moved
     # before kick-off just forfeits the double — nobody inherits it.

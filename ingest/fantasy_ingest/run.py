@@ -306,6 +306,19 @@ def run(args: argparse.Namespace) -> int:
                 notes.append(f"live stage skipped: {e}")
                 _log(notes[-1])
 
+            # ---- 8. grade the model against finished matchdays ---------
+            if not args.dry_run:
+                try:
+                    from .calibrate import compute_and_store
+
+                    cal = compute_and_store(db)
+                    if cal:
+                        o = cal["overall"]
+                        _log(f"calibration: MAE {o['mae']:.2f} bias {o['me']:+.2f} "
+                             f"band {o['band'] * 100:.0f}% over MD {cal['matchdays']}")
+                except Exception as e:  # noqa: BLE001
+                    notes.append(f"calibration skipped: {e}")
+
     except Exception as e:  # noqa: BLE001
         ok = False
         notes.append(f"FATAL: {e}")

@@ -1,5 +1,6 @@
 import { EmptyState, Legend, PosBadge, Section } from "@/components/ui";
 import { fmt } from "@/lib/format";
+import { FDR_BG } from "@/lib/fdr";
 import { confirmedOf, getCurrentMatchday, getTeamDossiers } from "@/lib/ucl/queries";
 
 /** Displayed start chance: 100/0 when the official lineup is out, else the
@@ -17,14 +18,6 @@ function startPct(p: {
 }
 
 export const dynamic = "force-dynamic";
-
-const FDR_BG: Record<number, string> = {
-  1: "rgba(34,197,94,0.30)",
-  2: "rgba(132,204,22,0.22)",
-  3: "rgba(148,163,184,0.18)",
-  4: "rgba(249,115,22,0.24)",
-  5: "rgba(239,68,68,0.32)",
-};
 
 function tier(atk: number, def: number) {
   const s = atk - (def - 1);

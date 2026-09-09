@@ -1,6 +1,7 @@
 import { EmptyState, Legend, PosBadge, StatCard, Section } from "@/components/ui";
 import { fmt, dateTime } from "@/lib/format";
 import { getSetting, KEYS } from "@/lib/settings";
+import { FDR_BG } from "@/lib/fdr";
 import type { Position } from "@/lib/ucl/formation";
 
 export const dynamic = "force-dynamic";
@@ -20,14 +21,6 @@ interface OptPlayer extends FixtureCtx {
   isVice?: boolean;
   order?: number;
 }
-
-const FDR_BG: Record<number, string> = {
-  1: "rgba(34,197,94,0.30)",
-  2: "rgba(132,204,22,0.22)",
-  3: "rgba(148,163,184,0.18)",
-  4: "rgba(249,115,22,0.24)",
-  5: "rgba(239,68,68,0.32)",
-};
 
 function OppCell({ opp, home, fdr }: FixtureCtx) {
   if (!opp) return <td className="text-[var(--muted)]">–</td>;

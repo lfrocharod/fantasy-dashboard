@@ -100,8 +100,12 @@ def test_parse_fixtures():
     assert f.uefa_match_id == 2049558 and f.matchday == 1
     assert f.home_team_id == 52919 and f.away_team_id == 63405
     assert f.status == "upcoming" and f.kickoff is not None
+    # feed says "18:45" (Zurich wall-clock, CEST = UTC+2 in September) -> 16:45 UTC
+    assert f.kickoff.utcoffset().total_seconds() == 0
+    assert (f.kickoff.hour, f.kickoff.minute) == (16, 45)
     assert teams[52919].name == "Man City"
     assert md_info[0].is_current and md_info[0].deadline is not None
+    assert md_info[0].deadline.hour == 16  # "06:45 PM" Zurich -> 16:45 UTC
     assert fetch.current_matchday(md_info) == 1
 
 

@@ -1,5 +1,9 @@
 import { pickFormationXI } from "@/lib/xi";
 
+// shared difficulty palette — single source in lib/fdr (FDR_BG_MAP kept as an
+// alias so the existing fixture/team pages don't need touching)
+export { FDR_BG as FDR_BG_MAP, FDR_TEXT } from "@/lib/fdr";
+
 export interface GwCell {
   gw: number;
   opp: string;
@@ -8,6 +12,8 @@ export interface GwCell {
   fdrAtt?: number; // difficulty of getting goals/assists (opponent's defensive solidity)
   fdrDef?: number; // difficulty of a clean sheet (opponent's attacking threat)
   xpts: number;
+  lo?: number; // ~15th-percentile outcome (blank-ish)
+  hi?: number; // ~85th-percentile outcome (haul)
   cs: number;
 }
 
@@ -689,14 +695,6 @@ export function clubDossiers(players: FplPlayer[]): ClubDossier[] {
     })
     .sort((a, b) => a.avgFdr - b.avgFdr || a.team.localeCompare(b.team));
 }
-
-export const FDR_BG_MAP: Record<number, string> = {
-  1: "rgba(34,197,94,0.32)",
-  2: "rgba(132,204,22,0.24)",
-  3: "rgba(148,163,184,0.14)",
-  4: "rgba(249,115,22,0.24)",
-  5: "rgba(239,68,68,0.30)",
-};
 
 // ---- predict rivals' waiver claims -------------------------------------
 export interface ClaimPrediction {

@@ -1,5 +1,8 @@
 import type { DraftConfig } from "@/lib/draft/queries";
 
+// shared difficulty palette — single source in lib/fdr
+export { FDR_BG, FDR_TEXT } from "@/lib/fdr";
+
 export interface WeekOpp {
   week: number;
   opp: string;
@@ -56,13 +59,6 @@ export const FLEX_POS = new Set(["RB", "WR", "TE"]);
 export const START_POS = ["QB", "RB", "WR", "TE", "FLEX", "DST", "K"] as const;
 export const POS_COLOR: Record<string, string> = {
   QB: "#8957e5", RB: "#1a7f37", WR: "#1f6feb", TE: "#b7791f", K: "#6b7280", DST: "#cf222e",
-};
-export const FDR_BG: Record<number, string> = {
-  1: "rgba(34,197,94,0.32)",
-  2: "rgba(132,204,22,0.24)",
-  3: "rgba(148,163,184,0.14)",
-  4: "rgba(249,115,22,0.24)",
-  5: "rgba(239,68,68,0.30)",
 };
 export const OUT_STATUS = new Set(["OUT", "IR", "SUSPENSION", "DOUBTFUL"]);
 
@@ -127,15 +123,89 @@ export function oppTag(p: NflPlayer): "buy-low" | "sell-high" | "" {
 }
 
 /** Points a player is expected to score in a given week (0 on bye / out). */
-export function weekPoints(p: NflPlayer, weekIdx: number): number {
+/**
+ * Points a player is expected to score in a given week.
+ *  - week 0: ESPN's own matchup-specific projection.
+ *  - future weeks: a matchup-NEUTRAL per-week rate (rest-of-season points ÷
+ *    `weeksLeft`, blended with a fast-decaying bit of the current-week number),
+ *    then adjusted for THAT week's opponent — a real ±~18% swing rather than
+ *    the old flat ±10%, softened for QBs and widened for DSTs.
+ * `weeksLeft` only matters for future weeks; pass it from `regWeeks - week + 1`.
+ */
+export function weekPoints(p: NflPlayer, weekIdx: number, weeksLeft = 10): number {
   const m = p.matchups[weekIdx];
   if (!m || m.opp === "BYE" || m.opp === "") return 0;
   if (weekIdx === 0 && OUT_STATUS.has(p.injury)) return 0;
-  // taper future weeks toward the ROS average as fixture certainty drops
-  const perWeek = p.rosProj > 0 ? p.rosProj / Math.max(1, p.matchups.filter((x) => x.opp && x.opp !== "BYE").length) : 0;
-  const base = weekIdx === 0 ? p.weekProj : 0.55 * p.weekProj + 0.45 * perWeek;
-  const fdrAdj = m.fdr ? 1 + (3 - m.fdr) * 0.05 : 1;
+  // week 0 = ESPN's own projection (already matchup-adjusted) with a small nudge
+  // if we think the spot is easier/harder than they've priced.
+  const base =
+    weekIdx === 0
+      ? p.weekProj
+      : (() => {
+          const perWeek = p.rosProj > 0 ? p.rosProj / Math.max(1, weeksLeft) : p.weekProj;
+          const formW = Math.max(0.03, 0.28 - 0.05 * weekIdx); // 23% wk1 → ~3% wk6
+          return (1 - formW) * perWeek + formW * p.weekProj;
+        })();
+  const swing = weekIdx === 0 ? 0.05 : p.pos === "QB" ? 0.055 : p.pos === "DST" ? 0.11 : 0.09;
+  const fdrAdj = m.fdr ? 1 + (3 - m.fdr) * swing : 1;
   return Math.max(0, base * fdrAdj);
+}
+
+// weekly PPR coefficient of variation by position — how boom/bust one start is
+const POS_CV: Record<string, number> = {
+  QB: 0.3, RB: 0.42, WR: 0.5, TE: 0.55, K: 0.44, DST: 0.62,
+};
+
+/**
+ * Rough floor / ceiling for a week's score. The band tightens for a proven
+ * workhorse (heavy, stable snap + target share) and widens for a
+ * committee/rotational back or a thin sample; a player running hot (fpOE +) is
+ * given a bit more downside than upside. 0/0 on a bye or an OUT tag.
+ */
+export function weekRange(p: NflPlayer, weekIdx = 0): { lo: number; hi: number } {
+  const mean = weekPoints(p, weekIdx);
+  if (mean <= 0) return { lo: 0, hi: 0 };
+  let cv = POS_CV[p.pos] ?? 0.5;
+  if (p.usageGames >= 2 && FLEX_POS.has(p.pos)) {
+    if (p.snapPct >= 0.78 && p.wopr >= 0.5) cv *= 0.82; // locked-in workhorse
+    else if (p.snapPct > 0 && p.snapPct < 0.5) cv *= 1.18; // committee / rotational
+  }
+  const hotSkew = p.expGames >= 2 ? Math.max(-0.06, Math.min(0.06, p.fpOE / 60)) : 0;
+  const r1 = (x: number) => Math.round(x * 10) / 10;
+  return {
+    lo: r1(Math.max(0, mean * (1 - (0.9 + hotSkew) * cv))),
+    hi: r1(mean * (1 + (1.15 - hotSkew) * cv)),
+  };
+}
+
+export type LineupMode = "floor" | "mean" | "ceiling";
+/**
+ * Which lineup to field given your matchup: chase the ceiling when you're a
+ * clear underdog (you need variance to win) or the league seeds on total
+ * points; protect the floor when you're a solid favourite; mean otherwise.
+ */
+export function lineupMode(winPct: number, seedByPoints: boolean): LineupMode {
+  if (seedByPoints) return "ceiling";
+  if (winPct <= 40) return "ceiling";
+  if (winPct >= 62) return "floor";
+  return "mean";
+}
+/** A per-player score for `optimalLineup` that leans on the floor or the ceiling. */
+export function modeScore(mode: LineupMode): (p: NflPlayer, weekIdx?: number) => number {
+  return (p, weekIdx = 0) => {
+    const mean = weekPoints(p, weekIdx);
+    if (mean <= 0) return 0;
+    const { lo, hi } = weekRange(p, weekIdx);
+    if (mode === "ceiling") return 0.45 * mean + 0.55 * hi;
+    if (mode === "floor") return 0.55 * mean + 0.45 * lo;
+    return mean;
+  };
+}
+
+/** Win probability (0–100) from a projected margin. Each team total has sd ~24,
+ * so the margin's sd is ~34; a logistic approximating that normal has scale ~19. */
+export function winProbFromMargin(margin: number): number {
+  return Math.round(100 / (1 + Math.exp(-margin / 19)));
 }
 
 /** Fill the optimal starting lineup for `weekIdx` from a roster. */
@@ -419,7 +489,9 @@ export function simPlayoffs(
   for (const m of managers) {
     const arr: number[] = [];
     for (let w = currentWeek; w <= regWeeks; w++) {
-      arr.push(optimalLineup(m.players, slots, w - currentWeek).total);
+      const wi = w - currentWeek;
+      const wl = regWeeks - w + 1;
+      arr.push(optimalLineup(m.players, slots, wi, (pl) => weekPoints(pl, wi, wl)).total);
     }
     weekScore.set(m.teamId, arr);
   }

@@ -31,6 +31,9 @@ class Keys:
     # xG name-match coverage from the last run: which players got an underlying
     # stat row and which didn't (so a missed star shows up on the Settings page).
     XG_COVERAGE = "ingest.xg_coverage"
+    # xPts model calibration vs actual matchday points (grade of the model),
+    # recomputed each run once a matchday has finished.
+    CALIBRATION = "ingest.calibration"
 
 
 @dataclass(slots=True)

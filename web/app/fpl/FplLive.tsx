@@ -7,10 +7,10 @@ import type { DraftConfig } from "@/lib/draft/queries";
 import type { FplPlayer } from "./lib";
 
 /**
- * FPL Draft live gameweek — the Champions-League live panel ported to FPL:
- * points banked so far, projected finish after FPL's automatic substitutions,
- * the vice-captain takeover, and your head-to-head score. Written by the FPL
- * sync (`./draft.sh --sport fpl --sync`) while a GW is in progress.
+ * FPL Draft live gameweek: points banked so far, projected finish after FPL's
+ * automatic substitutions, and your head-to-head score. (Draft has no captain,
+ * so there's no armband or double here.) Written by the FPL sync
+ * (`./draft.sh --sport fpl --sync`) while a GW is in progress.
  */
 
 type Live = NonNullable<DraftConfig["fplLive"]>;
@@ -53,8 +53,6 @@ export function FplLive({
           mins,
           slot: pk.slot,
           starter: pk.starter,
-          isCap: pk.captain,
-          isVice: pk.vice,
           // definitely didn't play: GW over and never on the pitch
           dnp: finished && mins === 0,
           proj: mins > 0 || finished ? pts : projFallback,
@@ -63,7 +61,7 @@ export function FplLive({
       })
       .filter(Boolean) as {
       p: FplPlayer; pts: number; mins: number; slot: number; starter: boolean;
-      isCap: boolean; isVice: boolean; dnp: boolean; proj: number; role: string;
+      dnp: boolean; proj: number; role: string;
     }[];
 
     const byRid = new Map(rows.map((r) => [r.p.extId, r]));
@@ -95,24 +93,8 @@ export function FplLive({
       }
     }
 
-    const cap = rows.find((r) => r.isCap) ?? null;
-    const vice = rows.find((r) => r.isVice) ?? null;
-    let capEff = cap;
-    let capNote: string | null = null;
-    if (cap) {
-      if (cap.dnp && vice && !vice.dnp) {
-        capEff = vice;
-        capNote = `${cap.p.name} blanked — vice ${vice.p.name} takes the armband`;
-      } else if (cap.dnp) {
-        capNote = `${cap.p.name} blanked and the vice can't cover — no captain double`;
-      } else if (cap.mins === 0 && !finished) {
-        capNote = `${cap.p.name} hasn't kicked off yet`;
-      }
-    }
-
     const effXi = [...xi].map((id) => byRid.get(id)!).filter(Boolean);
-    const projectedFinish =
-      effXi.reduce((a, r) => a + r.proj, 0) + (capEff && xi.has(capEff.p.extId) ? capEff.proj : 0);
+    const projectedFinish = effXi.reduce((a, r) => a + r.proj, 0);
     const notPlayed = starters.filter((r) => r.mins === 0 && !finished);
 
     const order = ["GKP", "DEF", "MID", "FWD"];
@@ -123,7 +105,7 @@ export function FplLive({
         b.proj - a.proj,
     );
 
-    return { ordered, autoSubs, capNote, capEff, projectedFinish, notPlayed, starters, finished };
+    return { ordered, autoSubs, projectedFinish, notPlayed, starters, finished };
   }, [live, squad, picks]);
 
   const h2h = live.myPoints != null && live.oppName;
@@ -157,7 +139,7 @@ export function FplLive({
         <div className="card p-3">
           <div className="text-xs text-[var(--muted)]">GW points</div>
           <div className="text-lg font-semibold">{live.secured}</div>
-          <div className="text-xs text-[var(--muted)]">starters + captain</div>
+          <div className="text-xs text-[var(--muted)]">banked by your XI</div>
         </div>
         <div className="card p-3">
           <div className="text-xs text-[var(--muted)]">Projected finish</div>
@@ -170,23 +152,13 @@ export function FplLive({
           </div>
         </div>
         <div className="card p-3">
-          <div className="text-xs text-[var(--muted)]">Captain</div>
-          <div className="text-lg font-semibold">
-            {(view.capEff?.p.name ?? "–").split(" ").slice(-1)[0]}
-          </div>
-          <div className="text-xs text-[var(--muted)]">
-            {view.capEff?.isVice ? "vice" : "armband"}
-          </div>
+          <div className="text-xs text-[var(--muted)]">Still to play</div>
+          <div className="text-lg font-semibold">{view.notPlayed.length}</div>
         </div>
       </div>
 
-      {(view.autoSubs.length > 0 || view.capNote) && (
+      {view.autoSubs.length > 0 && (
         <div className="card space-y-1 p-3 text-sm">
-          {view.capNote && (
-            <div>
-              <b className="text-[var(--accent)]">CAPTAIN</b> {view.capNote}
-            </div>
-          )}
           {view.autoSubs.map((s, i) => (
             <div key={i}>
               <b className="text-[var(--good)]">AUTO-SUB</b> {s.out} → <b>{s.in}</b>
@@ -225,8 +197,6 @@ export function FplLive({
                 </td>
                 <td className="font-medium">
                   {r.p.name}
-                  {r.isCap && <span className="ml-1 text-[10px] font-bold text-[var(--accent)]">C</span>}
-                  {r.isVice && <span className="ml-1 text-[10px] font-bold text-[var(--muted)]">V</span>}
                   {r.role === "auto-in" && (
                     <span className="ml-1 text-[10px] font-semibold text-[var(--good)]">auto-sub in</span>
                   )}

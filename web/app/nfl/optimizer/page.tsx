@@ -1,19 +1,49 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Legend } from "@/components/ui";
+import { Legend, Range } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import type { DraftConfig } from "@/lib/draft/queries";
 import {
   FDR_BG,
   POS_COLOR,
+  groupTeams,
+  lineupMode,
   loadNfl,
+  modeScore,
   optimalLineup,
   startSitCall,
   usageTag,
   weekPoints,
+  weekRange,
+  winProbFromMargin,
+  type LineupMode,
   type NflPlayer,
 } from "../lib";
+
+interface SchedRow {
+  week: number;
+  home: number;
+  away: number;
+}
+
+const MODE_COPY: Record<LineupMode, { label: string; tone: string; why: string }> = {
+  ceiling: {
+    label: "CEILING",
+    tone: "var(--accent)",
+    why: "you need variance — start the higher-upside options, not the safe floor",
+  },
+  floor: {
+    label: "FLOOR",
+    tone: "var(--good)",
+    why: "you're a solid favourite — start the safe floor and don't hand back the edge",
+  },
+  mean: {
+    label: "BALANCED",
+    tone: "var(--muted)",
+    why: "close matchup — start your best straight projection",
+  },
+};
 
 function Tag({ pos }: { pos: string }) {
   return (
@@ -56,7 +86,26 @@ export default function NflOptimizerPage() {
     return players.filter((p) => ids.has(p.extId));
   }, [players, config]);
 
-  const mine = useMemo(() => optimalLineup(myRoster, slots, 0), [myRoster, slots]);
+  // this week's opponent → projected margin → win% → which lineup to field
+  const teams = useMemo(() => groupTeams(players, config?.myTeamId ?? null), [players, config]);
+  const seedByPoints = (config?.nflSeedingRule ?? "H2H_RECORD") === "TOTAL_POINTS_SCORED";
+  const { mode, winPct } = useMemo(() => {
+    const sched = (config?.schedule ?? []) as SchedRow[];
+    const g = sched.find(
+      (m) => m.week === week && (m.home === config?.myTeamId || m.away === config?.myTeamId),
+    );
+    const oppId = g ? (g.home === config?.myTeamId ? g.away : g.home) : null;
+    const oppTeam = teams.find((t) => t.teamId === oppId);
+    const meanMine = optimalLineup(myRoster, slots, 0).total;
+    const meanOpp = oppTeam ? optimalLineup(oppTeam.players, slots, 0).total : null;
+    const wp = meanOpp != null ? winProbFromMargin(meanMine - meanOpp) : 50;
+    return { mode: lineupMode(wp, seedByPoints), winPct: wp };
+  }, [config, week, teams, myRoster, slots, seedByPoints]);
+
+  const mine = useMemo(
+    () => optimalLineup(myRoster, slots, 0, modeScore(mode)),
+    [myRoster, slots, mode],
+  );
   const starterIds = useMemo(
     () => new Set(mine.starters.map((s) => s.p?.extId).filter(Boolean) as string[]),
     [mine],
@@ -74,12 +123,30 @@ export default function NflOptimizerPage() {
     (p) => !optIds.has(p.extId) && p.slot && p.slot !== "BE" && p.slot !== "IR",
   );
 
+  // honest mean + range of the chosen lineup (mine.total is the mode-weighted
+  // score used only for ordering)
+  const starters = mine.starters.map((s) => s.p).filter(Boolean) as NflPlayer[];
+  const meanTotal = starters.reduce((a, p) => a + weekPoints(p, 0), 0);
+  const loTotal = starters.reduce((a, p) => a + weekRange(p, 0).lo, 0);
+  const hiTotal = starters.reduce((a, p) => a + weekRange(p, 0).hi, 0);
+  const mc = MODE_COPY[mode];
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-xl font-semibold">Optimizer — week {week}</h1>
         <span className="text-sm text-[var(--muted)]">
-          optimal lineup projects <b>{fmt(mine.total, 0)}</b>
+          projects <b>{fmt(meanTotal, 0)}</b>{" "}
+          <span className="text-xs">
+            ({fmt(loTotal, 0)}–{fmt(hiTotal, 0)})
+          </span>
+        </span>
+      </div>
+
+      <div className="card p-3 text-sm" style={{ borderLeft: `3px solid ${mc.tone}` }}>
+        <b style={{ color: mc.tone }}>{mc.label} LINEUP</b>{" "}
+        <span className="text-[var(--muted)]">
+          — {seedByPoints ? "league seeds on total points, so always chase upside" : `${winPct}% to win this week`}: {mc.why}.
         </span>
       </div>
 
@@ -116,6 +183,7 @@ export default function NflOptimizerPage() {
                 <th>Player</th>
                 <th>Matchup</th>
                 <th className="num">Proj</th>
+                <th className="num hide-sm">Range</th>
               </tr>
             </thead>
             <tbody>
@@ -135,6 +203,17 @@ export default function NflOptimizerPage() {
                   </td>
                   <td>{s.p && <Opp opp={s.p.matchups[0]?.opp ?? ""} fdr={s.p.matchups[0]?.fdr ?? 0} />}</td>
                   <td className="num font-semibold">{s.p ? fmt(weekPoints(s.p, 0)) : "–"}</td>
+                  <td className="num hide-sm">
+                    {s.p ? (
+                      <Range
+                        lo={weekRange(s.p, 0).lo}
+                        mean={weekPoints(s.p, 0)}
+                        hi={weekRange(s.p, 0).hi}
+                      />
+                    ) : (
+                      "–"
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -153,6 +232,7 @@ export default function NflOptimizerPage() {
                 <th>Matchup</th>
                 <th className="num hide-sm">Usage</th>
                 <th className="num">Wk proj</th>
+                <th className="num hide-sm">Range</th>
                 <th className="num hide-sm">ROS</th>
                 <th>Call</th>
               </tr>
@@ -193,6 +273,9 @@ export default function NflOptimizerPage() {
                         )}
                       </td>
                       <td className="num font-semibold">{fmt(weekPoints(p, 0))}</td>
+                      <td className="num hide-sm">
+                        <Range lo={weekRange(p, 0).lo} hi={weekRange(p, 0).hi} />
+                      </td>
                       <td className="num hide-sm">{fmt(p.rosProj, 0)}</td>
                       <td
                         className="text-xs font-semibold"
@@ -219,6 +302,8 @@ export default function NflOptimizerPage() {
         items={[
           ["Matchup colour", "1 (green) easy … 5 (red) hard — opponent defence vs that position"],
           ["Proj / ROS", "projected PPR points this week / rest of season"],
+          ["Range", "~15th–85th percentile week (floor–ceiling): wider for boom/bust spots (WR/TE/DST, committee backs), tighter for a locked-in workhorse"],
+          ["FLOOR / CEILING / BALANCED lineup", "which side of the range to optimise: chase ceiling as an underdog or in a points-seeded league, protect the floor as a favourite"],
           ["Call", "START = in your optimal XI · FLEX? = viable flex swing · SIT = leave it"],
         ]}
       />

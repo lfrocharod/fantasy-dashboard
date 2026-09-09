@@ -1,5 +1,7 @@
+import time
+
 from fantasy_ingest.mapping.form_match import build_player_form
-from fantasy_ingest.sources.recent_form import FormRow, normalise
+from fantasy_ingest.sources.recent_form import FormRow, _aggregate_player, normalise
 from fantasy_ingest.sources.understat_form import aggregate_match_rows
 from fantasy_ingest.types import Player
 
@@ -31,6 +33,38 @@ def test_aggregate_recent_window_and_role():
     assert fr.recent_starts == 4
     assert fr.recent_goals == 5
     assert fr.role == "FWD"  # last 4 all forward, ignores the old MC game
+
+
+def test_aggregate_player_reads_goals_from_incidents_map():
+    # Sofascore moved goals/assists/cards out of the embedded statisticsMap
+    # (rating + minutes only now) into incidentsMap — _aggregate_player must
+    # read them from there or every player shows 0 G+A.
+    now = int(time.time())
+    ev = {
+        "events": [
+            {"id": 1, "startTimestamp": now - 8 * 86400, "tournament": {"name": "LaLiga"},
+             "homeTeam": {"name": "Barcelona"}, "awayTeam": {"name": "Getafe"}},
+            {"id": 2, "startTimestamp": now - 15 * 86400, "tournament": {"name": "LaLiga"},
+             "homeTeam": {"name": "Sevilla"}, "awayTeam": {"name": "Barcelona"}},
+        ],
+        "playedForTeamMap": {"1": 100, "2": 100},
+        "onBenchMap": {},
+        "statisticsMap": {"1": {"rating": 8.1, "minutesPlayed": 90},
+                          "2": {"rating": 7.0, "minutesPlayed": 78}},
+        "incidentsMap": {"1": {"goals": 2, "assists": 1, "penaltyGoals": 1},
+                         "2": {"assists": 1}},
+    }
+
+    class _FakeClient:
+        def player_last_events(self, _ss_id):
+            return ev
+
+    agg = _aggregate_player(_FakeClient(), 999, last_n=5)
+    assert agg["matches"] == 2
+    assert agg["minutes"] == 168.0
+    assert agg["goals"] == 2
+    assert agg["assists"] == 2
+    assert round(agg["rating_sum"] / agg["rating_n"], 2) == 7.55
 
 
 def test_build_player_form_flags_transfer_and_role():
