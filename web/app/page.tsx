@@ -62,13 +62,23 @@ export default async function HomePage() {
           href="/ucl"
           title="Champions League"
           active={sum.ucl.active}
-          rows={[
-            ["Matchday", String(sum.ucl.matchday || "–")],
-            ["Deadline", timeUntil(sum.ucl.deadlineIso)],
-            ["Proj. XI + captain", fmt(sum.ucl.projected, 0)],
-            ["Captain", sum.ucl.captain?.split(" ").slice(-1)[0] ?? "–"],
-            ["Mini-league", sum.ucl.rank ? `#${sum.ucl.rank} of ${sum.ucl.leagueSize}` : "after MD1"],
-          ]}
+          rows={
+            sum.ucl.live
+              ? [
+                  ["Matchday", `${sum.ucl.matchday} · ${sum.ucl.live.state === "finished" ? "FT" : "LIVE"}`],
+                  ["Secured", fmt(sum.ucl.live.secured, 0)],
+                  ["Proj. finish", fmt(sum.ucl.live.projectedFinish, 0)],
+                  ["Played", `${sum.ucl.live.played}/${sum.ucl.live.starters}`],
+                  ["Mini-league", sum.ucl.rank ? `#${sum.ucl.rank} of ${sum.ucl.leagueSize}` : "after MD1"],
+                ]
+              : [
+                  ["Matchday", String(sum.ucl.matchday || "–")],
+                  ["Deadline", timeUntil(sum.ucl.deadlineIso)],
+                  ["Proj. XI + captain", fmt(sum.ucl.projected, 0)],
+                  ["Captain", sum.ucl.captain?.split(" ").slice(-1)[0] ?? "–"],
+                  ["Mini-league", sum.ucl.rank ? `#${sum.ucl.rank} of ${sum.ucl.leagueSize}` : "after MD1"],
+                ]
+          }
           foot={
             sum.ucl.ingestAt
               ? `data ${relTime(sum.ucl.ingestAt)} · ${sum.ucl.ingestOk ? "ok" : "last run failed"}`
@@ -81,7 +91,11 @@ export default async function HomePage() {
           active={sum.fpl.active}
           rows={[
             ["Gameweek", sum.fpl.gw ? String(sum.fpl.gw) : "–"],
-            ["Best XI proj", fmt(sum.fpl.xiProj, 0)],
+            ...(sum.fpl.live
+              ? ([
+                  ["Live GW pts", `${fmt(sum.fpl.live.secured, 0)} (${sum.fpl.live.played}/${sum.fpl.live.starters})`],
+                ] as [string, string][])
+              : ([["Best XI proj", fmt(sum.fpl.xiProj, 0)]] as [string, string][])),
             ["Injured in squad", sum.fpl.injured ? String(sum.fpl.injured) : "none"],
             [
               "Top waiver",
@@ -95,12 +109,21 @@ export default async function HomePage() {
           active={sum.nfl.active}
           rows={[
             ["Week", sum.nfl.week ? String(sum.nfl.week) : "–"],
-            [
-              "This week",
-              sum.nfl.oppName
-                ? `${fmt(sum.nfl.myProj, 0)} vs ${sum.nfl.oppName} ${fmt(sum.nfl.oppProj ?? 0, 0)}`
-                : fmt(sum.nfl.myProj, 0),
-            ],
+            ...(sum.nfl.live
+              ? ([
+                  [
+                    sum.nfl.live.final ? "Final" : "Live",
+                    `${fmt(sum.nfl.live.mine, 0)}–${fmt(sum.nfl.live.opp, 0)} vs ${sum.nfl.oppName ?? "opp"}`,
+                  ],
+                ] as [string, string][])
+              : ([
+                  [
+                    "This week",
+                    sum.nfl.oppName
+                      ? `${fmt(sum.nfl.myProj, 0)} vs ${sum.nfl.oppName} ${fmt(sum.nfl.oppProj ?? 0, 0)}`
+                      : fmt(sum.nfl.myProj, 0),
+                  ],
+                ] as [string, string][])),
             ["Win prob", sum.nfl.winPct != null ? `${sum.nfl.winPct}%` : "–"],
             ["Lineup issues", sum.nfl.lineupIssues ? String(sum.nfl.lineupIssues) : "none"],
             [

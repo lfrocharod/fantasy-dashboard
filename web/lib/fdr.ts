@@ -46,10 +46,16 @@ export function posFdr(
   isHome: boolean,
   pos: Pos,
   league: League,
+  ownAttack = 1,
+  ownDefence = 1,
 ): PosFdr {
-  const ha = isHome ? -0.32 : 0.32;
-  const rawAtt = 1.05 * (1 - oppDefence) + ha;
-  const rawDef = 1.05 * (oppAttack - 1) + ha;
+  // venue swing worth ~1/3 of an FDR point (the old ±0.32 made every away
+  // fixture read "hard" regardless of the opponent)
+  const ha = isHome ? -0.15 : 0.15;
+  // your own side's quality shifts the fixture: a strong attack finds any
+  // defence easier; a strong defence keeps more clean sheets
+  const rawAtt = 1.25 * (1 - oppDefence) - 0.45 * (ownAttack - 1) + ha;
+  const rawDef = 1.25 * (oppAttack - 1) + 0.45 * (ownDefence - 1) + ha;
   const w = WEIGHTS[league];
   let blend: number;
   if (pos === "GK" || pos === "GKP") blend = rawDef;

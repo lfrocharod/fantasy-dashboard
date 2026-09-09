@@ -34,20 +34,25 @@ def test_analyse_captains_picks_top_ev_and_differential():
 
 
 def test_evaluate_chips_returns_per_md_and_recommendations():
-    squad_by_md = {1: _squad(1.0), 2: _squad(1.3)}
-    pool_by_md = {1: _squad(1.0) + _squad(2.0), 2: _squad(1.3) + _squad(2.5)}
-    # give pool distinct ids so it's a real superset
-    for k, extra in ((1, 100), (2, 200)):
-        for j, p in enumerate(pool_by_md[k][15:]):
-            p.player_id = k * 1000 + j
-            p.club_id = 10 + (j % 5)
-    out = evaluate_chips(squad_by_md, pool_by_md, start_md=1)
-    assert [r["matchday"] for r in out["perMatchday"]] == [1, 2]
+    # weak owned squad; the pool has a much stronger set of distinct players
+    squad_by_md = {6: _squad(1.0), 7: _squad(1.0), 8: _squad(1.0)}
+    pool_by_md = {}
+    for md in (6, 7, 8):
+        extra = _squad(2.2)
+        for j, p in enumerate(extra):
+            p.player_id = md * 1000 + j
+            p.club_id = 20 + (j % 6)
+        pool_by_md[md] = extra
+    out = evaluate_chips(squad_by_md, pool_by_md, start_md=6)
+    assert [r["matchday"] for r in out["perMatchday"]] == [6, 7, 8]
     for r in out["perMatchday"]:
-        assert r["benchBoost"] >= 0
-        assert r["wildcard"] >= 0
-        assert r["limitless"] >= 0
-    assert set(out["recommend"]) == {"wildcard", "limitless", "benchBoost", "tripleCaptain"}
+        assert r["limitless"] >= 0 and r["wildcard"] >= 0
+        assert "benchBoost" not in r and "tripleCaptain" not in r
+    assert set(out["recommend"]) == {"wildcard", "limitless"}
+    # a squad this far below the pool -> Limitless should be recommended
+    assert out["recommend"]["limitless"] is not None
+    # Wildcard defaults to the last league-phase matchday (8)
+    assert out["recommend"]["wildcard"]["matchday"] == 8
 
 
 def test_evaluate_chips_marks_used_chip_unavailable():

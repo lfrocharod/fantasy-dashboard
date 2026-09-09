@@ -8,7 +8,10 @@ import {
   FDR_BG,
   OUT_STATUS,
   POS_COLOR,
+  adjRos,
   loadNfl,
+  oppFactor,
+  oppTag,
   optimalLineup,
   usageTag,
   weekPoints,
@@ -76,7 +79,7 @@ export default function NflPlayersPage() {
     for (const s of mineLineup.starters) {
       if (!s.p) continue;
       const key = s.slot === "FLEX" ? "FLEX" : s.p.pos;
-      const v = horizon === "week" ? weekPoints(s.p, 0) : s.p.rosProj;
+      const v = horizon === "week" ? weekPoints(s.p, 0) : adjRos(s.p);
       w[key] = Math.min(w[key] ?? Infinity, v);
       w[s.p.pos] = Math.min(w[s.p.pos] ?? Infinity, v);
     }
@@ -91,7 +94,7 @@ export default function NflPlayersPage() {
     const fn = (position: string, week = false) =>
       freeAgents
         .filter((p) => p.pos === position && !OUT_STATUS.has(p.injury))
-        .sort((a, b) => (week ? weekPoints(b, 0) - weekPoints(a, 0) : b.rosProj - a.rosProj))[0];
+        .sort((a, b) => (week ? weekPoints(b, 0) - weekPoints(a, 0) : adjRos(b) - adjRos(a)))[0];
     return fn;
   }, [freeAgents]);
 
@@ -120,11 +123,18 @@ export default function NflPlayersPage() {
     if (pos !== "ALL") l = l.filter((p) => p.pos === pos);
     return l
       .map((p) => {
-        const val = horizon === "week" ? weekPoints(p, 0) : p.rosProj;
+        const val = horizon === "week" ? weekPoints(p, 0) : adjRos(p);
         const bar = worstStarter[p.pos] ?? worstStarter.FLEX ?? 0;
         return { p, val, upgrade: val - bar };
       })
-      .sort((a, b) => (horizon === "week" ? b.val - a.val : b.p.vor - a.p.vor) || b.upgrade - a.upgrade)
+      // positional value first (VOR) so the list isn't all QBs, nudged by the
+      // opportunity factor; then by how much they beat your worst starter
+      .sort(
+        (a, b) =>
+          (horizon === "week"
+            ? b.val - a.val
+            : b.p.vor * oppFactor(b.p) - a.p.vor * oppFactor(a.p)) || b.upgrade - a.upgrade,
+      )
       .slice(0, 40);
   }, [freeAgents, pos, horizon, worstStarter]);
 
@@ -205,6 +215,15 @@ export default function NflPlayersPage() {
               <th>Wk</th>
               <th className="num hide-sm">Usage</th>
               <th className="num">Wk proj</th>
+              <th className="num hide-sm" title="expected fantasy points per game from the ffopportunity opportunity model (last ~4 games)">
+                xFP/g
+              </th>
+              <th className="num hide-sm" title="expected total touchdowns per game (ffopportunity)">
+                xTD
+              </th>
+              <th className="num hide-sm" title="fantasy points per game over (+) or under (−) what their opportunity expects — persistent + = TD-luck regression risk, − = buy-low">
+                +/− exp
+              </th>
               <th className="num">ROS</th>
               <th className="num hide-sm">VOR</th>
               <th className="num">vs your worst</th>
@@ -219,6 +238,14 @@ export default function NflPlayersPage() {
                   {p.injury === "QUESTIONABLE" && (
                     <span className="ml-1 text-[10px] text-[var(--warn)]">Q</span>
                   )}
+                  {oppTag(p) && (
+                    <span
+                      className="ml-1 text-[10px] font-semibold"
+                      style={{ color: oppTag(p) === "buy-low" ? "var(--good)" : "var(--warn)" }}
+                    >
+                      {oppTag(p)}
+                    </span>
+                  )}
                 </td>
                 <td>
                   <span
@@ -232,6 +259,22 @@ export default function NflPlayersPage() {
                   <Usage p={p} />
                 </td>
                 <td className="num">{fmt(weekPoints(p, 0))}</td>
+                <td className="num hide-sm">{p.expGames ? fmt(p.xfpG, 1) : "–"}</td>
+                <td className="num hide-sm">{p.expGames ? fmt(p.xtdG, 2) : "–"}</td>
+                <td
+                  className="num hide-sm"
+                  style={{
+                    color: !p.expGames
+                      ? undefined
+                      : p.fpOE >= 2
+                        ? "var(--bad)"
+                        : p.fpOE <= -2
+                          ? "var(--good)"
+                          : "var(--muted)",
+                  }}
+                >
+                  {p.expGames ? `${p.fpOE >= 0 ? "+" : ""}${fmt(p.fpOE, 1)}` : "–"}
+                </td>
                 <td className="num font-semibold">{fmt(p.rosProj, 0)}</td>
                 <td className="num hide-sm">{fmt(p.vor, 0)}</td>
                 <td
@@ -252,8 +295,11 @@ export default function NflPlayersPage() {
         items={[
           ["Wk proj / ROS", "projected points this week / rest of season"],
           ["Usage", "recent snap share (or target share) — ▲/▼ = rising/falling snaps, W = workhorse, rot = rotational. From nflverse; blank until the season has games played"],
+          ["xFP/g · xTD", "expected fantasy points and expected touchdowns per game from the ffopportunity opportunity model (last ~4 games) — what the volume/quality of touches is worth, before finishing luck"],
+          ["+/− exp", "points per game over (red) or under (green) that expectation — a persistent gap flags TD-luck regression (fade) or a buy-low"],
           ["VOR", "value over replacement — points above the last startable player at the position"],
-          ["vs your worst", "how much better than your weakest starter at that position (a real upgrade if green)"],
+          ["vs your worst", "how much better than your weakest starter at that position, on opportunity-adjusted ROS (docks TD/finishing-luck overperformers, credits the unlucky) — a real upgrade if green"],
+          ["buy-low / sell-high", "scoring well under / over what their touches & targets expect — the ROS number and ranking already fold this in"],
           ["% rost", "rostered across ESPN leagues — a rough 'how contested on waivers' signal"],
           ["hidden", "players marked OUT / IR / SUSP are excluded"],
         ]}

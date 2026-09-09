@@ -7,6 +7,9 @@
 #
 #   ./update.sh            # everyday refresh: CL (with recent-form scrape) + FPL + NFL
 #   ./update.sh --fast     # skip the slow Sofascore/Understat scrape (CL ~1 min)
+#   ./update.sh --live     # CL matchday refresh only (~15s): actual points so far
+#                          #   + live sub / captain advice on the CL overview.
+#                          #   Safe to loop every few minutes while games are on.
 #   ./update.sh --cl       # only Champions League
 #   ./update.sh --fpl      # only FPL Draft
 #   ./update.sh --nfl      # only NFL
@@ -16,10 +19,11 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-FAST=0; ONLY=""
+FAST=0; ONLY=""; LIVE=0
 for a in "$@"; do
   case "$a" in
     --fast) FAST=1 ;;
+    --live) LIVE=1; ONLY="cl" ;;
     --cl|--ucl) ONLY="cl" ;;
     --fpl) ONLY="fpl" ;;
     --nfl) ONLY="nfl" ;;
@@ -40,6 +44,7 @@ run() {  # run <label> <cmd...>
 
 FAILED=""
 CL_ARGS=(); [ "$FAST" = 1 ] && CL_ARGS=(--skip-sources)
+[ "$LIVE" = 1 ] && CL_ARGS=(--live)
 
 [ -z "$ONLY" ] || [ "$ONLY" = cl  ] && run "Champions League" ./run.sh "${CL_ARGS[@]}"
 [ -z "$ONLY" ] || [ "$ONLY" = fpl ] && run "FPL Draft"        ./draft.sh --sport fpl --sync

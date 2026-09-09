@@ -20,6 +20,9 @@ from .params import ModelParams
 _MAX_NPXG90 = 1.5
 _MAX_XA90 = 1.1
 _MAX_SHOTS90 = 7.0
+# Below this the matched xG sample is dropped as unreliable / a likely bad
+# identity match. The web keeps the same bar (web/lib/ucl/xg.ts) so the UI never
+# shows an xGI/90 rate this model isn't actually using.
 _MIN_XG_MINUTES = 200.0
 
 
@@ -321,10 +324,17 @@ def project_player(
     lo, hi = _simulate_range(
         exp_goals, exp_assists, cs_prob if pos in ("GK", "DEF", "MID") else 0.0,
         pos, p60, params, rng,
+        p_start=p_start, p_any=p_any, exp_minutes=exp_minutes,
     )
-    # Recentre the simulated spread around the blended mean.
-    centre = exp_goals * scoring.GOAL_POINTS[pos] + exp_assists * scoring.ASSIST_POINTS
-    shift = xpts - (centre + appearance_pts)
+    # Recentre the simulated spread around the blended mean (the sim now carries
+    # its own appearance + minutes variance, so only shift by the attack gap).
+    centre = (
+        exp_goals * scoring.GOAL_POINTS[pos]
+        + exp_assists * scoring.ASSIST_POINTS
+        + appearance_pts
+    )
+    sim_mean = centre  # ~ what the sim centres on before recentring
+    shift = xpts - sim_mean
     lo = max(0.0, lo + shift)
     hi = hi + shift
 
@@ -368,16 +378,39 @@ def _simulate_range(
     p60: float,
     params: ModelParams,
     rng: random.Random | None,
+    *,
+    p_start: float = 1.0,
+    p_any: float = 1.0,
+    exp_minutes: float = 90.0,
 ) -> tuple[float, float]:
+    """p15 / p85 of a matchday score. Samples the minutes outcome (so a rotation
+    risk has a genuine ~0 floor) and uses a gamma-Poisson for goals/assists so
+    the top tail is fat enough for the hauls that actually decide a matchday."""
     rng = rng or random.Random(12345)
     n = max(200, params.sim_n)
-    cs_threshold = cs_prob * p60
+    em = max(exp_minutes, 1e-6)
+    k = 2.6  # overdispersion — lower = fatter tail
     pts: list[float] = []
     for _ in range(n):
-        g = _poisson(rng, max(exp_goals, 1e-6))
-        a = _poisson(rng, max(exp_assists, 1e-6))
+        r = rng.random()
+        if r < p_start:
+            m = rng.gauss(82.0, 9.0)
+        elif r < p_any:
+            m = rng.uniform(8.0, 34.0)
+        else:
+            m = 0.0
+        m = max(0.0, min(96.0, m))
+        if m <= 0:
+            pts.append(0.0)
+            continue
+        scale = m / em
+        lam_g = max(1e-6, exp_goals * scale)
+        lam_a = max(1e-6, exp_assists * scale)
+        g = _poisson(rng, rng.gammavariate(k, lam_g / k))
+        a = _poisson(rng, rng.gammavariate(k, lam_a / k))
         v = g * scoring.GOAL_POINTS[pos] + a * scoring.ASSIST_POINTS
-        if cs_threshold > 0 and rng.random() < cs_threshold:
+        v += 2.0 if m >= 60 else 1.0  # appearance
+        if cs_prob > 0 and m >= 60 and rng.random() < cs_prob:
             v += scoring.CLEAN_SHEET_POINTS[pos]
         pts.append(v)
     return _percentile(pts, 15), _percentile(pts, 85)

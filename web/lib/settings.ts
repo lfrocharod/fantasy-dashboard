@@ -22,6 +22,14 @@ export const KEYS = {
   modelParams: "model.params",
   // Latest optimizer result (best XI + transfer suggestions), JSON, written by ingestion.
   optimizerOutput: "model.optimizer_output",
+  // Live-matchday state (actual points so far + auto/manual-sub advice), JSON.
+  // Written by ingestion once a matchday game is live/finished; "" otherwise.
+  liveState: "model.live_state",
+  // Per-entry live rival scores, same cadence as liveState.
+  liveRivals: "model.live_rivals",
+  // xG name-match coverage from the last run (JSON) — which players got an
+  // underlying-stat row and which didn't.
+  xgCoverage: "ingest.xg_coverage",
 } as const;
 
 export async function getSetting(key: string): Promise<string | null> {

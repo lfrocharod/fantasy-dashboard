@@ -85,14 +85,13 @@ interface CaptainAnalysis {
 interface ChipMd {
   matchday: number;
   currentXiXpts: number;
-  benchBoost: number;
-  tripleCaptain: number;
+  freeTransferXiXpts?: number;
   limitless: number;
   wildcard: number;
 }
 interface ChipEval {
   perMatchday: ChipMd[];
-  recommend: Record<string, { matchday: number; gain: number } | null>;
+  recommend: Record<string, { matchday: number; gain: number; why?: string } | null>;
   note: string;
 }
 interface PlanRow extends FixtureCtx {
@@ -317,11 +316,11 @@ export default async function OptimizerPage() {
           ["Opponent colour", "next-matchday fixture difficulty (green easy … red hard). The squad is picked to win the upcoming matchday first, then the near-term run — a hard one-off fixture can still be outweighed by a great underlying player."],
           ["EV (2×)", "expected captain points = 2 × projected points"],
           ["Ceiling / Floor", "optimistic (p85) and pessimistic (p15) captain outcomes"],
-          ["Bench Boost / Triple Capt / Limitless / Wildcard", "extra points if that chip is played that matchday (estimated)"],
+          ["Limitless / Wildcard", "the only two CL Fantasy chips — estimated extra points from playing that chip that matchday"],
           ["Δ xPts", `total xPts gained over the next ${data.horizon} matchday(s)`],
           ["Hit", "points cost of an extra transfer (−4 each beyond the free one)"],
           ["Net", "Δ xPts minus the hit — only make the move if this is clearly positive"],
-          ["(C)/(V)", "captain / vice-captain"],
+          ["(C)/(V)", "captain / backup captain (no formal vice in CL — you'd move the armband manually)"],
         ]}
       />
       <p className="text-xs text-[var(--muted)]">
@@ -365,7 +364,7 @@ function SquadTable({ picks }: { picks: SquadPick[] }) {
             <td className="num">{fmt(p.price)}</td>
             <td className="num font-semibold">{fmt(p.horizonXpts, 0)}</td>
             <td>
-              {p.isCaptain ? "Captain" : p.isVice ? "Vice" : p.isStarter ? "Starter" : "Bench"}
+              {p.isCaptain ? "Captain" : p.isVice ? "Backup (C)" : p.isStarter ? "Starter" : "Bench"}
             </td>
           </tr>
         ))}
@@ -580,23 +579,35 @@ function AnalysisSections({ data }: { data: OptOutput }) {
 
       {data.chips && data.chips.perMatchday.length > 0 && (
         <Section title="Chip strategy">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2">
             {(
               [
-                ["wildcard", "Wildcard"],
                 ["limitless", "Limitless"],
-                ["benchBoost", "Bench Boost"],
-                ["tripleCaptain", "Triple Captain"],
+                ["wildcard", "Wildcard"],
               ] as const
             ).map(([k, label]) => {
               const rec = data.chips?.recommend[k];
               return (
-                <StatCard
-                  key={k}
-                  label={label}
-                  value={rec ? `MD${rec.matchday}` : "—"}
-                  sub={rec ? `+${fmt(rec.gain)} pts` : "no clear gain"}
-                />
+                <div key={k} className="card p-3">
+                  <div className="flex items-baseline justify-between">
+                    <span className="font-semibold">{label}</span>
+                    <span className="text-sm">
+                      {rec ? (
+                        <>
+                          MD{rec.matchday} <span className="text-[var(--good)]">+{fmt(rec.gain)}</span>
+                        </>
+                      ) : (
+                        <span className="text-[var(--muted)]">hold</span>
+                      )}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--muted)]">
+                    {rec?.why ??
+                      (k === "limitless"
+                        ? "Your squad can already field a competitive XI every matchday — no need."
+                        : "No clear window yet.")}
+                  </p>
+                </div>
               );
             })}
           </div>
@@ -605,11 +616,10 @@ function AnalysisSections({ data }: { data: OptOutput }) {
               <thead>
                 <tr>
                   <th className="num">MD</th>
-                  <th className="num">XI now</th>
-                  <th className="num">Bench Boost</th>
-                  <th className="num">Triple Capt</th>
-                  <th className="num">Limitless</th>
-                  <th className="num">Wildcard</th>
+                  <th className="num" title="best XI + captain your current 15 can field">XI now</th>
+                  <th className="num" title="best XI + captain after spending your free transfers this matchday — the baseline Limitless is judged against">XI w/ free transfers</th>
+                  <th className="num" title="best XI from the whole pool (price ignored) minus the free-transfer XI — one matchday only">Limitless +</th>
+                  <th className="num" title="rebuild the squad and keep it — gain over the planning horizon (bigger scale than Limitless)">Wildcard + (horizon)</th>
                 </tr>
               </thead>
               <tbody>
@@ -617,8 +627,7 @@ function AnalysisSections({ data }: { data: OptOutput }) {
                   <tr key={m.matchday}>
                     <td className="num">{m.matchday}</td>
                     <td className="num">{fmt(m.currentXiXpts)}</td>
-                    <td className="num">{fmt(m.benchBoost)}</td>
-                    <td className="num">{fmt(m.tripleCaptain)}</td>
+                    <td className="num">{fmt(m.freeTransferXiXpts ?? m.currentXiXpts)}</td>
                     <td className="num">{fmt(m.limitless)}</td>
                     <td className="num">{fmt(m.wildcard)}</td>
                   </tr>

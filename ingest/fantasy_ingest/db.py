@@ -264,6 +264,84 @@ class DB:
             delete_args=(matchday,),
         )
 
+    def upsert_player_scores(self, rows: list[tuple[int, int, int, bool, bool]]) -> None:
+        """rows: (player_id, matchday, points, played, final). Idempotent on
+        (player_id, matchday)."""
+        self._many(
+            """insert into player_scores (player_id, matchday, points, played, final, updated_at)
+               values (%s,%s,%s,%s,%s, now())
+               on conflict (player_id, matchday) do update set
+                 points=excluded.points,
+                 played=(player_scores.played or excluded.played),
+                 final=(player_scores.final or excluded.final), updated_at=now()""",
+            rows,
+        )
+
+    def load_player_scores(self, matchday: int) -> dict[int, tuple[int, bool, bool]]:
+        """player_id -> (points, played, final) for one matchday."""
+        with self.conn() as c:
+            rows = c.execute(
+                "select player_id, points, played, final from player_scores where matchday=%s",
+                (matchday,),
+            ).fetchall()
+        return {r[0]: (r[1], r[2], r[3]) for r in rows}
+
+    def insert_live_snapshot(
+        self, matchday: int, secured: float, projected: float, pre_match: float,
+        state: str, blob: dict,
+    ) -> None:
+        with self.conn() as c:
+            c.execute(
+                """insert into live_snapshots
+                   (matchday, captured_at, secured, projected, pre_match, state, blob)
+                   values (%s, now(), %s, %s, %s, %s, %s)""",
+                (matchday, secured, projected, pre_match, state, json.dumps(blob)),
+            )
+            c.commit()
+
+    def load_league_standings(self, league_id: str, matchday: int) -> list[LeagueEntry]:
+        with self.conn() as c:
+            rows = c.execute(
+                """select entry_id, manager_name, team_name, points, total_points,
+                          rank, prev_rank, squad
+                   from league_standings where league_id=%s and matchday=%s
+                   order by rank""",
+                (league_id, matchday),
+            ).fetchall()
+        out: list[LeagueEntry] = []
+        for r in rows:
+            e = LeagueEntry(
+                entry_id=r[0], manager_name=r[1], team_name=r[2], matchday=matchday,
+                points=r[3], total_points=r[4], rank=r[5], prev_rank=r[6],
+            )
+            e.squad = r[7] if isinstance(r[7], list) else (json.loads(r[7]) if r[7] else [])
+            out.append(e)
+        return out
+
+    def has_projections(self, matchday: int) -> bool:
+        with self.conn() as c:
+            n = c.execute(
+                "select count(*) from projections where matchday=%s", (matchday,)
+            ).fetchone()[0]
+        return bool(n)
+
+    def load_projections(self, matchday: int) -> list[Projection]:
+        with self.conn() as c:
+            rows = c.execute(
+                """select player_id, matchday, p_start, exp_minutes, xpts, xpts_captain,
+                          value, xpts_high, xpts_low, components
+                   from projections where matchday=%s""",
+                (matchday,),
+            ).fetchall()
+        out: list[Projection] = []
+        for r in rows:
+            comp = r[9] if isinstance(r[9], dict) else (json.loads(r[9]) if r[9] else {})
+            out.append(Projection(
+                player_id=r[0], matchday=r[1], p_start=r[2], exp_minutes=r[3], xpts=r[4],
+                xpts_captain=r[5], value=r[6], xpts_high=r[7], xpts_low=r[8], components=comp,
+            ))
+        return out
+
     def replace_my_squad(self, matchday: int, picks: list[SquadPick]) -> None:
         self._many(
             """insert into my_squad

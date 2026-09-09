@@ -5,13 +5,31 @@ import { Legend, PosBadge, StatusDot } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import { POSITIONS, type Position } from "@/lib/ucl/formation";
 import type { PlayerRow } from "@/lib/ucl/queries";
+import { hasUsableXg } from "@/lib/ucl/xg";
 
-type SortKey = "xpts" | "value" | "price" | "selectedPct" | "differential" | "hotScore";
+type SortKey =
+  | "xpts" | "value" | "price" | "selectedPct" | "differential" | "hotScore"
+  | "xgi90" | "npxg90" | "xa90" | "sh90";
+
+// Season non-penalty xG / xA per 90 — `player_stats` combined scope, written
+// from Sofascore's per-league statistics, so it covers every CL club (all
+// leagues), not just the big-5 the Understat layer sees. Only shown once the
+// sample clears the same bar the projection model trusts it at (~3 matches /
+// 200 league minutes).
+const hasXg = hasUsableXg;
+const npxg90 = (p: PlayerRow) => (hasXg(p) ? (p.xgNpxg90 ?? 0) : null);
+const xa90 = (p: PlayerRow) => (hasXg(p) ? (p.xgXa90 ?? 0) : null);
+const sh90 = (p: PlayerRow) => (hasXg(p) ? (p.xgShots90 ?? 0) : null);
+const xgi90 = (p: PlayerRow) => (hasXg(p) ? (p.xgNpxg90 ?? 0) + (p.xgXa90 ?? 0) : null);
 
 function sortVal(p: PlayerRow, k: SortKey): number {
   if (k === "differential")
     return (p.xpts ?? 0) / Math.max(3, p.selectedPct ?? 100);
   if (k === "hotScore") return p.hotScore ?? 0;
+  if (k === "xgi90") return xgi90(p) ?? -1;
+  if (k === "npxg90") return npxg90(p) ?? -1;
+  if (k === "xa90") return xa90(p) ?? -1;
+  if (k === "sh90") return sh90(p) ?? -1;
   return Number(p[k as keyof PlayerRow] ?? 0);
 }
 
@@ -24,7 +42,7 @@ export default function PlayersPage() {
   const [position, setPosition] = useState<Position | "">("");
   const [maxPrice, setMaxPrice] = useState("");
   const [search, setSearch] = useState("");
-  const [hideOwned, setHideOwned] = useState(false);
+  const [hideOwned, setHideOwned] = useState(true);
   const [sort, setSort] = useState<SortKey>("xpts");
 
   useEffect(() => {
@@ -93,6 +111,10 @@ export default function PlayersPage() {
             <option value="value">Value (xPts/€)</option>
             <option value="differential">Differential (xPts / owned%)</option>
             <option value="hotScore">Hot form</option>
+            <option value="xgi90">xGI/90 (season)</option>
+            <option value="npxg90">npxG/90 (season)</option>
+            <option value="xa90">xA/90 (season)</option>
+            <option value="sh90">Shots/90 (season)</option>
             <option value="price">Price</option>
             <option value="selectedPct">Ownership</option>
           </select>
@@ -116,6 +138,10 @@ export default function PlayersPage() {
               <th className="num">Price</th>
               <th className="num hide-sm">Own%</th>
               <th className="num hide-sm">L5 G+A</th>
+              <th className="num hide-sm" title="expected goal involvements per 90 this domestic-league season (non-penalty xG + xA, Sofascore) — every CL club">
+                xGI90
+              </th>
+              <th className="num hide-sm" title="shots per 90 this domestic-league season">Sh90</th>
               <th className="num hide-sm">Rtg</th>
               <th className="num">Start%</th>
               <th className="num">xPts</th>
@@ -187,6 +213,17 @@ export default function PlayersPage() {
                     <td className="num hide-sm">
                       {l4 != null ? `${fmt(l4, 0)} / ${p.recentMatches}` : "–"}
                     </td>
+                    <td
+                      className="num hide-sm"
+                      title={
+                        xgi90(p) != null
+                          ? `npxG/90 ${fmt(npxg90(p), 2)} + xA/90 ${fmt(xa90(p), 2)} · ${p.xgMatches} league matches, ${fmt(p.xgMinutes, 0)} min`
+                          : "not enough domestic-league minutes yet (needs ~200)"
+                      }
+                    >
+                      {xgi90(p) != null ? fmt(xgi90(p), 2) : "–"}
+                    </td>
+                    <td className="num hide-sm">{sh90(p) != null ? fmt(sh90(p), 1) : "–"}</td>
                     <td className="num hide-sm">{p.avgRating ? fmt(p.avgRating, 1) : "–"}</td>
                     <td className="num">
                       {sp != null ? `${Math.round(sp * 100)}%` : "–"}
@@ -218,7 +255,7 @@ export default function PlayersPage() {
             })}
             {rows.length === 0 && !loading && (
               <tr>
-                <td colSpan={12} className="text-center text-[var(--muted)]">
+                <td colSpan={14} className="text-center text-[var(--muted)]">
                   No players — has the ingestion job run and produced projections?
                 </td>
               </tr>
@@ -230,11 +267,12 @@ export default function PlayersPage() {
       <Legend
         items={[
           ["L5 G+A", "goals + assists over the last 5 matches (all competitions) / matches counted"],
+          ["xGI90 / Sh90", "expected goal involvements (non-penalty xG + xA) and shots per 90 this DOMESTIC-LEAGUE season (Sofascore, all leagues) — a competition-scoped season rate, the underlying signal behind output. Shown once a player has ~180 league minutes. Hover xGI90 for the npxG/xA split."],
           ["Rtg", "average match rating over those games (Sofascore, ~10 scale)"],
           ["Start%", "estimated chance of starting"],
           ["✓ / ⑂ (next to Start%)", "named in the confirmed starting XI / confirmed on the bench (official lineup, ~1h before kick-off)"],
           ["⚠ (next to Start%)", "our start-probability sources disagree (recent lineups vs season minutes vs price) — treat as a rotation or fitness question"],
-          ["xPts / xPts(C)", "expected points, and if captained"],
+          ["xPts / xPts(C)", "expected points, and if captained — the model already folds season xG (xGI90) into this, so a strong xGI with a modest xPts usually means minutes/rotation risk, not an undervaluation"],
           ["Value", "xPts per €m"],
           ["DIFF", "low ownership + high projection — a rank-gaining differential"],
           ["📈 / 📉", "price likely to rise / fall from transfer traffic"],

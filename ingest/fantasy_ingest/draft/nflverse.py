@@ -19,6 +19,7 @@ import unicodedata
 import httpx
 
 _REL = "https://github.com/nflverse/nflverse-data/releases/download"
+_FFOPP = "https://github.com/ffverse/ffopportunity/releases/download/latest-data"
 _UA = {"User-Agent": "Mozilla/5.0"}
 
 # nflverse team abbreviations that differ from ESPN's
@@ -111,6 +112,45 @@ def fetch_usage(season: int, last_n: int = 4) -> dict[tuple[str, str], dict]:
     return out
 
 
+def fetch_expected(season: int, last_n: int = 4) -> dict[tuple[str, str], dict]:
+    """{(normalised_name, team_abbr): {...}} from ffopportunity's opportunity
+    model, averaged over the player's last `last_n` games:
+
+      xfp_g    expected fantasy points per game (model default scoring)
+      xtd_g    expected total touchdowns per game
+      fp_oe_g  fantasy points over / under expected per game (+ = outperforming
+               their opportunity → regression-down risk; − = unlucky → buy-low)
+      games    games counted
+
+    Best-effort: a 404 (season not released) returns {}.
+    """
+    rows = _get_csv(f"{_FFOPP}/ep_weekly_{season}.csv")
+    if not rows:
+        return {}
+    log: dict[tuple[str, str], list[dict]] = {}
+    for row in rows:
+        key = (_norm(row.get("full_name", "")), _team(row.get("posteam", "")))
+        log.setdefault(key, []).append({
+            "week": int(_f(row.get("week"))),
+            "xfp": _f(row.get("total_fantasy_points_exp")),
+            "xtd": _f(row.get("total_touchdown_exp")),
+            "diff": _f(row.get("total_fantasy_points_diff")),
+        })
+    out: dict[tuple[str, str], dict] = {}
+    for key, entries in log.items():
+        e = sorted(entries, key=lambda x: x["week"])[-last_n:]
+        if not e:
+            continue
+        n = len(e)
+        out[key] = {
+            "xfp_g": round(sum(x["xfp"] for x in e) / n, 1),
+            "xtd_g": round(sum(x["xtd"] for x in e) / n, 2),
+            "fp_oe_g": round(sum(x["diff"] for x in e) / n, 1),
+            "games": n,
+        }
+    return out
+
+
 norm_name = _norm  # public alias for cross-module name matching
 
-__all__ = ["fetch_usage", "norm_name"]
+__all__ = ["fetch_expected", "fetch_usage", "norm_name"]

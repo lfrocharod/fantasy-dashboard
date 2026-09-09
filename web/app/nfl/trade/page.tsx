@@ -7,9 +7,11 @@ import type { DraftConfig } from "@/lib/draft/queries";
 import {
   OUT_STATUS,
   POS_COLOR,
+  adjRos,
   groupTeams,
   loadNfl,
   nflTradeIdeas,
+  oppTag,
   optimalLineup,
   type NflPlayer,
 } from "../lib";
@@ -60,19 +62,33 @@ export default function NflTradePage() {
     if (!giveP.length && !getP.length) return null;
     const sum = (a: NflPlayer[], f: (p: NflPlayer) => number) => a.reduce((x, p) => x + f(p), 0);
     const meWeek = sum(getP, (p) => p.weekProj) - sum(giveP, (p) => p.weekProj);
-    const meRos = sum(getP, (p) => p.rosProj) - sum(giveP, (p) => p.rosProj);
+    // your side: opportunity-adjusted (discounts TD/finishing-luck, credits the
+    // unlucky). their side: raw provider projection — how a typical manager
+    // would value it, so the deal isn't just even by your read.
+    const meRos = sum(getP, adjRos) - sum(giveP, adjRos);
+    const themRos = sum(giveP, (p) => p.rosProj) - sum(getP, (p) => p.rosProj);
     const warns: string[] = [];
     for (const p of getP) {
       if (OUT_STATUS.has(p.injury)) warns.push(`${p.name} is ${p.injury}`);
       if (p.pctStarted < 40 && !["DST", "K"].includes(p.pos)) warns.push(`${p.name} is a bench/flex piece (${fmt(p.pctStarted, 0)}% started)`);
+      if (oppTag(p) === "sell-high")
+        warns.push(`${p.name} is scoring +${fmt(p.fpOE, 1)}/g over expected — likely to regress down, you may be buying the peak`);
+    }
+    for (const p of giveP) {
+      if (oppTag(p) === "buy-low")
+        warns.push(`you're giving up ${p.name}, who is ${fmt(p.fpOE, 1)}/g UNDER expected — a bounce-back candidate`);
     }
     // positional fit: does the added position address a need?
     const myByPos = me?.byPos ?? {};
     const needPos = ["RB", "WR", "TE"].filter((k) => (myByPos[k]?.[2]?.rosProj ?? 0) < 90);
     const helpsNeed = getP.some((p) => needPos.includes(p.pos));
+    if (meRos > 12 && themRos < -20)
+      warns.push("Lopsided in your favour on raw projection — the rival probably won't accept as-is.");
     const verdict =
       meRos > 15 && meWeek > 1
-        ? "Clear win — you get better now and for the season."
+        ? themRos > -15
+          ? "Clear win — better now and for the season, and a fair ask."
+          : "Better for you, but skewed on raw value — sweeten it or expect a no."
         : meRos > 15
           ? "Long-term win; roughly flat this week."
           : meRos < -15
@@ -80,7 +96,14 @@ export default function NflTradePage() {
             : helpsNeed && Math.abs(meRos) < 15
               ? "Even on value but fills a roster hole — worth proposing."
               : "Marginal — roughly even.";
-    return { meWeek: Math.round(meWeek * 10) / 10, meRos: Math.round(meRos), warns, verdict, needPos };
+    return {
+      meWeek: Math.round(meWeek * 10) / 10,
+      meRos: Math.round(meRos),
+      themRos: Math.round(themRos),
+      warns,
+      verdict,
+      needPos,
+    };
   }, [giveP, getP, me]);
 
   const slots = useMemo(
@@ -104,9 +127,9 @@ export default function NflTradePage() {
     );
     return their.players
       .filter((p) => !starters.has(p.extId) && !OUT_STATUS.has(p.injury) && p.pos !== "K" && p.pos !== "DST")
-      .sort((a, b) => b.vor - a.vor)
+      .sort((a, b) => b.vor - a.vor || adjRos(b) - adjRos(a))
       .slice(0, 8)
-      .map((p) => ({ p, fillsNeed: need.has(p.pos) }));
+      .map((p) => ({ p, fillsNeed: need.has(p.pos), tag: oppTag(p) }));
   }, [their, me, slots]);
 
   const ideas = useMemo(
@@ -155,6 +178,7 @@ export default function NflTradePage() {
                   <th>You give</th>
                   <th>You get</th>
                   <th>From</th>
+                  <th className="num hide-sm">get xFP/g</th>
                   <th className="num">You +</th>
                   <th className="num hide-sm">Them +</th>
                 </tr>
@@ -179,8 +203,17 @@ export default function NflTradePage() {
                         {t.get.pos}
                       </span>
                       {t.get.name} <span className="text-[var(--muted)]">{t.get.team}</span>
+                      {oppTag(t.get) && (
+                        <span
+                          className="ml-1 text-[10px] font-semibold"
+                          style={{ color: oppTag(t.get) === "buy-low" ? "var(--good)" : "var(--warn)" }}
+                        >
+                          {oppTag(t.get)}
+                        </span>
+                      )}
                     </td>
                     <td className="text-xs">{t.rivalName}</td>
+                    <td className="num hide-sm">{t.get.expGames ? fmt(t.get.xfpG, 1) : "–"}</td>
                     <td className="num font-semibold text-[var(--good)]">+{fmt(t.myGain, 0)}</td>
                     <td
                       className="num hide-sm"
@@ -240,8 +273,10 @@ export default function NflTradePage() {
                 {evalTrade.meRos >= 0 ? "+" : ""}
                 {fmt(evalTrade.meRos, 0)}
               </b>{" "}
-              (they get {evalTrade.meRos >= 0 ? "-" : "+"}
-              {fmt(Math.abs(evalTrade.meRos), 0)})
+              <span className="text-[var(--muted)]">
+                (rival, raw projection: {evalTrade.themRos >= 0 ? "+" : ""}
+                {fmt(evalTrade.themRos, 0)})
+              </span>
             </span>
           </div>
           <p className="font-medium">{evalTrade.verdict}</p>
@@ -270,12 +305,13 @@ export default function NflTradePage() {
                   <th>Player</th>
                   <th className="num">VOR</th>
                   <th className="num hide-sm">ROS</th>
-                  <th className="num hide-sm">Wk</th>
+                  <th className="num hide-sm">xFP/g</th>
+                  <th className="num hide-sm">+/− exp</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
-                {theirSurplus.map(({ p, fillsNeed }) => (
+                {theirSurplus.map(({ p, fillsNeed, tag }) => (
                   <tr key={p.extId}>
                     <td className="font-medium">
                       <span
@@ -288,9 +324,31 @@ export default function NflTradePage() {
                     </td>
                     <td className="num font-semibold">{fmt(p.vor, 0)}</td>
                     <td className="num hide-sm">{fmt(p.rosProj, 0)}</td>
-                    <td className="num hide-sm">{fmt(p.weekProj, 0)}</td>
+                    <td className="num hide-sm">{p.expGames ? fmt(p.xfpG, 1) : "–"}</td>
+                    <td
+                      className="num hide-sm"
+                      style={{
+                        color: !p.expGames
+                          ? undefined
+                          : p.fpOE <= -2
+                            ? "var(--good)"
+                            : p.fpOE >= 2
+                              ? "var(--warn)"
+                              : "var(--muted)",
+                      }}
+                    >
+                      {p.expGames ? `${p.fpOE >= 0 ? "+" : ""}${fmt(p.fpOE, 1)}` : "–"}
+                    </td>
                     <td className="text-xs">
                       {fillsNeed && <span className="text-[var(--good)]">fills your need</span>}
+                      {tag && (
+                        <span
+                          className="ml-1 font-semibold"
+                          style={{ color: tag === "buy-low" ? "var(--good)" : "var(--warn)" }}
+                        >
+                          {tag}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -302,7 +360,9 @@ export default function NflTradePage() {
 
       <Legend
         items={[
-          ["This week / ROS", "change in your projected points if the trade goes through"],
+          ["This week / ROS", "change in your projected points if the trade goes through — ROS is opportunity-adjusted (docks players riding TD/finishing luck, credits the unlucky)"],
+          ["xFP/g · +/− exp", "expected fantasy points per game from the ffopportunity model, and how far actual output is over (+, regression risk) or under (−, buy-low) it"],
+          ["buy-low / sell-high", "scoring well under / over what their opportunity expects — the swap value already accounts for this"],
           ["✚", "currently OUT / IR / suspended"],
           ["VOR", "value over replacement — rest-of-season points above a replacement-level starter AT THAT POSITION (so a QB and an RB are comparable — ranking by raw projection just shows QBs)"],
           ["Movable value", "the selected rival's players who don't make their own optimal lineup — what they can most afford to trade you"],

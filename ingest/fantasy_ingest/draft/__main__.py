@@ -193,9 +193,87 @@ def _sync_fpl(db: DB, env: Env, cfg: dict) -> int:
         }))
     if det.get("league_entries"):
         db.set_setting("draft.fpl.teams", str(len(det["league_entries"])))
+
+    # Live gameweek: per-player points + your H2H matchup score while the current
+    # GW is in progress. Cleared once it's over / unavailable. The web FPL page
+    # turns this into the same secured / projected-finish / auto-sub view the CL
+    # overview has.
+    live = None
+    try:
+        cur_gw = (_bootstrap_events(c).get("current")) if entry_id else None
+        if cur_gw and my_lineup:
+            live = _fpl_live_score(c, int(cur_gw), my_lineup, det, entry_id)
+    except Exception as e:  # noqa: BLE001
+        _log(f"fpl live skipped: {e}")
+    db.set_setting("draft.fpl.live", json.dumps(live) if live else "")
+    if live:
+        _log(f"fpl live: GW{live['gw']} {live['state']} — {live['secured']} pts banked, "
+             f"{live['played']}/{live['starters']} started"
+             + (f", vs {live['oppName']} {live['myPoints']}-{live['oppPoints']}"
+                if live.get("oppName") else ""))
+
     _log(f"fpl: {len(picks)} draft picks · {len(standings)} standings rows · "
          f"{len(my_ids)} in your squad")
     return 0
+
+
+def _fpl_live_score(c, gw: int, lineup: list[dict], det: dict,
+                    entry_id) -> dict | None:  # pragma: no cover - network
+    """Per-player live points for the user's squad this GW plus the H2H matchup
+    score. Returns None if nobody has kicked off yet (caller clears the value)."""
+    r = c.get(f"https://draft.premierleague.com/api/event/{gw}/live")
+    r.raise_for_status()
+    els = r.json().get("elements", {})
+    items = els if isinstance(els, dict) else {str(e.get("id")): e for e in els}
+
+    def stat(eid) -> tuple[int, int]:
+        st = ((items.get(str(eid)) or {}).get("stats")) or {}
+        return int(st.get("total_points") or 0), int(st.get("minutes") or 0)
+
+    elements: dict[str, list[int]] = {}
+    starters = [p for p in lineup if p.get("starter")]
+    secured = played = 0
+    any_minutes = False
+    for p in lineup:
+        pts, mins = stat(p["element"])
+        elements[str(p["element"])] = [pts, mins]
+        if p.get("starter"):
+            secured += pts * (2 if p.get("captain") else 1)
+            if mins > 0:
+                played += 1
+                any_minutes = True
+    if not any_minutes:
+        return None
+
+    # H2H matchup score for this GW (live points update in league_details)
+    le_entry = {e["id"]: e.get("entry_id") for e in det.get("league_entries", [])}
+    le_name = {
+        e["id"]: (e.get("entry_name")
+                  or f"{e.get('player_first_name', '')} {e.get('player_last_name', '')}".strip())
+        for e in det.get("league_entries", [])
+    }
+    my_pts = opp_pts = None
+    opp_name = None
+    finished = False
+    for m in det.get("matches", []):
+        if m.get("event") != gw:
+            continue
+        h, a = m.get("league_entry_1"), m.get("league_entry_2")
+        if str(le_entry.get(h)) == str(entry_id):
+            my_pts, opp_pts, opp_name = m.get("league_entry_1_points"), m.get("league_entry_2_points"), le_name.get(a)
+        elif str(le_entry.get(a)) == str(entry_id):
+            my_pts, opp_pts, opp_name = m.get("league_entry_2_points"), m.get("league_entry_1_points"), le_name.get(h)
+        else:
+            continue
+        finished = bool(m.get("finished"))
+        break
+
+    return {
+        "gw": gw, "state": "finished" if finished else "live",
+        "secured": secured, "played": played, "starters": len(starters),
+        "elements": elements,
+        "myPoints": my_pts, "oppPoints": opp_pts, "oppName": opp_name,
+    }
 
 
 def _bootstrap_events(c) -> dict:

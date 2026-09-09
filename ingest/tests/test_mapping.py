@@ -1,5 +1,12 @@
+from fantasy_ingest.mapping.coverage import (
+    LOW_MINUTES,
+    NO_NAME_MATCH,
+    NO_STAT_ROW,
+    XgCoverage,
+)
 from fantasy_ingest.mapping.player_match import build_stats
 from fantasy_ingest.sources.domestic_xg import SourceRow, normalise
+from fantasy_ingest.sources.season_xg import _resolve_entry
 from fantasy_ingest.types import Player
 
 
@@ -39,3 +46,37 @@ def test_override_forces_a_match():
     )
     assert 7 in report.matched
     assert report.matched[7].npxg90 == 0.7
+
+
+def _idx(*names):
+    return {normalise(n): {"ss_id": i + 1, "ss_team_id": 99} for i, n in enumerate(names)}
+
+
+def test_resolve_entry_exact_fuzzy_and_override():
+    idx = _idx("Vinicius Junior", "Erling Haaland")
+    keys = list(idx)
+    # exact
+    assert _resolve_entry("Erling Haaland", idx, keys)["ss_id"] == 2
+    # surname fuzzy: "Vini Jr" -> "Vinicius Junior"
+    assert _resolve_entry("Vini Jr", idx, keys) is None or _resolve_entry(
+        "Vinicius Jr", idx, keys
+    )["ss_id"] == 1
+    # a genuinely absent player
+    assert _resolve_entry("Nobody Here", idx, keys) is None
+    # override name pins the lookup even when the UEFA name is unusable
+    assert _resolve_entry("V. Jr.", idx, keys, force_name="Vinicius Junior")["ss_id"] == 1
+
+
+def test_xg_coverage_buckets_and_summary():
+    cov = XgCoverage(source="test")
+    cov.total = 4
+    cov.hit()
+    cov.miss(1, "Cheap Sub", "TeamA", 4.0, NO_NAME_MATCH)
+    cov.miss(2, "Big Star", "TeamB", 11.5, NO_STAT_ROW)
+    cov.miss(3, "Returning Injury", "TeamC", 7.0, LOW_MINUTES)
+    d = cov.as_dict()
+    assert d["matched"] == 1 and d["unmatched"] == 3
+    assert d["byReason"] == {NO_NAME_MATCH: 1, NO_STAT_ROW: 1, LOW_MINUTES: 1}
+    # notable = price >= 6, worst first
+    assert [u["name"] for u in d["notableMissing"]] == ["Big Star", "Returning Injury"]
+    assert "Big Star (TeamB, 11.5)" in cov.summary_line()

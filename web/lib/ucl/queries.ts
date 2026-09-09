@@ -5,15 +5,18 @@ import {
   fixtures,
   ingestRuns,
   leagueStandings,
+  liveSnapshots,
   mySquad,
   playerForm,
+  playerStats,
   players,
   projections,
   teams,
 } from "@/lib/db/schema";
-import { getSettings, KEYS } from "@/lib/settings";
+import { getSetting, getSettings, KEYS } from "@/lib/settings";
 import { posFdr } from "@/lib/fdr";
 import { pickFormationXI } from "@/lib/xi";
+import { bestXiPlusCaptain } from "./score";
 import type { Position } from "./formation";
 
 export interface PlayerRow {
@@ -48,7 +51,18 @@ export interface PlayerRow {
   recentAssists: number | null;
   recentStarts: number | null;
   recentMatches: number | null;
+  recentMinutes: number | null;
+  // domestic-league season underlying rates (Understat, `player_stats` combined
+  // scope). A competition-scoped per-90 season rate — usable once xgMatches ≥ 3.
+  xgNpxg90: number | null;
+  xgXa90: number | null;
+  xgShots90: number | null;
+  xgMatches: number | null;
+  xgMinutes: number | null;
 }
+
+// The xG-sample gate (hasUsableXg) lives in ./xg — a server-free module, so
+// client components can import it without pulling the db layer into the bundle.
 
 const playerSelect = {
   playerId: players.uefaPlayerId,
@@ -81,7 +95,20 @@ const playerSelect = {
   recentAssists: playerForm.recentAssists,
   recentStarts: playerForm.recentStarts,
   recentMatches: playerForm.recentMatches,
+  recentMinutes: playerForm.recentMinutes,
+  xgNpxg90: playerStats.npxg90,
+  xgXa90: playerStats.xag90,
+  xgShots90: playerStats.shots90,
+  xgMatches: playerStats.matches,
+  xgMinutes: playerStats.minutes,
 } as const;
+
+/** join for the Understat season underlying-numbers layer (`player_stats`,
+ * combined scope — one row per player). */
+const statsJoin = and(
+  eq(playerStats.playerId, players.uefaPlayerId),
+  eq(playerStats.scope, "combined"),
+);
 
 export async function getCurrentMatchday(): Promise<number> {
   const s = await getSettings([KEYS.currentMatchday]);
@@ -117,6 +144,7 @@ export async function getProjectedPlayers(opts: {
       and(eq(projections.playerId, players.uefaPlayerId), eq(projections.matchday, opts.matchday)),
     )
     .leftJoin(playerForm, eq(playerForm.playerId, players.uefaPlayerId))
+    .leftJoin(playerStats, statsJoin)
     .where(and(...conds))
     .orderBy(desc(projections.xpts))
     .limit(opts.limit ?? 100);
@@ -150,6 +178,7 @@ export async function getMySquad(matchday: number): Promise<SquadRow[]> {
       and(eq(projections.playerId, players.uefaPlayerId), eq(projections.matchday, matchday)),
     )
     .leftJoin(playerForm, eq(playerForm.playerId, players.uefaPlayerId))
+    .leftJoin(playerStats, statsJoin)
     .where(eq(mySquad.matchday, matchday));
 
   return rows as SquadRow[];
@@ -233,7 +262,9 @@ export async function getFixtureTicker(fromMatchday: number, ahead = 5): Promise
     .orderBy(fixtures.matchday, fixtures.kickoff);
 
   const rate = (oppAtk: number, oppDef: number, isHome: boolean) => {
-    const raw = 0.55 * (oppAtk - 1) + 0.55 * (1 - oppDef) + (isHome ? -0.35 : 0.35);
+    // venue swing ~1/3 of an FDR point (was ±0.35 ≈ ±0.77 FDR — every away
+    // fixture reading as "hard")
+    const raw = 0.55 * (oppAtk - 1) + 0.55 * (1 - oppDef) + (isHome ? -0.15 : 0.15);
     return Math.max(1, Math.min(5, Math.round(3 + 2.2 * raw)));
   };
 
@@ -248,8 +279,8 @@ export async function getFixtureTicker(fromMatchday: number, ahead = 5): Promise
   };
 
   for (const f of fx) {
-    const h = posFdr(f.awayAtk, f.awayDef, true, "FWD", "ucl");
-    const hd = posFdr(f.awayAtk, f.awayDef, true, "DEF", "ucl");
+    const h = posFdr(f.awayAtk, f.awayDef, true, "FWD", "ucl", f.homeAtk, f.homeDef);
+    const hd = posFdr(f.awayAtk, f.awayDef, true, "DEF", "ucl", f.homeAtk, f.homeDef);
     ensure(f.homeId, f.homeName, f.homeCode ?? "").cells.push({
       matchday: f.matchday,
       opp: f.awayName,
@@ -260,8 +291,8 @@ export async function getFixtureTicker(fromMatchday: number, ahead = 5): Promise
       defDifficulty: hd.def,
       kickoff: f.kickoff,
     });
-    const a = posFdr(f.homeAtk, f.homeDef, false, "FWD", "ucl");
-    const ad = posFdr(f.homeAtk, f.homeDef, false, "DEF", "ucl");
+    const a = posFdr(f.homeAtk, f.homeDef, false, "FWD", "ucl", f.awayAtk, f.awayDef);
+    const ad = posFdr(f.homeAtk, f.homeDef, false, "DEF", "ucl", f.awayAtk, f.awayDef);
     ensure(f.awayId, f.awayName, f.awayCode ?? "").cells.push({
       matchday: f.matchday,
       opp: f.homeName,
@@ -349,7 +380,8 @@ export async function getTeamDossiers(matchday: number): Promise<TeamDossier[]> 
         projections,
         and(eq(projections.playerId, players.uefaPlayerId), eq(projections.matchday, matchday)),
       )
-      .leftJoin(playerForm, eq(playerForm.playerId, players.uefaPlayerId)) as Promise<PlayerRow[]>,
+      .leftJoin(playerForm, eq(playerForm.playerId, players.uefaPlayerId))
+      .leftJoin(playerStats, statsJoin) as Promise<PlayerRow[]>,
   ]);
 
   const tickerByTeam = new Map(ticker.map((r) => [r.teamId, r]));
@@ -471,7 +503,15 @@ export interface RivalReport {
   captainPicks: { playerId: number; name: string; count: number; mine: boolean }[];
   strategy: { mode: "protect" | "hold" | "chase" | "free"; text: string; mdsLeft: number } | null;
   rivalCount: number;
+  // when the rival squads we projected were last captured from UEFA, the
+  // matchday they belong to, and whether that's stale enough to warn about
+  // (older matchday, or not refreshed in over two days).
+  squadsAsOf: string | null;
+  squadsMatchday: number | null;
+  stale: boolean;
 }
+
+const RIVAL_STALE_MS = 2 * 24 * 60 * 60 * 1000;
 
 /** A rival's saved squad — new rows are [{id,c,s,b}], older ones a bare list. */
 function normSquad(raw: unknown): {
@@ -511,18 +551,55 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
     captainPicks: [],
     strategy: null,
     rivalCount: 0,
+    squadsAsOf: null,
+    squadsMatchday: null,
+    stale: false,
   };
   if (!leagueId) return empty;
 
-  const standings = await db
-    .select()
-    .from(leagueStandings)
-    .where(and(eq(leagueStandings.leagueId, leagueId), eq(leagueStandings.matchday, matchday)))
-    .orderBy(leagueStandings.rank);
+  const rowsFor = (md: number) =>
+    db
+      .select()
+      .from(leagueStandings)
+      .where(and(eq(leagueStandings.leagueId, leagueId), eq(leagueStandings.matchday, md)))
+      .orderBy(leagueStandings.rank);
+
+  let squadsMatchday = matchday;
+  let standings = await rowsFor(matchday);
+  let hasSquads = standings.some((r) => normSquad(r.squad).ids.length > 0);
+  if (!hasSquads) {
+    // nothing ingested for this matchday yet — fall back to the most recent
+    // earlier matchday that does have squads, and flag it as stale.
+    const prev = await db
+      .select({ md: leagueStandings.matchday })
+      .from(leagueStandings)
+      .where(
+        and(
+          eq(leagueStandings.leagueId, leagueId),
+          lte(leagueStandings.matchday, matchday),
+          sql`${leagueStandings.squad} is not null`,
+        ),
+      )
+      .orderBy(desc(leagueStandings.matchday))
+      .limit(1);
+    if (prev[0]?.md != null && prev[0].md !== matchday) {
+      squadsMatchday = prev[0].md;
+      standings = await rowsFor(squadsMatchday);
+      hasSquads = standings.some((r) => normSquad(r.squad).ids.length > 0);
+    }
+  }
 
   const parsed = new Map(standings.map((r) => [r.entryId, normSquad(r.squad)]));
   const withSquads = standings.filter((r) => (parsed.get(r.entryId)?.ids.length ?? 0) > 0);
   if (withSquads.length === 0) return empty;
+
+  const asOfMs = Math.min(
+    ...withSquads.map((r) => new Date(r.updatedAt as unknown as string).getTime()),
+  );
+  const squadsAsOf = Number.isFinite(asOfMs) ? new Date(asOfMs).toISOString() : null;
+  const stale =
+    squadsMatchday !== matchday ||
+    (squadsAsOf != null && Date.now() - asOfMs > RIVAL_STALE_MS);
 
   const mySquad = await getMySquad(matchday);
   const myIds = new Set<number>(mySquad.map((r) => r.playerId));
@@ -726,6 +803,9 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
     captainPicks,
     strategy,
     rivalCount: rivalStandings.length,
+    squadsAsOf,
+    squadsMatchday,
+    stale,
   };
 }
 
@@ -749,7 +829,7 @@ export async function getDashboardSummary() {
   ]);
 
   const myRow = table.rows.find((r) => r.entryId === table.myEntryId) ?? null;
-  const projectedXI = topXIByXpts(squad);
+  const liveNow = await getLiveState();
 
   return {
     matchday: md,
@@ -758,10 +838,26 @@ export async function getDashboardSummary() {
     tokenSavedAt: s[KEYS.uefaTokenSavedAt] ?? null,
     squadValue: round(squad.reduce((a, r) => a + (r.price || 0), 0)),
     squadSize: squad.length,
-    projectedPoints: round(
-      projectedXI.reduce((a, r) => a + (r.xpts ?? 0), 0) +
-        (projectedXI.find((r) => r.isCaptain)?.xpts ?? maxXpts(projectedXI)),
-    ),
+    projectedPoints: bestXiPlusCaptain(squad).total,
+    // live matchday (null unless a game for this MD has kicked off)
+    live: liveNow
+      ? {
+          state: liveNow.state,
+          secured: liveNow.securedPoints,
+          projectedFinish: liveNow.projectedFinish,
+          played: liveNow.played,
+          starters: liveNow.starters,
+          manualSubs: liveNow.manualSubs.length,
+          // surface the armband note only when it's actionable (move it) or the
+          // double has been lost — not for a plain "keep".
+          captainNote:
+            liveNow.captain &&
+            (liveNow.captain.recommendation === "switch" ||
+              liveNow.captain.effectiveName === null)
+              ? liveNow.captain.note
+              : null,
+        }
+      : null,
     myRank: myRow?.rank ?? null,
     myPointsLast: myRow?.points ?? null,
     myTotalPoints: myRow?.totalPoints ?? null,
@@ -773,17 +869,176 @@ export async function getDashboardSummary() {
   };
 }
 
-function maxXpts(rows: { xpts: number | null }[]): number {
-  return rows.reduce((m, r) => Math.max(m, r.xpts ?? 0), 0);
-}
-
-function topXIByXpts(squad: SquadRow[]): SquadRow[] {
-  // Cheap heuristic for the dashboard card only; the real optimizer is in Python.
-  return [...squad].sort((a, b) => (b.xpts ?? 0) - (a.xpts ?? 0)).slice(0, 11);
-}
-
 function round(n: number): number {
   return Math.round(n * 10) / 10;
+}
+
+/* ------------------------------------------------------------------ *
+ * Live matchday — written by the Python ingest (`./run.sh --live`) once a
+ * matchday game is live or finished. Read-only here; see
+ * ingest/fantasy_ingest/model/live.py for how it's built.
+ * ------------------------------------------------------------------ */
+
+export interface LiveSquadRow {
+  playerId: number;
+  name: string;
+  position: Position;
+  team: string;
+  opp: string | null;
+  home: boolean | null;
+  mdDay: number | null;
+  kickoff: string | null;
+  matchState: "upcoming" | "live" | "finished" | "none";
+  minute?: number;
+  played: boolean;
+  actual: number | null;
+  xpts: number;
+  isStarter: boolean;
+  isCaptain: boolean;
+  isVice: boolean;
+  benchOrder: number;
+  dnp: boolean;
+  effRole: "start" | "bench" | "auto-in" | "auto-out";
+}
+
+export interface LiveSub {
+  outName: string;
+  outPos: Position;
+  inName: string;
+  inPos: Position;
+  reason?: string;
+  // finished auto-sub: points the blanked starter banked (usually 0).
+  outActual?: number | null;
+  // manual sub of a not-yet-played starter: their pre-match projection.
+  outXpts?: number | null;
+  inXpts?: number;
+  gain?: number;
+}
+
+export interface LiveFixture {
+  matchId: number;
+  home: string;
+  away: string;
+  homeGoals: number | null;
+  awayGoals: number | null;
+  status: string;
+  kickoff: string | null;
+}
+
+export interface LiveState {
+  matchday: number;
+  generatedAt: string;
+  state: "live" | "finished";
+  starters: number;
+  played: number;
+  toPlay: number;
+  securedPoints: number;
+  projectedFinish: number;
+  preMatchProjection: number;
+  benchSlots: number;
+  // false on a single-slot matchday (MD8, the final): no subs, no armband move.
+  inPlayOpen: boolean;
+  maxManualSubs: number;
+  fixtures: LiveFixture[];
+  squad: LiveSquadRow[];
+  autoSubs: LiveSub[];
+  manualSubs: LiveSub[];
+  captain: {
+    playerId: number;
+    name: string;
+    actual: number | null;
+    xpts: number;
+    matchState: string;
+    locked: boolean;
+    effectivePlayerId: number | null;
+    effectiveName: string | null;
+    viceName: string | null;
+    // the stick-or-move verdict for the armband.
+    recommendation: "keep" | "switch" | "locked" | null;
+    switch: {
+      toPlayerId: number;
+      toName: string;
+      toXpts: number;
+      fromName: string;
+      fromXpts: number;
+      gain: number;
+    } | null;
+    note: string | null;
+  } | null;
+}
+
+export async function getLiveState(): Promise<LiveState | null> {
+  const raw = await getSetting(KEYS.liveState);
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as LiveState;
+    return v && Array.isArray(v.squad) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface LiveRivalRow {
+  entryId: string;
+  managerName: string;
+  teamName: string;
+  rank: number;
+  totalPoints: number;
+  mine: boolean;
+  secured: number;
+  projected: number;
+  played: number;
+  liveGapVsMe?: number;
+}
+
+export interface LiveRivals {
+  ready: boolean;
+  matchday: number;
+  myEntryId: string | null;
+  rows: LiveRivalRow[];
+}
+
+export async function getLiveRivals(): Promise<LiveRivals | null> {
+  const raw = await getSetting(KEYS.liveRivals);
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as LiveRivals;
+    return v && Array.isArray(v.rows) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface LiveSnapshotPoint {
+  capturedAt: string;
+  secured: number;
+  projected: number;
+  preMatch: number;
+  state: string;
+}
+
+/** Point-in-time captures for the current matchday, oldest first — the
+ * in-matchday points graph. */
+export async function getLiveHistory(matchday: number): Promise<LiveSnapshotPoint[]> {
+  const rows = await db
+    .select({
+      capturedAt: liveSnapshots.capturedAt,
+      secured: liveSnapshots.secured,
+      projected: liveSnapshots.projected,
+      preMatch: liveSnapshots.preMatch,
+      state: liveSnapshots.state,
+    })
+    .from(liveSnapshots)
+    .where(eq(liveSnapshots.matchday, matchday))
+    .orderBy(liveSnapshots.capturedAt)
+    .limit(400);
+  return rows.map((r) => ({
+    capturedAt: (r.capturedAt as Date).toISOString(),
+    secured: r.secured,
+    projected: r.projected,
+    preMatch: r.preMatch,
+    state: r.state,
+  }));
 }
 
 export async function playersByIds(ids: number[]): Promise<PlayerRow[]> {
@@ -794,6 +1049,7 @@ export async function playersByIds(ids: number[]): Promise<PlayerRow[]> {
     .innerJoin(teams, eq(teams.uefaTeamId, players.teamId))
     .leftJoin(projections, eq(projections.playerId, players.uefaPlayerId))
     .leftJoin(playerForm, eq(playerForm.playerId, players.uefaPlayerId))
+    .leftJoin(playerStats, statsJoin)
     .where(inArray(players.uefaPlayerId, ids));
   return rows as PlayerRow[];
 }

@@ -4,10 +4,16 @@ import {
   getCurrentMatchday,
   getFixtures,
   getLeagueTable,
+  getLiveHistory,
+  getLiveRivals,
+  getLiveState,
   getMySquad,
   confirmedOf,
   type SquadRow,
 } from "@/lib/ucl/queries";
+import { hasUsableXg } from "@/lib/ucl/xg";
+import { bestXiPlusCaptain } from "@/lib/ucl/score";
+import { LiveMatchday } from "./LiveMatchday";
 import { getSetting, getSettings, KEYS } from "@/lib/settings";
 import { POSITIONS } from "@/lib/ucl/formation";
 import { FDR_TEXT, posFdr, type Pos } from "@/lib/fdr";
@@ -68,13 +74,20 @@ export const dynamic = "force-dynamic";
 
 export default async function UclOverview() {
   const md = await getCurrentMatchday();
-  const [squad, fixtures, table, cfg, optRaw] = await Promise.all([
-    getMySquad(md),
-    getFixtures(md),
-    getLeagueTable(md),
-    getSettings([KEYS.deadline]),
-    getSetting(KEYS.optimizerOutput),
-  ]);
+  const live = await getLiveState();
+  // the live blob may be for a just-finished matchday during the roll-over
+  // window, so key history/fixtures off its own matchday
+  const liveMd = live?.matchday ?? md;
+  const [squad, fixtures, table, cfg, optRaw, liveHistory, liveRivals] =
+    await Promise.all([
+      getMySquad(md),
+      getFixtures(liveMd),
+      getLeagueTable(md),
+      getSettings([KEYS.deadline]),
+      getSetting(KEYS.optimizerOutput),
+      getLiveHistory(liveMd),
+      getLiveRivals(),
+    ]);
   let opt: Record<string, unknown> = {};
   try {
     opt = optRaw ? JSON.parse(optRaw) : {};
@@ -93,7 +106,7 @@ export default async function UclOverview() {
 
   const oppByTeam: Record<
     string,
-    { opp: string; home: boolean; oppAtk: number; oppDef: number }
+    { opp: string; home: boolean; oppAtk: number; oppDef: number; ownAtk: number; ownDef: number }
   > = {};
   for (const f of fixtures) {
     oppByTeam[f.homeTeam] = {
@@ -101,27 +114,38 @@ export default async function UclOverview() {
       home: true,
       oppAtk: f.awayAtk ?? 1,
       oppDef: f.awayDef ?? 1,
+      ownAtk: f.homeAtk ?? 1,
+      ownDef: f.homeDef ?? 1,
     };
     oppByTeam[f.awayTeam] = {
       opp: f.homeTeam,
       home: false,
       oppAtk: f.homeAtk ?? 1,
       oppDef: f.homeDef ?? 1,
+      ownAtk: f.awayAtk ?? 1,
+      ownDef: f.awayDef ?? 1,
     };
   }
 
   const captainPick = [...squad].sort((a, b) => (b.xpts ?? 0) - (a.xpts ?? 0))[0];
-  const projXI = [...squad].sort((a, b) => (b.xpts ?? 0) - (a.xpts ?? 0)).slice(0, 11);
-  const projTotal =
-    projXI.reduce((a, r) => a + (r.xpts ?? 0), 0) + (captainPick?.xpts ?? 0);
+  const { total: projTotal } = bestXiPlusCaptain(squad);
   const myRow = table.rows.find((r) => r.entryId === table.myEntryId);
+  const liveNow = live; // ingest only writes the blob for an active / just-finished MD
 
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
         <StatCard label="Matchday" value={md} />
-        <StatCard label="Deadline" value={timeUntil(cfg[KEYS.deadline] ?? null)} />
-        <StatCard label="Proj. total" value={fmt(projTotal, 0)} sub="best XI + captain" />
+        <StatCard
+          label={liveNow ? "Live" : "Deadline"}
+          value={liveNow ? (liveNow.state === "finished" ? "✓ FT" : "🔴") : timeUntil(cfg[KEYS.deadline] ?? null)}
+          sub={liveNow ? `${liveNow.played}/${liveNow.starters} played` : undefined}
+        />
+        <StatCard
+          label={liveNow ? "Proj. finish" : "Proj. total"}
+          value={fmt(liveNow ? liveNow.projectedFinish : projTotal, 0)}
+          sub={liveNow ? `${fmt(liveNow.securedPoints, 0)} secured` : "best XI + captain"}
+        />
         <StatCard
           label="Captain pick"
           value={captainPick?.name.split(" ").slice(-1)[0] ?? "–"}
@@ -135,16 +159,24 @@ export default async function UclOverview() {
         />
       </div>
 
-      <Section title="Pre-deadline checklist">
-        <div className="card divide-y divide-[var(--border)]">
-          {buildChecklist(squad, opt).map((c, i) => (
-            <div key={i} className="flex items-center gap-2 px-3 py-2 text-sm">
-              <Pill tone={c.ok ? "good" : "warn"}>{c.ok ? "OK" : "DO"}</Pill>
-              <span>{c.text}</span>
-            </div>
-          ))}
-        </div>
-      </Section>
+      {liveNow ? (
+        <LiveMatchday
+          live={liveNow}
+          history={liveHistory}
+          rivals={liveRivals && liveRivals.matchday === liveMd ? liveRivals : null}
+        />
+      ) : (
+        <Section title="Pre-deadline checklist">
+          <div className="card divide-y divide-[var(--border)]">
+            {buildChecklist(squad, opt).map((c, i) => (
+              <div key={i} className="flex items-center gap-2 px-3 py-2 text-sm">
+                <Pill tone={c.ok ? "good" : "warn"}>{c.ok ? "OK" : "DO"}</Pill>
+                <span>{c.text}</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
 
       <Section title="Your squad">
         <div className="card table-wrap">
@@ -157,12 +189,15 @@ export default async function UclOverview() {
             ["xMin", "expected minutes played"],
             ["P(start)", "chance of starting"],
             ["Form", "UEFA points per game this season"],
+            ["xGI90", "expected goal involvements per 90 (non-penalty xG + xA) this domestic-league season (Sofascore, all leagues) — the underlying signal behind output."],
             ["🅲", "recommended captain (raw max — see Optimizer for the constrained pick)"],
           ]}
         />
       </Section>
 
-      <Section title={`Matchday ${md} fixtures`}>
+      {/* redundant while the Live panel is up — it has its own fixture strip */}
+      {!liveNow && (
+      <Section title={`Matchday ${liveMd} fixtures`}>
         {fixtures.length === 0 ? (
           <EmptyState title="No fixtures loaded for this matchday" />
         ) : (
@@ -173,28 +208,36 @@ export default async function UclOverview() {
                   <th>Kickoff</th>
                   <th>Home</th>
                   <th>Away</th>
+                  <th className="num">Score</th>
                   <th className="num">xG (H)</th>
                   <th className="num">xG (A)</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {fixtures.map((f) => (
+                {fixtures.map((f) => {
+                  const played = f.status === "finished" || f.status === "live";
+                  return (
                   <tr key={String(f.matchId)}>
                     <td>{f.kickoff ? dateTime(f.kickoff) : "TBD"}</td>
                     <td>{f.homeTeam}</td>
                     <td>{f.awayTeam}</td>
+                    <td className="num font-semibold tabular-nums">
+                      {played ? `${f.homeGoals ?? 0}–${f.awayGoals ?? 0}` : "–"}
+                    </td>
                     <td className="num">{fmt(f.homeXg)}</td>
                     <td className="num">{fmt(f.awayXg)}</td>
                     <td>{f.status}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
         <Legend items={[["xG (H/A)", "expected goals for the home / away team (fixture difficulty)"]]} />
       </Section>
+      )}
     </div>
   );
 }
@@ -206,7 +249,10 @@ function SquadTable({
 }: {
   rows: SquadRow[];
   captainId?: number;
-  oppByTeam: Record<string, { opp: string; home: boolean; oppAtk: number; oppDef: number }>;
+  oppByTeam: Record<
+    string,
+    { opp: string; home: boolean; oppAtk: number; oppDef: number; ownAtk: number; ownDef: number }
+  >;
 }) {
   const ordered = POSITIONS.flatMap((pos) =>
     rows
@@ -223,6 +269,7 @@ function SquadTable({
           <th>Opp</th>
           <th className="num">Price</th>
           <th className="num">Form</th>
+          <th className="num" title="expected goal involvements per 90 (non-penalty xG + xA), last-5 window">xGI90</th>
           <th className="num">P(start)</th>
           <th className="num">xMin</th>
           <th className="num">xPts</th>
@@ -233,7 +280,7 @@ function SquadTable({
         {ordered.map((r) => {
           const fx = oppByTeam[r.teamName];
           const fdr = fx
-            ? posFdr(fx.oppAtk, fx.oppDef, fx.home, r.position as Pos, "ucl")
+            ? posFdr(fx.oppAtk, fx.oppDef, fx.home, r.position as Pos, "ucl", fx.ownAtk, fx.ownDef)
             : null;
           return (
           <tr key={r.playerId}>
@@ -257,6 +304,11 @@ function SquadTable({
             </td>
             <td className="num">{fmt(r.price)}</td>
             <td className="num">{fmt(r.uefaForm)}</td>
+            <td className="num text-[var(--muted)]">
+              {hasUsableXg(r)
+                ? fmt((r.xgNpxg90 ?? 0) + (r.xgXa90 ?? 0), 2)
+                : "–"}
+            </td>
             <td className="num">
               {(() => {
                 const c = confirmedOf(r);

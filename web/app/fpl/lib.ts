@@ -31,6 +31,12 @@ export interface FplPlayer {
   vbd: number;
   csProb: number;
   xgi90: number;
+  ict90: number;
+  inf90: number;
+  cre90: number;
+  thr90: number;
+  xgc90: number; // expected goals conceded per 90 (defensive value)
+  starts: number;
   gws: GwCell[];
   components: Record<string, number>;
   status: string;
@@ -47,7 +53,9 @@ export interface FplPlayer {
   totalPoints: number;
 }
 
-export type SortKey = "horizon" | "proj" | "vbd" | "form" | "csProb" | "totalPoints";
+export type SortKey =
+  | "horizon" | "proj" | "vbd" | "form" | "csProb" | "totalPoints"
+  | "xgi90" | "ict90" | "thr90" | "cre90";
 export const POS = ["ALL", "GKP", "DEF", "MID", "FWD"] as const;
 export type PosFilter = (typeof POS)[number];
 
@@ -73,6 +81,12 @@ export function toPlayer(p: Record<string, unknown>): FplPlayer {
     vbd: Number(p.vbd ?? 0),
     csProb: Number(raw.cs_prob ?? 0),
     xgi90: Number(raw.xgi90 ?? 0),
+    ict90: Number(raw.ict90 ?? 0),
+    inf90: Number(raw.inf90 ?? 0),
+    cre90: Number(raw.cre90 ?? 0),
+    thr90: Number(raw.thr90 ?? 0),
+    xgc90: Number(raw.xgc90 ?? 0),
+    starts: Number(raw.starts ?? 0),
     gws: (raw.gws as GwCell[]) ?? [],
     components: (raw.components as Record<string, number>) ?? {},
     status: String(p.injuryStatus ?? "a"),
@@ -198,11 +212,19 @@ export function tradeIdeas(
   h: Horizon = "medium",
 ): TradeIdea[] {
   const ideas: TradeIdea[] = [];
-  const val = (ps: FplPlayer[]) => ps.reduce((a, p) => a + valueFor(p, h), 0);
-  // realistic things to give up: my weakest ~9 (never the top of my squad)
-  const givable = [...mySquad].sort((a, b) => valueFor(a, h) - valueFor(b, h)).slice(0, 9);
-  const N = Math.min(maxN, givable.length);
+  // lineup-delta eval is O(bestXI) per candidate, so cap the auto-suggester at
+  // 2-for-2 (bigger multi-player deals are rare and go through the manual lab).
+  const N = Math.min(maxN, 2, mySquad.length);
+  const before = { short: xiValue(mySquad, "short"), medium: xiValue(mySquad, "medium"), season: xiValue(mySquad, "season") };
+  const myDelta = (give: FplPlayer[], get: FplPlayer[]) => {
+    const giveIds = new Set(give.map((p) => p.extId));
+    const after = [...mySquad.filter((p) => !giveIds.has(p.extId)), ...get];
+    return round1(xiValue(after, h) - before[h]);
+  };
+  const nsum = (ps: FplPlayer[]) => ps.reduce((a, p) => a + neutralValue(p, h), 0);
 
+  // realistic things to give up: my weakest ~9 by neutral value (never the top)
+  const givable = [...mySquad].sort((a, b) => neutralValue(a, h) - neutralValue(b, h)).slice(0, 9);
   const giveByKey = new Map<string, FplPlayer[][]>();
   for (let n = 1; n <= N; n++)
     for (const g of combos(givable, n)) {
@@ -215,24 +237,24 @@ export function tradeIdeas(
     if (theirs.length === 0) continue;
     for (let n = 1; n <= Math.min(N, theirs.length); n++) {
       for (const get of combos(theirs, n)) {
-        const k = posKey(get);
-        const gives = giveByKey.get(k);
+        const gives = giveByKey.get(posKey(get));
         if (!gives) continue;
         for (const give of gives) {
-          const myGain = val(get) - val(give);
-          const theirGain = val(give) - val(get);
-          const bar = (n === 1 ? 3 : n === 2 ? 5 : 7) * (h === "season" ? 3 : 1);
-          if (myGain > bar && theirGain > -4 * (h === "season" ? 3 : 1)) {
+          const myGain = myDelta(give, get);
+          // rival receives `give`, loses `get` — neutral valuation
+          const theirGain = round1(nsum(give) - nsum(get));
+          const bar = h === "season" ? 3 : n === 1 ? 1.2 : 2;
+          // must upgrade YOUR XI, and not fleece the rival by neutral value
+          if (myGain > bar && theirGain > (h === "season" ? -8 : -3)) {
             ideas.push({ rivalName: o.name || entry, give, get, myGain, theirGain });
           }
         }
       }
     }
   }
-  // one idea per (rival, get-set) — the best give for it
   const seen = new Set<string>();
   return ideas
-    .sort((a, b) => b.myGain - a.myGain || a.give.length - b.give.length)
+    .sort((a, b) => b.myGain + Math.min(0, b.theirGain) - (a.myGain + Math.min(0, a.theirGain)) || a.give.length - b.give.length)
     .filter((t) => {
       const key = t.rivalName + "|" + t.get.map((p) => p.extId).sort().join(",");
       if (seen.has(key)) return false;
@@ -250,17 +272,92 @@ export const HORIZON_LABEL: Record<Horizon, string> = {
   season: "rest of season",
 };
 
-/** The value figure to compare on for a given planning window. */
+/**
+ * Underlying-stats nudge on a player's value, bounded to ±~10%:
+ *  - MID/FWD: season xGI/90 (non-pen xG + xA) vs a "solid starter" benchmark —
+ *    strong underlying that the projection may be lagging gets a small boost,
+ *    thin underlying a small discount.
+ *  - DEF/GKP: season xGC/90 (expected goals conceded on the pitch) vs the
+ *    league average — a tighter defence is a better clean-sheet bet.
+ * 1.0 when the sample is thin (<270 min) or the stat is missing.
+ */
+const XGI_BENCH: Record<string, number> = { MID: 0.35, FWD: 0.55 };
+const XGC_AVG = 1.35;
+export function oppFactor(p: FplPlayer): number {
+  const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
+  if (p.minutes < 270) return 1;
+  if (p.pos === "MID" || p.pos === "FWD") {
+    const bench = XGI_BENCH[p.pos];
+    if (!p.xgi90) return 1;
+    return 1 + clamp(((p.xgi90 - bench) / bench) * 0.15, -0.08, 0.1);
+  }
+  if (p.pos === "DEF" || p.pos === "GKP") {
+    if (!p.xgc90) return 1;
+    return 1 + clamp(((XGC_AVG - p.xgc90) / XGC_AVG) * 0.12, -0.07, 0.09);
+  }
+  return 1;
+}
+/** "value" (underlying beats output) | "output-led" (living off past returns) | "" */
+export function oppTag(p: FplPlayer): "value" | "output-led" | "" {
+  const f = oppFactor(p);
+  return f >= 1.06 ? "value" : f <= 0.95 ? "output-led" : "";
+}
+
+/** The value figure to compare on for a given planning window, nudged by the
+ * underlying stats so waiver / trade evaluation isn't projection-only. */
 export function valueFor(p: FplPlayer, h: Horizon): number {
-  return h === "short" ? p.proj : h === "medium" ? p.horizon : p.ros;
+  const base = h === "short" ? p.proj : h === "medium" ? p.horizon : p.ros;
+  return base * oppFactor(p);
+}
+
+/** points-per-game a player of this provider (draft) rank typically returns —
+ * a stable floor that doesn't move with a hot/cold 4-week form run. */
+function rankToPpg(rank: number): number {
+  const r = rank || 9999;
+  if (r <= 8) return 6.0;
+  if (r <= 20) return 5.2;
+  if (r <= 45) return 4.6;
+  if (r <= 90) return 4.0;
+  if (r <= 160) return 3.4;
+  if (r <= 280) return 2.8;
+  return 2.2;
+}
+
+/** GWs in a planning window (season inferred from ros / rosPpg). */
+function windowGws(p: FplPlayer, h: Horizon): number {
+  if (h === "short") return 1;
+  if (h === "medium") return Math.max(1, p.gws.filter((g) => g.opp).length) || 6;
+  return p.rosPpg > 0 ? Math.max(1, Math.round(p.ros / p.rosPpg)) : 20;
+}
+
+/**
+ * What a *typical rival* would value the player at over a window — anchored on
+ * realized season output (ppg) + a provider-rank floor, deliberately NOT on your
+ * form-sensitive projection. Used for `theirGain` so an "easy sell" is genuinely
+ * easy (both sides think they win) rather than just easy by your model.
+ */
+export function neutralValue(p: FplPlayer, h: Horizon): number {
+  if (p.unavailable) return 0;
+  const rate = 0.62 * p.ppg + 0.38 * rankToPpg(p.providerRank);
+  const avail = 0.55 + 0.45 * Math.min(1, p.pStart / 0.9);
+  return rate * windowGws(p, h) * avail;
+}
+
+/** Value of the best *startable* XI over a window — the number that actually
+ * moves your score. A player who doesn't crack the XI contributes ~0. */
+export function xiValue(squad: FplPlayer[], h: Horizon): number {
+  if (h === "medium") return squadHorizon(squad, [0, 1, 2, 3, 4, 5]);
+  const key = h === "short" ? (p: FplPlayer) => p.gws[0]?.xpts ?? 0 : (p: FplPlayer) => p.ros;
+  return bestXI(squad, key).xi.reduce((a, p) => a + key(p), 0);
 }
 
 /** A target you'd actually claim/trade for, given how long you plan to hold. */
 export function claimable(p: FplPlayer, h: Horizon): boolean {
-  if (h === "short") return p.pStart >= 0.4; // just need them to feature this week
   if (!rosterable(p)) return false;
-  // medium/long term: a booking away from a ban is a liability
-  return !(p.suspRisk && p.ycToBan <= 1);
+  if (h === "short") return p.pStart >= 0.55; // has to actually feature this week
+  // medium/long: needs to be a real starter, and not a booking from a ban
+  if (p.suspRisk && p.ycToBan <= 1) return false;
+  return p.pStart >= 0.6;
 }
 
 /**
@@ -278,7 +375,9 @@ export function weakSpots(
   const replLevel: Record<string, number> = {};
   for (const pos of ["GKP", "DEF", "MID", "FWD"]) {
     const ranked = fitFree.filter((p) => p.pos === pos).sort((a, b) => val(b) - val(a));
-    replLevel[pos] = ranked[2]?.horizon ?? (ranked.at(-1) ? val(ranked.at(-1)!) : 0);
+    // ~3rd-best startable free agent = replacement level, on the same scale we
+    // compare your starters on
+    replLevel[pos] = ranked[2] ? val(ranked[2]) : ranked.at(-1) ? val(ranked.at(-1)!) : 0;
   }
   const bar = h === "short" ? 1.5 : h === "medium" ? 6 : 18;
   const out: { out: FplPlayer; in: FplPlayer; gain: number }[] = [];
@@ -366,39 +465,74 @@ export interface TradeEval {
   verdict: string;
 }
 
-/** Evaluate a concrete proposed trade (any size). */
-export function evaluateTrade(give: FplPlayer[], get: FplPlayer[]): TradeEval {
+/**
+ * Evaluate a concrete proposed trade. `myXxx` is the change to YOUR best-XI /
+ * horizon total (a player who wouldn't start you barely moves it); `themXxx` is
+ * the swing for the rival valued *neutrally* (season ppg + rank), so a positive
+ * `them` means they'd want it too. `mySquad` is your full current roster.
+ */
+export function evaluateTrade(
+  give: FplPlayer[],
+  get: FplPlayer[],
+  mySquad: FplPlayer[] = [],
+): TradeEval {
   const pk = (ps: FplPlayer[]) => ps.map((p) => p.pos).sort().join("+");
   const posGive = pk(give);
   const posGet = pk(get);
   const balanced = give.length === get.length && posGive === posGet;
-  const sum = (ps: FplPlayer[], f: (p: FplPlayer) => number) => ps.reduce((a, p) => a + f(p), 0);
-  const meShort = round1(sum(get, (p) => p.proj) - sum(give, (p) => p.proj));
-  const meMedium = round1(sum(get, (p) => p.horizon) - sum(give, (p) => p.horizon));
-  const meSeason = round1(sum(get, (p) => p.ros) - sum(give, (p) => p.ros));
+
+  const giveIds = new Set(give.map((p) => p.extId));
+  const before = mySquad.length ? mySquad : [...give];
+  const after = mySquad.length
+    ? [...mySquad.filter((p) => !giveIds.has(p.extId)), ...get]
+    : [...get];
+
+  // your gain = change in the value of the XI you can actually field
+  const meShort = round1(xiValue(after, "short") - xiValue(before, "short"));
+  const meMedium = round1(xiValue(after, "medium") - xiValue(before, "medium"));
+  const meSeason = round1(xiValue(after, "season") - xiValue(before, "season"));
+
+  // rival's gain = they receive `give`, lose `get`, valued the way a typical
+  // manager would (not by your form-sensitive projection)
+  const nsum = (ps: FplPlayer[], h: Horizon) => ps.reduce((a, p) => a + neutralValue(p, h), 0);
+  const themShort = round1(nsum(give, "short") - nsum(get, "short"));
+  const themMedium = round1(nsum(give, "medium") - nsum(get, "medium"));
+  const themSeason = round1(nsum(give, "season") - nsum(get, "season"));
+
   const warnings: string[] = [];
   for (const p of get) {
     if (p.suspRisk) warnings.push(`${p.name} is ${p.ycToBan} booking from a ban`);
     if (p.unavailable) warnings.push(`${p.name} is currently ${p.status === "s" ? "suspended" : "injured"}${p.news ? ` — ${p.news}` : ""}`);
     if (p.pStart < 0.7) warnings.push(`${p.name} isn't a nailed starter (p≈${Math.round(p.pStart * 100)}%)`);
+    if (oppTag(p) === "output-led")
+      warnings.push(`${p.name}'s returns are ahead of the underlying (xGI/90 ${p.xgi90.toFixed(2)}) — regression risk, you may be buying a peak`);
   }
-  const shortW = meShort > 0.5;
-  const longW = meSeason > 3;
+  for (const p of give) {
+    if (oppTag(p) === "value")
+      warnings.push(`${p.name}'s xGI/90 (${p.xgi90.toFixed(2)}) is strong — the underlying backs a bounce, don't undersell`);
+  }
+  if (balanced && meSeason > 2 && themSeason < -3)
+    warnings.push("Lopsided in your favour by neutral value — the rival is unlikely to accept as-is.");
+
+  const shortW = meShort > 0.3;
+  const longW = meSeason > 2;
   const verdict = !balanced
     ? "Not position-balanced — a draft trade needs the same positions on both sides."
-    : shortW && longW
-      ? "Wins now and long term — propose it."
-      : longW
-        ? "Long-term win, roughly flat short term."
-        : shortW
-          ? "Short-term boost but you lose value over the season — only if you need points now."
-          : meSeason < -3
-            ? "You lose value both ways — don't."
-            : "Marginal — roughly even.";
+    : meSeason <= -2
+      ? "You lose startable value over the season — don't, unless it patches an injury hole now."
+      : shortW && longW
+        ? themSeason > -3
+          ? "Upgrades your XI now and rest-of-season, and the rival isn't losing much — propose it."
+          : "Upgrades your XI, but skewed in your favour — sweeten it or expect a no."
+        : longW
+          ? "Rest-of-season upgrade to your XI, roughly flat this week."
+          : shortW
+            ? "Helps this week but not the season — only if you're chasing points now."
+            : "Marginal — barely changes the XI you'd field.";
   return {
     balanced, posGive, posGet,
     meShort, meMedium, meSeason,
-    themShort: -meShort, themMedium: -meMedium, themSeason: -meSeason,
+    themShort, themMedium, themSeason,
     warnings, verdict,
   };
 }

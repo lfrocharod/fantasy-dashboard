@@ -6,12 +6,19 @@ unit-testable without a DB. See tests/test_optimizer.py.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import pulp
 
 from ..types import Position
+
+# Score a player for XI selection. Defaults to this-matchday xPts; the transfer
+# planner passes `.hx` (the horizon-decayed sum) so a swap is judged over the
+# whole planning window, not one matchday multiplied by a constant.
+_Score = Callable[["OptPlayer"], float]
+_XPTS: _Score = lambda p: p.xpts
 
 XI_MIN: dict[Position, int] = {"GK": 1, "DEF": 3, "MID": 2, "FWD": 1}
 XI_MAX: dict[Position, int] = {"GK": 1, "DEF": 5, "MID": 5, "FWD": 3}
@@ -54,13 +61,15 @@ def _as_row(p: OptPlayer, **extra) -> dict:
     return row
 
 
-def best_xi(squad: list[OptPlayer]) -> tuple[list[OptPlayer], list[OptPlayer], str, float]:
-    """Pick the 11 starters maximising summed xPts within UEFA formation limits.
-    Returns (starters, bench, formation, xi_xpts)."""
+def best_xi(
+    squad: list[OptPlayer], score: _Score = _XPTS
+) -> tuple[list[OptPlayer], list[OptPlayer], str, float]:
+    """Pick the 11 starters maximising summed `score` within UEFA formation
+    limits. Returns (starters, bench, formation, xi_score)."""
     prob = pulp.LpProblem("best_xi", pulp.LpMaximize)
     x = {p.player_id: pulp.LpVariable(f"s_{p.player_id}", cat="Binary") for p in squad}
 
-    prob += pulp.lpSum(p.xpts * x[p.player_id] for p in squad)
+    prob += pulp.lpSum(score(p) * x[p.player_id] for p in squad)
     prob += pulp.lpSum(x.values()) == XI_SIZE
     for pos in ("GK", "DEF", "MID", "FWD"):
         in_pos = [x[p.player_id] for p in squad if p.position == pos]
@@ -73,8 +82,8 @@ def best_xi(squad: list[OptPlayer]) -> tuple[list[OptPlayer], list[OptPlayer], s
     bench = [p for p in squad if p not in starters]
     counts = {pos: sum(1 for p in starters if p.position == pos) for pos in ("DEF", "MID", "FWD")}
     formation = f"{counts['DEF']}-{counts['MID']}-{counts['FWD']}"
-    xi_xpts = sum(p.xpts for p in starters)
-    return starters, bench, formation, xi_xpts
+    xi_score = sum(score(p) for p in starters)
+    return starters, bench, formation, xi_score
 
 
 def _bench_sorted(bench: list[OptPlayer]) -> list[OptPlayer]:
@@ -97,11 +106,10 @@ def _club_counts(squad: list[OptPlayer]) -> dict[int, int]:
     return c
 
 
-def _score_squad(squad: list[OptPlayer]) -> float:
-    starters, _, _, xi = best_xi(squad)
-    cap, _ = captain_pick(starters)
-    cap_bonus = next((p.xpts for p in starters if p.player_id == cap), 0.0)
-    return xi + cap_bonus
+def _score_squad(squad: list[OptPlayer], score: _Score = _XPTS) -> float:
+    starters, _, _, xi = best_xi(squad, score)
+    cap = max(starters, key=score, default=None)
+    return xi + (score(cap) if cap else 0.0)
 
 
 def plan_transfers(
@@ -113,24 +121,31 @@ def plan_transfers(
     max_moves: int = 2,
     hit_cost: int = 4,
 ) -> list[dict]:
-    """Greedy: repeatedly apply the single transfer with the best horizon-adjusted
-    net gain, stopping when nothing beats its hit."""
+    """Greedy: repeatedly apply the single transfer with the best net gain over
+    the planning horizon, stopping when nothing beats its hit.
+
+    Value is the change in the best-XI-plus-captain total scored on `.hx` — the
+    horizon-decayed sum of each player's per-matchday xPts. So a transfer that
+    only helps the next fixture (and has a rough run after) is judged on its real
+    multi-matchday worth, not `single_md_gain * horizon`.
+    """
+    hx: _Score = lambda p: p.hx
     owned_ids = {p.player_id for p in squad}
     by_pos: dict[Position, list[OptPlayer]] = {"GK": [], "DEF": [], "MID": [], "FWD": []}
     for p in pool:
         if p.player_id not in owned_ids:
             by_pos[p.position].append(p)
     for lst in by_pos.values():
-        lst.sort(key=lambda p: -p.xpts)
+        lst.sort(key=lambda p: -p.hx)
 
     current = list(squad)
     current_bank = bank
     moves: list[dict] = []
-    base_score = _score_squad(current)
+    base_score = _score_squad(current, hx)
 
     for move_idx in range(max_moves):
         clubs = _club_counts(current)
-        best = None  # (net, out, cand, new_bank)
+        best = None  # (net, out, cand, new_bank, horizon_gain, hit)
         for out in current:
             budget = current_bank + out.price
             for cand in by_pos[out.position][:40]:
@@ -142,19 +157,21 @@ def plan_transfers(
                 if cand.club_id != out.club_id and clubs.get(cand.club_id, 0) >= MAX_PER_CLUB:
                     continue
                 trial = [cand if p.player_id == out.player_id else p for p in current]
-                gain_1md = _score_squad(trial) - base_score
-                horizon_gain = gain_1md * horizon
+                # already a horizon sum — no `* horizon`
+                horizon_gain = _score_squad(trial, hx) - base_score
                 hit = 0 if move_idx < free_transfers else hit_cost
                 net = horizon_gain - hit
                 if best is None or net > best[0]:
                     best = (net, out, cand, budget - cand.price, horizon_gain, hit)
 
-        if best is None or best[0] <= 1e-6:
+        # require a clear win — a hit's worth of margin even for a free move, so
+        # we don't burn a transfer chasing a rounding-error upgrade
+        if best is None or best[0] <= 0.6:
             break
         net, out, cand, new_bank, horizon_gain, hit = best
         current = [cand if p.player_id == out.player_id else p for p in current]
         current_bank = new_bank
-        base_score = _score_squad(current)
+        base_score = _score_squad(current, hx)
         moves.append(
             {
                 "out": _as_row(out),

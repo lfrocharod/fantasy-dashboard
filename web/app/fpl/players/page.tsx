@@ -6,6 +6,7 @@ import { fmt } from "@/lib/format";
 import {
   POS,
   loadBoard,
+  oppTag,
   sortPlayers,
   type FplPlayer,
   type PosFilter,
@@ -88,6 +89,10 @@ export default function FplPlayersPage() {
           <option value="csProb">Sort: clean-sheet %</option>
           <option value="form">Sort: form</option>
           <option value="totalPoints">Sort: total points</option>
+          <option value="xgi90">Sort: xGI/90</option>
+          <option value="ict90">Sort: ICT/90</option>
+          <option value="thr90">Sort: Threat/90</option>
+          <option value="cre90">Sort: Creativity/90</option>
         </select>
         <input
           className="input text-xs"
@@ -111,6 +116,10 @@ export default function FplPlayersPage() {
               <th className="num hide-sm">Start%</th>
               <th className="num hide-sm">CS%</th>
               <th className="num hide-sm">xGI90</th>
+              <th className="num hide-sm">ICT90</th>
+              <th className="num hide-sm" title="expected goals conceded per 90 while on the pitch — lower is better for DEF/GK value">
+                xGC90
+              </th>
               <th className="num hide-sm">Form</th>
               <th>Owner</th>
             </tr>
@@ -131,6 +140,15 @@ export default function FplPlayersPage() {
                 </td>
                 <td className="font-medium">
                   {p.name}
+                  {oppTag(p) && (
+                    <span
+                      className="ml-1 text-[10px] font-semibold"
+                      style={{ color: oppTag(p) === "value" ? "var(--good)" : "var(--warn)" }}
+                      title="season underlying stats (xGI/90, xGC/90) vs current output"
+                    >
+                      {oppTag(p)}
+                    </span>
+                  )}
                   {p.setPiece && (
                     <span className="ml-1 text-[10px] font-semibold text-[var(--accent)]">
                       {p.setPiece.replace("PK2", "PK²")}
@@ -154,6 +172,19 @@ export default function FplPlayersPage() {
                 <td className="num hide-sm">{p.pStart ? `${Math.round(p.pStart * 100)}%` : "–"}</td>
                 <td className="num hide-sm">{p.pos === "FWD" ? "–" : Math.round(p.csProb * 100)}</td>
                 <td className="num hide-sm">{fmt(p.xgi90, 2)}</td>
+                <td
+                  className="num hide-sm"
+                  title={
+                    p.ict90
+                      ? `Influence ${fmt(p.inf90, 1)} · Creativity ${fmt(p.cre90, 1)} · Threat ${fmt(p.thr90, 1)} (per 90)`
+                      : ""
+                  }
+                >
+                  {p.ict90 ? fmt(p.ict90, 1) : "–"}
+                </td>
+                <td className="num hide-sm">
+                  {p.pos === "FWD" || !p.xgc90 ? "–" : fmt(p.xgc90, 2)}
+                </td>
                 <td className="num hide-sm">{fmt(p.form)}</td>
                 <td className="text-xs">
                   {mineIds.has(p.extId) ? (
@@ -175,7 +206,9 @@ export default function FplPlayersPage() {
           ["Next / Σ", "projected draft points — next gameweek, then the sum over the shown horizon"],
           ["Start%", "modelled chance of starting the next match"],
           ["CS%", "clean-sheet probability (opponent attack vs your team's defence). GKP/DEF worth 4, MID 1"],
-          ["xGI90", "expected goal involvements per 90 (season)"],
+          ["xGI90", "expected goal involvements per 90 — non-penalty xG + xA, this Premier League season"],
+          ["ICT90", "FPL's Influence-Creativity-Threat index per 90 (hover for the I/C/T split), this Premier League season"],
+          ["xGC90", "expected goals conceded per 90 while on the pitch — defensive solidity for GK/DEF/MID value; lower is better. Hidden for forwards."],
           ["P / F / C", "first-choice penalties / free-kicks / corners"],
           ["FA", "free agent in your league; a name = the manager who has them"],
         ]}

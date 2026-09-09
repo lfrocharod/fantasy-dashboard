@@ -5,6 +5,7 @@ import { Legend } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import type { DraftConfig } from "@/lib/draft/queries";
 import { bestXI, squadHorizon, toPlayer, type FplPlayer } from "./lib";
+import { FplLive } from "./FplLive";
 import { FplSetup } from "./Setup";
 
 const POS_ORDER = ["GKP", "DEF", "MID", "FWD"];
@@ -190,6 +191,14 @@ export default function FplOverviewPage() {
               </div>
             </div>
           </div>
+
+          {config?.fplLive && (config?.fplLineup?.picks?.length ?? 0) >= 11 && (
+            <FplLive
+              live={config.fplLive}
+              squad={mySquad}
+              picks={config.fplLineup.picks}
+            />
+          )}
 
           {swaps.length > 0 && (
             <div className="card border-l-2 border-[var(--warn)] p-3 text-sm">

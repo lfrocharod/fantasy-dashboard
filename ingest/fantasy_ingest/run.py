@@ -73,6 +73,9 @@ def _decrypt_token(db, env: Env) -> str | None:
 
 def run(args: argparse.Namespace) -> int:
     env = Env.load()
+    # --live is a fast matchday refresh: no scraping, current MD only.
+    if getattr(args, "live", False):
+        args.skip_sources = True
     db = _DryDB() if args.dry_run else DB(env.database_url)
     run_id = db.start_run("start") if not args.dry_run else -1
     notes: list[str] = []
@@ -87,7 +90,7 @@ def run(args: argparse.Namespace) -> int:
         samples = _load_samples(Path(args.samples)) if args.samples else None
         token = None if samples else _decrypt_token(db, env)
 
-        with UefaClient(token=token) as client:
+        with UefaClient(token=token, bust_cache=getattr(args, "live", False)) as client:
             # ---- 1. public feeds -----------------------------------
             teams: dict[int, Team] = {}
             if samples:
@@ -166,6 +169,16 @@ def run(args: argparse.Namespace) -> int:
                     notes.append(f"xG source failed: {e}")
                     _log(notes[-1])
                 try:
+                    # Sofascore per-league season xG — covers EVERY CL player,
+                    # not just the big-5 that Understat sees. Overwrites the
+                    # `combined` player_stats rows _sources wrote.
+                    ss_stats = _season_xg_source(db, env, players, teams, args.dry_run)
+                    if ss_stats:
+                        stats = {**stats, **ss_stats}
+                except Exception as e:  # noqa: BLE001
+                    notes.append(f"season xG source failed: {e}")
+                    _log(notes[-1])
+                try:
                     form_by_id = _form_source(db, env, players, teams, args.dry_run)
                 except Exception as e:  # noqa: BLE001
                     notes.append(f"form source failed: {e}")
@@ -182,11 +195,28 @@ def run(args: argparse.Namespace) -> int:
             # truth and overrides the model. Cheap (~40 calls) and only fires in
             # the matchday window, so it's safe to run even on --fast.
             confirmed_xi: dict[int, str] = {}
-            if not args.dry_run:
+            if not args.dry_run and not getattr(args, "live", False):
                 try:
                     confirmed_xi = _confirmed_xi(players, teams, fixtures, matchday)
                 except Exception as e:  # noqa: BLE001
                     notes.append(f"confirmed XI unavailable ({type(e).__name__})")
+                    _log(notes[-1])
+
+            # ---- 3c. live scoring overlay (matchday only) -----
+            # The static players_/fixtures_ feeds lag: `curGDPts` stays 0 during
+            # play and `matchStatus` sits at "1" long after FT. UEFA's dedicated
+            # scoring feeds carry the truth — fold real points / minutes / FT
+            # status onto the parsed objects so everything downstream (team
+            # strength, projection freeze, live stage) sees reality.
+            if not args.dry_run and any(
+                f.status in ("live", "finished")
+                for f in fixtures if f.matchday == matchday
+            ):
+                try:
+                    _apply_live_scoring(client, players, fixtures, matchday)
+                    db.upsert_fixtures([f for f in fixtures if f.matchday == matchday])
+                except Exception as e:  # noqa: BLE001
+                    notes.append(f"live scoring overlay skipped: {e}")
                     _log(notes[-1])
 
             # ---- 4. team strength -----------------------------
@@ -210,10 +240,19 @@ def run(args: argparse.Namespace) -> int:
             # ---- 5. projections — every remaining league-phase matchday -----
             horizon = max(1, int(params.horizon))
             last_league_md = 8  # UCL league phase; knockouts (9+) projected once seeded
-            plan_mds = [
-                md for md in sorted({f.matchday for f in fixtures if f.matchday >= matchday})
-                if md <= max(last_league_md, matchday + horizon - 1)
-            ] or [matchday]
+            if getattr(args, "live", False):
+                plan_mds = [matchday]  # matchday refresh: current MD only
+            else:
+                plan_mds = [
+                    md for md in sorted({f.matchday for f in fixtures if f.matchday >= matchday})
+                    if md <= max(last_league_md, matchday + horizon - 1)
+                ] or [matchday]
+            # Freeze the current matchday's projections once its first game is
+            # live — so start/sit xPts don't drift mid-match and the calibration
+            # harness has the genuine pre-match numbers to grade.
+            md_live_now = any(
+                f.status in ("live", "finished") for f in fixtures if f.matchday == matchday
+            )
             proj_by_md: dict[int, list] = {}
             for md in plan_mds:
                 pr = _build_projections(
@@ -221,7 +260,12 @@ def run(args: argparse.Namespace) -> int:
                     confirmed_xi if md == matchday else None,
                 )
                 proj_by_md[md] = pr
-                if not args.dry_run:
+                if args.dry_run:
+                    continue
+                if md == matchday and md_live_now and db.has_projections(md):
+                    proj_by_md[md] = db.load_projections(md)
+                    _log(f"projections MD{md} frozen (matchday underway) — kept pre-match values")
+                else:
                     db.replace_projections(md, pr, MODEL_VERSION)
             projections = proj_by_md[matchday]
             _log(f"built projections for MD {plan_mds} ({len(projections)} players each)")
@@ -246,6 +290,22 @@ def run(args: argparse.Namespace) -> int:
                 if not args.dry_run:
                     db.set_setting(Keys.OPTIMIZER_OUTPUT, json.dumps(opt))
 
+            # ---- 7. live matchday state (CL overview) -------------------
+            # Once a matchday game is live/finished: archive per-player actuals,
+            # turn the submitted squad into secured + projected-finish points
+            # after auto-subs, score every mini-league rival the same way, snap
+            # a history row, and (opt-in) push an alert when something's
+            # actionable.
+            try:
+                _live_stage(
+                    db, args, client, players, teams, fixtures,
+                    proj_by_md.get(matchday, []), picks, matchday,
+                    cfg.get(Keys.LEAGUE_ID), cfg.get(Keys.ENTRY_ID), notes,
+                )
+            except Exception as e:  # noqa: BLE001
+                notes.append(f"live stage skipped: {e}")
+                _log(notes[-1])
+
     except Exception as e:  # noqa: BLE001
         ok = False
         notes.append(f"FATAL: {e}")
@@ -267,6 +327,260 @@ def _league_codes(conf: dict) -> list[str]:
         return []
 
 
+def _int_setting(db, key: str, default: int) -> int:
+    try:
+        v = db.get_settings([key]).get(key)
+        return int(v) if v not in (None, "") else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _apply_live_scoring(client, players, fixtures, matchday: int) -> None:
+    """Overlay UEFA's live scoring feeds onto the already-parsed players +
+    fixtures for `matchday`: real per-player fantasy points + minutes, and the
+    true live/FT status + score (the static feeds lag by many minutes)."""
+    import time as _t
+
+    feed = None
+    for attempt in range(3):
+        try:
+            feed = client.get_live_player_points()
+            break
+        except Exception as e:
+            if attempt == 2:
+                raise
+            _log(f"live-players-points retry {attempt + 1} ({type(e).__name__})")
+            _t.sleep(2 + attempt * 3)
+    val = feed.get("data", feed) if isinstance(feed, dict) else feed
+    val = val.get("value", val) if isinstance(val, dict) else val
+    if not isinstance(val, dict):
+        return
+    pts = {int(k): int(v) for k, v in (val.get("totalPoints") or {}).items()}
+    scores = val.get("scores") or {}
+
+    md_fx = [f for f in fixtures if f.matchday == matchday]
+    fx_by_id = {f.uefa_match_id: f for f in md_fx}
+    _DONE = {"FT", "AET", "PEN", "AP", "FT_PEN"}
+    touched: list[int] = []
+    for mid_s, sc in scores.items():
+        try:
+            f = fx_by_id.get(int(mid_s))
+        except (TypeError, ValueError):
+            f = None
+        if not f:
+            continue
+        phase = str(sc.get("phase") or "").upper()
+        f.status = "finished" if phase in _DONE else "live"
+        if f.status == "finished":
+            f.live_minute = 90
+        else:
+            try:
+                f.live_minute = int(str(sc.get("minuteString") or "0").split("+")[0]) or (
+                    45 if phase in ("HT", "HALFTIME") else 0
+                )
+            except (TypeError, ValueError):
+                f.live_minute = 0
+        goals = {int(s["tId"]): s.get("gS") for s in sc.get("scoreLine") or [] if s.get("tId") is not None}
+        if f.home_team_id in goals:
+            f.home_goals = goals[f.home_team_id]
+        if f.away_team_id in goals:
+            f.away_goals = goals[f.away_team_id]
+        touched.append(f.uefa_match_id)
+
+    # per-match detail for minutes played (drives the "did not feature" flag)
+    minutes: dict[int, int] = {}
+    for mid in touched:
+        try:
+            mv = client.get_live_match(mid)
+            mv = mv.get("data", mv) if isinstance(mv, dict) else mv
+            mv = mv.get("value", mv) if isinstance(mv, dict) else mv
+            for ps in (mv or {}).get("pStats") or []:
+                pid = ps.get("pId")
+                if pid is not None:
+                    minutes[int(pid)] = int(ps.get("oF") or 0)
+        except Exception:  # noqa: BLE001,S112
+            continue
+
+    started_clubs: set[int] = set()
+    for f in md_fx:
+        if f.status in ("live", "finished"):
+            started_clubs |= {f.home_team_id, f.away_team_id}
+
+    scored = 0
+    for p in players:
+        if p.team_id not in started_clubs:
+            continue
+        pid = p.uefa_player_id
+        if pid in pts:
+            p.live_points = pts[pid]
+            scored += 1
+        mins = minutes.get(pid)
+        if mins is not None:
+            p.live_played = mins > 0
+        elif pid in pts and pts[pid] != 0:
+            p.live_played = True
+    n_ft = sum(1 for f in md_fx if f.status == "finished")
+    _log(f"live scoring: {scored} players scored across {len(touched)} matches "
+         f"({n_ft}/{len(md_fx)} MD{matchday} fixtures FT, {len(minutes)} minute records)")
+
+
+def _recent_played_md(fixtures, current_md: int, grace_hours: float = 54.0) -> int | None:
+    """The most recent matchday that has kicked off, if the current one hasn't —
+    so a just-finished matchday's result stays on the overview until the next
+    starts (then it clears). Bounded by a grace window off the last kickoff."""
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    cands = sorted(
+        {f.matchday for f in fixtures
+         if f.matchday < current_md and f.status in ("live", "finished")},
+        reverse=True,
+    )
+    for md in cands:
+        kos = [f.kickoff for f in fixtures if f.matchday == md and f.kickoff]
+        if not kos:
+            return md
+        last = max(kos)
+        last = last if last.tzinfo else last.replace(tzinfo=UTC)
+        if now - last <= timedelta(hours=grace_hours):
+            return md
+    return None
+
+
+def _live_stage(db, args, client, players, teams, fixtures, projections, picks, matchday,
+                league_id, my_entry_id, notes) -> None:
+    """Section 7: archive per-player actuals, build the live-state + live-rival
+    blobs, snapshot history, and (opt-in) push an alert. No-op until a matchday
+    game is live/finished; clears the blobs once the matchday is upcoming again."""
+    from .model.live import build_live_rivals, build_live_state
+
+    dry = args.dry_run
+    md_fx = [f for f in fixtures if f.matchday == matchday]
+    started = any(f.status in ("live", "finished") for f in md_fx)
+    if not started:
+        # Current matchday hasn't kicked off — keep the last played matchday's
+        # result up until this one starts.
+        prev = _recent_played_md(fixtures, matchday)
+        if prev is None:
+            if not dry:
+                db.set_setting(Keys.LIVE_STATE, "")
+                db.set_setting(Keys.LIVE_RIVALS, "")
+            return
+        _log(f"live: MD{matchday} not started — keeping MD{prev} result")
+        matchday = prev
+        md_fx = [f for f in fixtures if f.matchday == matchday]
+        if not dry:
+            try:
+                _apply_live_scoring(client, players, fixtures, matchday)
+                db.upsert_fixtures(md_fx)
+            except Exception as e:  # noqa: BLE001
+                notes.append(f"live scoring (fallback MD) skipped: {e}")
+            projections = db.load_projections(matchday)
+
+    # Fall back to the last archived actuals if this run's live-scoring overlay
+    # didn't land (UEFA rate-limits the scoring feeds harder than the static
+    # ones) — better slightly-stale points than a wall of zeros.
+    if not dry:
+        stored = db.load_player_scores(matchday)
+        if stored:
+            filled = 0
+            for p in players:
+                sc = stored.get(p.uefa_player_id)
+                if sc and not p.live_points:
+                    p.live_points, filled = sc[0], filled + 1
+                    p.live_played = p.live_played or sc[1]
+            if filled:
+                _log(f"live: filled {filled} player points from the last archived run")
+
+    # 7a. archive per-player actuals for every club that has kicked off
+    live_clubs, final_clubs = set(), set()
+    for f in md_fx:
+        if f.status in ("live", "finished"):
+            live_clubs |= {f.home_team_id, f.away_team_id}
+        if f.status == "finished":
+            final_clubs |= {f.home_team_id, f.away_team_id}
+    score_rows = [
+        (p.uefa_player_id, matchday, int(p.live_points or 0),
+         bool(p.live_played), p.team_id in final_clubs)
+        for p in players if p.team_id in live_clubs
+    ]
+    if score_rows and not dry:
+        db.upsert_player_scores(score_rows)
+    _log(f"live: archived {len(score_rows)} player scores for MD{matchday}")
+
+    # 7b. my squad — secured / projected-finish after UEFA auto-subs
+    live_picks = picks or (db.load_my_squad(matchday) if not dry else [])
+    live = build_live_state(players, teams, fixtures, projections, live_picks, matchday)
+    if live:
+        _log(
+            f"live: MD{matchday} {live['state']} — {live['securedPoints']} secured, "
+            f"{live['projectedFinish']} projected ({live['played']}/{live['starters']} "
+            f"played, {len(live['autoSubs'])} auto-sub, "
+            f"{len(live['manualSubs'])} manual-sub idea)"
+        )
+    if not dry:
+        db.set_setting(Keys.LIVE_STATE, json.dumps(live) if live else "")
+
+    # 7c. score every mini-league rival the same way
+    rivals = None
+    if league_id and not dry:
+        try:
+            standings = db.load_league_standings(league_id, matchday)
+            rivals = build_live_rivals(
+                standings, my_entry_id, players, teams, projections,
+                db.load_player_scores(matchday), matchday, my_live=live,
+            )
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"live rivals skipped: {e}")
+        db.set_setting(Keys.LIVE_RIVALS, json.dumps(rivals) if rivals else "")
+        if rivals:
+            me = next((r for r in rivals["rows"] if r["mine"]), None)
+            if me:
+                ahead = sum(
+                    1 for r in rivals["rows"]
+                    if not r["mine"] and r["projected"] > me["projected"]
+                )
+                _log(f"live rivals: you project {me['projected']} — {ahead} ahead live")
+
+    # 7d. snapshot the history row
+    if live and not dry:
+        try:
+            db.insert_live_snapshot(
+                matchday, live["securedPoints"], live["projectedFinish"],
+                live["preMatchProjection"], live["state"], live,
+            )
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"live snapshot skipped: {e}")
+
+    # 7e. opt-in push alert on still-actionable items
+    if live and not dry:
+        _maybe_alert(db, live)
+
+
+def _maybe_alert(db, live: dict) -> None:
+    import hashlib
+
+    from .notify import notify
+
+    bits = [
+        f"SUB {s['outName']}→{s['inName']} (+{s['gain']})"
+        for s in live.get("manualSubs", [])
+    ]
+    cap = live.get("captain") or {}
+    if cap.get("recommendation") == "switch" and cap.get("switch"):
+        sw = cap["switch"]
+        bits.append(f"MOVE (C) {sw['fromName']}→{sw['toName']} (+{sw['gain']})")
+    if not bits:
+        return
+    body = " · ".join(bits)
+    digest = hashlib.sha1(body.encode()).hexdigest()[:16]
+    if db.get_settings([Keys.LAST_ALERT_HASH]).get(Keys.LAST_ALERT_HASH) == digest:
+        return
+    if notify(f"CL MD{live['matchday']} — action needed", body):
+        db.set_setting(Keys.LAST_ALERT_HASH, digest)
+        _log(f"live: pushed alert — {body}")
+
+
 def _resolve_md(cfg: dict, md_info, cli_md: int | None) -> int:
     if cli_md:
         return cli_md
@@ -279,8 +593,11 @@ def _resolve_md(cfg: dict, md_info, cli_md: int | None) -> int:
 def _write_matchday_meta(db, md_info, matchday: int) -> None:
     db.set_setting(Keys.CURRENT_MATCHDAY, str(matchday))
     for m in md_info:
-        if m.matchday == matchday and m.deadline:
-            db.set_setting(Keys.DEADLINE, m.deadline.isoformat())
+        if m.matchday == matchday:
+            if m.deadline:
+                db.set_setting(Keys.DEADLINE, m.deadline.isoformat())
+            db.set_setting(Keys.SUBS_ALLOWED, str(m.subs_allowed))
+            db.set_setting(Keys.SUBS_CARRY, str(m.subs_carry))
 
 
 def _private_from_samples(db, samples, matchday, dry):
@@ -391,6 +708,28 @@ def _sources(db, env: Env, players, teams, dry):
     return report.matched
 
 
+def _season_xg_source(db, env: Env, players, teams, dry):
+    """Sofascore per-league season xG/xA — every CL player, all leagues (not
+    just big-5). Writes `player_stats` scope='combined', overwriting Understat
+    rows where both have a player. Best-effort. Also records name-match coverage
+    (`ingest.xg_coverage`) so a missed star is visible on the Settings page."""
+    import json
+
+    from .sources.season_xg import fetch_season_xg
+
+    team_names = {tid: t.name for tid, t in teams.items()}
+    stats, cov = fetch_season_xg(
+        players, team_names, min_price=env.recent_form_min_price,
+        overrides=_overrides(db), log=_log,
+    )
+    if not dry:
+        if stats:
+            db.upsert_player_stats(list(stats.values()))
+        if cov.total:
+            db.set_setting(Keys.XG_COVERAGE, json.dumps(cov.as_dict()))
+    return stats
+
+
 def _overrides(db) -> dict[int, tuple[str, str]]:
     out: dict[int, tuple[str, str]] = {}
     try:
@@ -407,8 +746,9 @@ def _overrides(db) -> dict[int, tuple[str, str]]:
 
 
 def _fdr(opp, is_home: bool) -> int:
-    """1 (easiest) .. 5 (hardest) from opponent strength + home/away."""
-    raw = 0.55 * (opp.attack_rating - 1) + 0.55 * (1 - opp.defence_rating) + (-0.35 if is_home else 0.35)
+    """1 (easiest) .. 5 (hardest) from opponent strength + home/away. Venue is a
+    ~1/3-FDR-point nudge, not the ±0.77 the old ±0.35 gave it."""
+    raw = 0.55 * (opp.attack_rating - 1) + 0.55 * (1 - opp.defence_rating) + (-0.15 if is_home else 0.15)
     return max(1, min(5, round(3 + 2.2 * raw)))
 
 
@@ -694,7 +1034,7 @@ def _optimizer(db, players, teams, proj_by_md, matchday, params, picks_override,
 
     club_of = {pid: p.team_id for pid, p in pmap.items()}
 
-    def attach_analyses(target: dict, sq_ids: list[int]) -> None:
+    def attach_analyses(target: dict, sq_ids: list[int], free_transfers: int = 2) -> None:
         # captaincy for this matchday
         cap_rows = []
         for pid in sq_ids:
@@ -724,7 +1064,10 @@ def _optimizer(db, players, teams, proj_by_md, matchday, params, picks_override,
                     and (op := mk(p.uefa_player_id, False, md)) and op.xpts > 0
                 ]
             if sbm:
-                target["chips"] = evaluate_chips(sbm, pbm, start_md=matchday)
+                # CL league phase = 8 matchdays (evaluate_chips default)
+                target["chips"] = evaluate_chips(
+                    sbm, pbm, start_md=matchday, free_transfers=free_transfers
+                )
         except Exception as e:  # noqa: BLE001
             _log(f"chip eval skipped: {e}")
 
@@ -833,7 +1176,7 @@ def _optimizer(db, players, teams, proj_by_md, matchday, params, picks_override,
             if isinstance(t.get(side), dict):
                 decorate([t[side]])
 
-    attach_analyses(out, [pk.player_id for pk in picks])
+    attach_analyses(out, [pk.player_id for pk in picks], free_transfers)
     return out
 
 
@@ -861,6 +1204,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(prog="fantasy_ingest.run")
     ap.add_argument("--matchday", type=int, default=None)
     ap.add_argument("--skip-sources", action="store_true")
+    ap.add_argument(
+        "--live",
+        action="store_true",
+        help="matchday refresh: re-pull UEFA data + squad + rivals, rebuild the "
+        "current matchday's projections and the live-state blob, skip the form "
+        "scrape and future-matchday planning. Fast — safe to run every few "
+        "minutes while games are on.",
+    )
     ap.add_argument("--samples", type=str, default=None)
     ap.add_argument("--dry-run", action="store_true")
     return run(ap.parse_args())
