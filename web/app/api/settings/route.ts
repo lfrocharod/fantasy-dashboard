@@ -16,7 +16,14 @@ export async function GET() {
     KEYS.uefaAuthState,
     KEYS.uefaTokenSavedAt,
     KEYS.modelParams,
+    KEYS.xgCoverage,
   ]);
+  let xgCoverage: unknown = null;
+  try {
+    xgCoverage = s[KEYS.xgCoverage] ? JSON.parse(s[KEYS.xgCoverage]) : null;
+  } catch {
+    xgCoverage = null;
+  }
   return NextResponse.json({
     leagueId: s[KEYS.leagueId] ?? "",
     leagueCode: s[KEYS.leagueCode] ?? "",
@@ -27,6 +34,7 @@ export async function GET() {
     tokenSavedAt: s[KEYS.uefaTokenSavedAt] ?? null,
     hasToken: Boolean(s[KEYS.uefaTokenSavedAt]),
     modelParams: s[KEYS.modelParams] ?? "",
+    xgCoverage,
   });
 }
 

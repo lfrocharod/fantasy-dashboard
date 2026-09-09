@@ -253,18 +253,22 @@ def _blend_club_strength(finished: list[dict], id_to_code: dict[int, str]) -> No
     if not gp:
         return
     lg = max(0.6, sum(gf.values()) / max(1, sum(gp.values())))  # league goals/game
+    # goals for / against over a handful of games is very noisy (one 4-0 or one
+    # clean sheet swings it wildly), so shrink each observed ratio toward the
+    # league mean with ~5 pseudo-games of average before it's allowed to move
+    # the eyeballed prior, and cap how far a small sample can pull it.
+    PSEUDO = 5.0
     for code, (p_atk, p_dfn) in FPL_CLUB_STRENGTH.items():
         n = gp.get(code, 0)
         if n == 0:
             _BLENDED_STRENGTH[code] = (p_atk, p_dfn)
             continue
-        r_atk = (gf[code] / n) / lg
-        r_dfn = (ga[code] / n) / lg
-        w = min(0.6, n / 8.0)
-        _BLENDED_STRENGTH[code] = (
-            round((1 - w) * p_atk + w * r_atk, 3),
-            round((1 - w) * p_dfn + w * r_dfn, 3),
-        )
+        r_atk = (gf[code] + PSEUDO * lg) / ((n + PSEUDO) * lg)
+        r_dfn = (ga[code] + PSEUDO * lg) / ((n + PSEUDO) * lg)
+        w = min(0.6, n / 12.0)  # priors hold until ~GW7-8, not GW5
+        atk = max(p_atk - 0.30, min(p_atk + 0.30, (1 - w) * p_atk + w * r_atk))
+        dfn = max(p_dfn - 0.30, min(p_dfn + 0.30, (1 - w) * p_dfn + w * r_dfn))
+        _BLENDED_STRENGTH[code] = (round(atk, 3), round(dfn, 3))
 
 
 def _gw_projection(
@@ -346,23 +350,25 @@ def _scale_fdr(raw: float) -> int:
     return max(1, min(5, round(3 + 2.2 * raw)))
 
 
-def _pos_fdr(pos: str, opp_code: str, is_home: bool) -> tuple[int, int, int]:
+def _pos_fdr(
+    pos: str, opp_code: str, is_home: bool, own_code: str = ""
+) -> tuple[int, int, int]:
     """Position-aware fixture difficulty, 1 (easy) .. 5 (hard).
 
     Returns (attack_fdr, defence_fdr, position_fdr):
-      * attack_fdr  — how hard to get GOALS / ASSISTS, driven by how solid the
-        opponent is defensively (a stingy back line = red for your forwards).
-      * defence_fdr — how hard to keep a CLEAN SHEET, driven by the opponent's
-        attacking threat.
-      * position_fdr — the blend that matters for this position under FPL
-        scoring. A defender leans on the clean sheet (DEF goal 6 + CS 4 + DefCon)
-        but still gets attacking returns from set-pieces / overlaps, so its
-        attack component is real but ~a third the weight a midfielder gives it.
+      * attack_fdr  — how hard to get GOALS / ASSISTS: the opponent's defensive
+        solidity, eased if YOUR side is a strong attack.
+      * defence_fdr — how hard to keep a CLEAN SHEET: the opponent's attacking
+        threat, eased if YOUR side defends well.
+      * position_fdr — the blend that matters for this position under FPL scoring.
     """
     atk, dfn = _team_factor(opp_code)
-    ha = -0.32 if is_home else 0.32
-    raw_att = 1.05 * (1.0 - dfn) + ha
-    raw_def = 1.05 * (atk - 1.0) + ha
+    own_atk, own_dfn = _team_factor(own_code) if own_code else (1.0, 1.0)
+    # venue swing: worth ~1/3 of an FDR point, not 3/4 (the old ±0.32 made every
+    # away trip read as "hard" regardless of who it was against).
+    ha = -0.15 if is_home else 0.15
+    raw_att = 1.25 * (1.0 - dfn) - 0.45 * (own_atk - 1.0) + ha
+    raw_def = 1.25 * (atk - 1.0) + 0.45 * (own_dfn - 1.0) + ha
     if pos == "GKP":
         blend = raw_def
     elif pos == "DEF":
@@ -383,21 +389,55 @@ def _rank_output(rank, pos: str) -> float:
     return tier * (0.82 if pos in ("GKP", "DEF") else 1.0)
 
 
+def _anchor_fix_mult(pos: str, opp_code: str, own_code: str, is_home: bool) -> float:
+    """Fixture multiplier for the season-rate anchor, ~1.0 = neutral. Uses the
+    SAME position-aware attack/defence read as `_pos_fdr`, so a GK/DEF facing the
+    league's hottest attack is downgraded (their points are clean sheets) and a
+    MID/FWD facing a leaky defence is upgraded — not just 'opponent concedes a
+    lot', which is all the old anchor looked at and which barely moved a
+    defender's number for a game against a great attacking side."""
+    atk, dfn = _team_factor(opp_code)
+    own_atk, own_dfn = _team_factor(own_code) if own_code else (1.0, 1.0)
+    hm = 0.15 if is_home else -0.15
+    # sign convention here: positive raw = EASY fixture (multiplier > 1).
+    raw_att = -1.25 * (1.0 - dfn) + 0.45 * (own_atk - 1.0) + hm  # leaky opp / strong us = easy
+    raw_def = -1.25 * (atk - 1.0) - 0.45 * (own_dfn - 1.0) + hm  # weak opp attack / solid us = easy
+    if pos == "GKP":
+        raw = raw_def
+    elif pos == "DEF":
+        raw = 0.62 * raw_def + 0.38 * raw_att
+    elif pos == "MID":
+        raw = 0.72 * raw_att + 0.28 * raw_def
+    else:  # FWD
+        raw = raw_att
+    return max(0.55, min(1.45, 1.0 + 0.62 * raw))
+
+
 def _anchor(el: dict, pos: str, ppg: float, frm: float, opp_code: str, is_home: bool,
-            p_start: float) -> float:
+            p_start: float, games: int = 6, own_code: str = "") -> float:
     """Season scoring-rate fallback. For GK/DEF the raw ppg is a poor early-season
     signal (clean sheets haven't accrued), so weight it lightly — the structural
     model already values a strong defence. For MID/FWD, ppg+form carry the
     attacking output the model can under-rate. When there's barely a sample,
     fall back to an expected output from FPL's own draft ranking."""
-    _atk, opp_def = _team_factor(opp_code)
-    fix_mult = 0.80 + 0.28 * max(0.35, opp_def * (1.12 if is_home else 1 / 1.12))
+    fix_mult = _anchor_fix_mult(pos, opp_code, own_code, is_home)
     rot = 0.28 + 0.72 * p_start
-    base = (0.6 * ppg + 0.4 * frm) * fix_mult * rot
+    # A 3-GW ppg is barely a sample — a promoted club on a clean-sheet streak can
+    # read 8.0. Regress it toward the player's own role expectation (FPL's
+    # draft_rank), giving the raw rate full trust only by ~GW10.
+    rank_base = _rank_output(el.get("draft_rank"), pos)
+    trust = min(1.0, games / 10.0)
+    ppg_r = trust * ppg + (1.0 - trust) * rank_base
+    # `form` is a 4-game average — mostly noise at GW3, only worth ~30% weight by
+    # GW12 — and it can't run away from the larger-sample `ppg`. This stops a
+    # single haul inflating a player's value (and a quiet run deflating it).
+    form_w = 0.14 + 0.16 * min(1.0, games / 12.0)
+    frm_c = max(ppg_r - 2.5, min(ppg_r + 3.5, frm))
+    base = ((1.0 - form_w) * ppg_r + form_w * frm_c) * fix_mult * rot
     if pos in ("GKP", "DEF"):
         base *= 0.7
     if _num(el.get("minutes")) < 200:
-        base = max(base, _rank_output(el.get("draft_rank"), pos) * rot * (0.85 + 0.15 * fix_mult))
+        base = max(base, rank_base * rot * (0.85 + 0.15 * fix_mult))
     return base
 
 
@@ -408,10 +448,10 @@ def _w_model(pos: str, mins_seen: float) -> float:
     return 0.35 + 0.45 * (1.0 - min(1.0, mins_seen / 450.0))
 
 
-def _blend_gw(el, pos, sc, own_code, oc, ish, ps, pa, ppg, frm, wm):
+def _blend_gw(el, pos, sc, own_code, oc, ish, ps, pa, ppg, frm, wm, games=6):
     """One fixture: structural model blended with the season-rate anchor."""
     model, cs, cmp = _gw_projection(el, pos, sc, own_code, oc, ish, ps, pa)
-    anchor = _anchor(el, pos, ppg, frm, oc, ish, ps)
+    anchor = _anchor(el, pos, ppg, frm, oc, ish, ps, games, own_code)
     x = wm * model + (1 - wm) * anchor if anchor > 0 else model
     return round(x, 2), cs, cmp
 
@@ -486,12 +526,12 @@ def build(next_gw: int, roster: dict[str, int], teams: int, league_id: str | Non
             for f in fixtures:
                 ish = f["h"] == el["team"]
                 oc = club.get(f["a"] if ish else f["h"], "")
-                x, cs, _c = _blend_gw(el, pos, sc, own_code, oc, ish, p_start, p_any, ppg, frm, wm)
-                fxx, _fcs, _fc = _blend_gw(el, pos, sc, own_code, oc, ish, fit_ps, fit_pa, ppg, frm, wm)
+                x, cs, _c = _blend_gw(el, pos, sc, own_code, oc, ish, p_start, p_any, ppg, frm, wm, games)
+                fxx, _fcs, _fc = _blend_gw(el, pos, sc, own_code, oc, ish, fit_ps, fit_pa, ppg, frm, wm, games)
                 gx += x
                 fx_x += fxx
                 gcs = max(gcs, cs)
-                att_fdr, def_fdr, off_fdr = _pos_fdr(pos, oc, ish)
+                att_fdr, def_fdr, off_fdr = _pos_fdr(pos, oc, ish, own_code)
                 opps.append(f"{oc} ({'H' if ish else 'A'})")
             gws.append({"gw": gw, "opp": " + ".join(opps),
                         "home": fixtures[0]["h"] == el["team"], "fdr": off_fdr,
@@ -516,8 +556,16 @@ def build(next_gw: int, roster: dict[str, int], teams: int, league_id: str | Non
                 ish = f["h"] == el["team"]
                 oc = club.get(f["a"] if ish else f["h"], "")
                 gx, _cs, _c = _blend_gw(el, pos, sc, own_code, oc, ish,
-                                        p_start, p_any, ppg, frm, wm)
+                                        p_start, p_any, ppg, frm, wm, games)
                 ros_x += gx
+        # regress the per-GW rate toward a positional baseline the further out we
+        # look — a current hot/cold run shouldn't be extrapolated flat for ~30 GW.
+        if ros_gws >= 4:
+            rot = 0.28 + 0.72 * p_start
+            pos_base = {"GKP": 3.5, "DEF": 3.7, "MID": 4.1, "FWD": 4.4}[pos] * rot
+            shrink = 0.22 * min(1.0, ros_gws / 24.0)
+            per_gw = ros_x / ros_gws
+            ros_x = ((1.0 - shrink) * per_gw + shrink * pos_base) * ros_gws
         ros_x = round(ros_x, 1)
 
         # yellow-card / suspension watch. PL milestones are every 5 bookings
@@ -566,8 +614,17 @@ def build(next_gw: int, roster: dict[str, int], teams: int, league_id: str | Non
                 "p_start": round(p_start, 2), "depth_bump": round(bump, 2),
                 "ppg": ppg, "total_points": el.get("total_points"),
                 "ict": _num(el.get("ict_index")),
+                # Season, Premier-League-scoped advanced stats, all per 90 so
+                # they compare across players regardless of minutes.
+                "ict90": round(_num(el.get("ict_index")) / max(1.0, mins_seen / 90.0), 1),
+                "inf90": round(_num(el.get("influence")) / max(1.0, mins_seen / 90.0), 1),
+                "cre90": round(_num(el.get("creativity")) / max(1.0, mins_seen / 90.0), 1),
+                "thr90": round(_num(el.get("threat")) / max(1.0, mins_seen / 90.0), 1),
                 "xgi90": round(_num(el.get("expected_goal_involvements")) /
                                max(1.0, mins_seen / 90.0), 2),
+                "xgc90": round(_num(el.get("expected_goals_conceded")) /
+                               max(1.0, mins_seen / 90.0), 2),
+                "starts": int(_num(el.get("starts"))),
             },
         ))
 

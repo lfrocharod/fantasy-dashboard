@@ -44,6 +44,12 @@ class Player:
     set_piece: str = ""
     fbref_id: str | None = None
     understat_id: str | None = None
+    # --- live matchday state -------------------------------------------------
+    # Only meaningful once the player's fixture is live or finished; harmless
+    # zeros the rest of the time. `live_points` is UEFA's `curGDPts` (points
+    # banked so far this matchday); `live_played` is whether they've featured.
+    live_points: int | None = None
+    live_played: bool = False
 
 
 @dataclass(slots=True)
@@ -74,6 +80,9 @@ class Fixture:
     away_goals: int | None = None
     home_xg_est: float = 0.0
     away_xg_est: float = 0.0
+    # live only: minute the match is at (0 for not-started / full-time). In-memory
+    # during a live ingest pass; not persisted.
+    live_minute: int = 0
 
 
 @dataclass(slots=True)
@@ -84,6 +93,8 @@ class SquadPick:
     is_vice: bool = False
     bench_order: int = 0
     purchase_price: float = 0.0
+    # live: has this pick featured in the matchday yet (UEFA `isplayed`)
+    is_played: bool = False
 
 
 @dataclass(slots=True)

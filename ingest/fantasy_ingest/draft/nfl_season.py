@@ -233,6 +233,18 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
         usage = {}
         print(f"[draft] nflverse usage skipped: {e}", flush=True)
 
+    # expected fantasy points / expected TDs / points-over-expected
+    # (ffopportunity opportunity model). Same season-release timing as usage.
+    try:
+        exp_season = int(os.environ["NFLVERSE_SEASON"]) if os.environ.get("NFLVERSE_SEASON") else year
+        expected = nflverse.fetch_expected(exp_season)
+        if not expected and not os.environ.get("NFLVERSE_SEASON") and week <= 3:
+            expected = nflverse.fetch_expected(year - 1)
+        print(f"[draft] ffopportunity expected pts: {len(expected)} players", flush=True)
+    except Exception as e:  # noqa: BLE001
+        expected = {}
+        print(f"[draft] ffopportunity expected pts skipped: {e}", flush=True)
+
     weeks_left = max(1, L["reg_weeks"] - week + 1)
     rows: list[DraftRow] = []
     for pe in raw_players:
@@ -270,6 +282,7 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
         bye = bye_by_abbr.get(team_abbr) or p.get("byeWeek") or _bye_for(pro_team)
         inj = _norm_inj(p.get("injuryStatus"))
         u = usage.get((nflverse.norm_name(name), team_abbr), {})
+        xp = expected.get((nflverse.norm_name(name), team_abbr), {})
         uses_rush = pos in _POS_USES_RUSH
         # this week's opponent + a run of the next few weeks' matchups
         wk_opps = []
@@ -314,6 +327,8 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
                 "targetShare": u.get("target_share"), "wopr": u.get("wopr"),
                 "touches": u.get("touches"), "usageGames": u.get("games", 0),
                 "usageStale": usage_stale if u else False,
+                "xfpG": xp.get("xfp_g"), "xtdG": xp.get("xtd_g"),
+                "fpOE": xp.get("fp_oe_g"), "expGames": xp.get("games", 0),
             },
         ))
 

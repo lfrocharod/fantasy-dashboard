@@ -37,6 +37,11 @@ export interface NflPlayer {
   touches: number; // carries + receptions per game
   usageGames: number;
   usageStale: boolean; // true = last season's numbers, shown as a prior
+  // expected fantasy points (ffopportunity opportunity model, last ~4 games)
+  xfpG: number; // expected fantasy points per game
+  xtdG: number; // expected total touchdowns per game
+  fpOE: number; // fantasy points over/under expected per game (+ hot, − unlucky)
+  expGames: number;
 }
 
 /** A one-word usage read for skill players: "workhorse" / "rotational" / "" (K/DST/unknown). */
@@ -92,7 +97,33 @@ export function toPlayer(p: Record<string, unknown>): NflPlayer {
     touches: Number(raw.touches ?? 0),
     usageGames: Number(raw.usageGames ?? 0),
     usageStale: raw.usageStale === true,
+    xfpG: Number(raw.xfpG ?? 0),
+    xtdG: Number(raw.xtdG ?? 0),
+    fpOE: Number(raw.fpOE ?? 0),
+    expGames: Number(raw.expGames ?? 0),
   };
+}
+
+/**
+ * Opportunity adjustment from the ffopportunity model. A player scoring well
+ * ABOVE what their touches/targets expect (`fpOE` +) is riding finishing / TD
+ * luck and tends to regress down; one scoring BELOW is a buy-low. Returns a
+ * bounded multiplier (±13%) on a projection. 1.0 when we have no expected data.
+ */
+export function oppFactor(p: NflPlayer): number {
+  if (!p.expGames || p.pos === "K" || p.pos === "DST") return 1;
+  const r = Math.max(-0.13, Math.min(0.13, -p.fpOE / 26));
+  return 1 + r;
+}
+/** ROS projection nudged toward the opportunity signal — the number the trade
+ * finder and waiver ranker actually compare. */
+export const adjRos = (p: NflPlayer): number => p.rosProj * oppFactor(p);
+/** "buy-low" | "sell-high" | "" from the opportunity gap (needs ≥2 games). */
+export function oppTag(p: NflPlayer): "buy-low" | "sell-high" | "" {
+  if (p.expGames < 2 || p.pos === "K" || p.pos === "DST") return "";
+  if (p.fpOE <= -3.5) return "buy-low";
+  if (p.fpOE >= 4) return "sell-high";
+  return "";
 }
 
 /** Points a player is expected to score in a given week (0 on bye / out). */
@@ -195,8 +226,14 @@ export interface NflTradeIdea {
   theirGain: number; // ROS points added to theirs (positive = they'd want it too)
 }
 
-/** Sum of a roster's best starting lineup by rest-of-season projection. */
+/** Sum of a roster's best starting lineup by opportunity-adjusted ROS (how YOU
+ * value it). */
 function xiRos(roster: NflPlayer[], slots: Record<string, number>): number {
+  return optimalLineup(roster, slots, 0, (p) => (OUT_STATUS.has(p.injury) ? 0 : adjRos(p))).total;
+}
+/** Same, but on the raw provider ROS projection — how a typical rival would
+ * value the swap, so `theirGain` isn't just the mirror of your opportunity read. */
+function xiRosRaw(roster: NflPlayer[], slots: Record<string, number>): number {
   return optimalLineup(roster, slots, 0, (p) => (OUT_STATUS.has(p.injury) ? 0 : p.rosProj)).total;
 }
 
@@ -212,25 +249,26 @@ export function nflTradeIdeas(
   slots: Record<string, number>,
 ): NflTradeIdea[] {
   const myBase = xiRos(me.players, slots);
-  // realistic to give: everyone outside my top 6 by ROS
+  // realistic to give: everyone outside my top 6 by opportunity-adjusted ROS
   const givable = [...me.players]
     .filter((p) => !OUT_STATUS.has(p.injury) && p.pos !== "K" && p.pos !== "DST")
-    .sort((a, b) => b.rosProj - a.rosProj)
+    .sort((a, b) => adjRos(b) - adjRos(a))
     .slice(6);
   const ideas: NflTradeIdea[] = [];
   for (const rv of rivals) {
-    const theirBase = xiRos(rv.players, slots);
+    const theirBaseRaw = xiRosRaw(rv.players, slots);
     const theirGivable = [...rv.players]
       .filter((p) => !OUT_STATUS.has(p.injury) && p.pos !== "K" && p.pos !== "DST")
-      .sort((a, b) => b.rosProj - a.rosProj)
+      .sort((a, b) => b.rosProj - a.rosProj) // not their top 4 by raw projection
       .slice(4);
     for (const give of givable) {
       for (const get of theirGivable) {
         if (give.pos !== get.pos) continue;
         const myGain =
           xiRos([...me.players.filter((p) => p.extId !== give.extId), get], slots) - myBase;
+        // their side valued on the raw provider projection, not your opp read
         const theirGain =
-          xiRos([...rv.players.filter((p) => p.extId !== get.extId), give], slots) - theirBase;
+          xiRosRaw([...rv.players.filter((p) => p.extId !== get.extId), give], slots) - theirBaseRaw;
         if (myGain > 4 && theirGain > -3) {
           ideas.push({
             rivalName: rv.name,
@@ -401,10 +439,14 @@ export function simPlayoffs(
   for (let it = 0; it < iters; it++) {
     const wins = new Map(teamIds.map((id) => [id, rec0.get(id) ?? 0]));
     const pf = new Map(teamIds.map((id) => [id, pf0.get(id) ?? 0]));
+    // a season-long strength wobble per team — rosters drift (waivers, injuries,
+    // breakouts) over 10 weeks, so the projection itself is uncertain, not just
+    // the game-to-game variance
+    const strength = new Map(teamIds.map((id) => [id, Math.max(0.7, gaussian(1, 0.06))]));
     for (const g of remaining) {
       const idx = g.week - currentWeek;
-      const hs = gaussian(weekScore.get(g.home)?.[idx] ?? 90, 24);
-      const as = gaussian(weekScore.get(g.away)?.[idx] ?? 90, 24);
+      const hs = gaussian((weekScore.get(g.home)?.[idx] ?? 90) * (strength.get(g.home) ?? 1), 24);
+      const as = gaussian((weekScore.get(g.away)?.[idx] ?? 90) * (strength.get(g.away) ?? 1), 24);
       pf.set(g.home, (pf.get(g.home) ?? 0) + Math.max(0, hs));
       pf.set(g.away, (pf.get(g.away) ?? 0) + Math.max(0, as));
       if (hs > as) wins.set(g.home, (wins.get(g.home) ?? 0) + 1);

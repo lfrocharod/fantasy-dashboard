@@ -16,6 +16,7 @@ Overridable via env: UEFA_COMP_ID, UEFA_FEEDS_BASE, UEFA_API_BASE, UEFA_ENTITY.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Self
 
@@ -62,6 +63,10 @@ class UefaClient:
     password: str | None = None
     comp_id: str = COMP_ID
     timeout: float = 30.0
+    # matchday-live mode: cache-bust the static feeds (Akamai serves the
+    # players / fixtures JSON stale for minutes otherwise, so live points and
+    # scores wouldn't move between `--live` runs).
+    bust_cache: bool = False
 
     guid: str | None = None
     auth_state: str = "unknown"  # authed | public_only
@@ -82,9 +87,13 @@ class UefaClient:
 
     # -- low level ---------------------------------------------------------
 
-    def _get_json(self, url: str, *, api: bool) -> Any:
+    def _get_json(self, url: str, *, api: bool, bust: bool = False) -> Any:
         assert self._client is not None
         headers = {"entity": ENTITY} if api else {}
+        if bust:
+            url += f"{'&' if '?' in url else '?'}_={int(time.time() * 1000)}"
+            headers["Cache-Control"] = "no-cache"
+            headers["Pragma"] = "no-cache"
         r = self._client.get(url, headers=headers)
         if r.status_code in (401, 403):
             raise UefaAuthError(f"{r.status_code} for {url}")
@@ -97,8 +106,8 @@ class UefaClient:
                 raise UefaAuthError(f"{meta.get('message', 'not authorized')}: {url}")
         return data
 
-    def _feed(self, path: str) -> Any:
-        return self._get_json(f"{FEEDS_BASE}/{path.lstrip('/')}", api=False)
+    def _feed(self, path: str, *, bust: bool = False) -> Any:
+        return self._get_json(f"{FEEDS_BASE}/{path.lstrip('/')}", api=False, bust=bust)
 
     def _api(self, path: str) -> Any:
         return self._get_json(f"{API_BASE}/{path.lstrip('/')}", api=True)
@@ -112,10 +121,28 @@ class UefaClient:
         return self._feed(f"teams/teams_{self.comp_id}_{lang}.json")
 
     def get_fixtures(self, lang: str = "en") -> Any:
-        return self._feed(f"fixtures/fixtures_{self.comp_id}_{lang}.json")
+        # Static, Akamai-cached — bust it in --live so scores/statuses move.
+        return self._feed(f"fixtures/fixtures_{self.comp_id}_{lang}.json", bust=self.bust_cache)
 
     def get_players(self, matchday: int, lang: str = "en") -> Any:
-        return self._feed(f"players/players_{self.comp_id}_{lang}_{matchday}.json")
+        return self._feed(
+            f"players/players_{self.comp_id}_{lang}_{matchday}.json", bust=self.bust_cache
+        )
+
+    # -- live scoring feeds (matchday only; the static feeds above lag) --
+    # These are already real-time — no cache-buster (a stray query param can
+    # trip UEFA's WAF with a 403).
+
+    def get_live_player_points(self) -> Any:
+        """{data.value.totalPoints: {playerId: pts}, data.value.scores:
+        {matchId: {phase, scoreLine, …}}} — the authoritative live fantasy
+        points. The `players_*` feed's `curGDPts` stays 0 during play."""
+        return self._feed(f"scoring/live-players-points_{self.comp_id}.json")
+
+    def get_live_match(self, match_id: int) -> Any:
+        """Per-match live detail: `data.value.pStats[]` (each has `oF` minutes),
+        `scoreLine`, `phase`."""
+        return self._feed(f"scoring/live-scores_{self.comp_id}_{match_id}.json")
 
     # -- user API (needs cookie) --------------------------------------
 

@@ -181,6 +181,54 @@ export const projections = pgTable(
   }),
 );
 
+/**
+ * Actual fantasy points per player per matchday, lifted from UEFA's live feed
+ * (`curGDPts`). Written whenever a matchday game is live/finished — the ground
+ * truth the projection model is graded against (see the calibration harness,
+ * `python -m fantasy_ingest.calibrate`) and the basis for live rival scoring.
+ */
+export const playerScores = pgTable(
+  "player_scores",
+  {
+    id: serial("id").primaryKey(),
+    playerId: integer("player_id")
+      .notNull()
+      .references(() => players.uefaPlayerId, { onDelete: "cascade" }),
+    matchday: integer("matchday").notNull(),
+    points: integer("points").notNull().default(0),
+    played: boolean("played").notNull().default(false),
+    // their fixture has finished — the score won't change again
+    final: boolean("final").notNull().default(false),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uq: uniqueIndex("player_scores_player_md_idx").on(t.playerId, t.matchday),
+    byMd: index("player_scores_md_idx").on(t.matchday),
+  }),
+);
+
+/**
+ * Point-in-time captures of the live-matchday state, one row per ingest run
+ * while games are on. Powers the in-matchday points graph and post-hoc
+ * "what did the model say at 20:00 vs full-time" review.
+ */
+export const liveSnapshots = pgTable(
+  "live_snapshots",
+  {
+    id: serial("id").primaryKey(),
+    matchday: integer("matchday").notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().defaultNow(),
+    secured: real("secured").notNull().default(0),
+    projected: real("projected").notNull().default(0),
+    preMatch: real("pre_match").notNull().default(0),
+    state: text("state").notNull().default("live"),
+    blob: jsonb("blob"),
+  },
+  (t) => ({
+    byMd: index("live_snapshots_md_idx").on(t.matchday, t.capturedAt),
+  }),
+);
+
 /** Our own squad as read back from UEFA for a given matchday. */
 export const mySquad = pgTable(
   "my_squad",
@@ -313,3 +361,5 @@ export type Player = typeof players.$inferSelect;
 export type Projection = typeof projections.$inferSelect;
 export type Fixture = typeof fixtures.$inferSelect;
 export type LeagueStanding = typeof leagueStandings.$inferSelect;
+export type PlayerScore = typeof playerScores.$inferSelect;
+export type LiveSnapshot = typeof liveSnapshots.$inferSelect;

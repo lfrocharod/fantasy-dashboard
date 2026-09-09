@@ -21,6 +21,18 @@ export interface DraftConfig {
     source: string; // "my-team" (live Pick Team) | "event/N" (last fielded) | ""
     picks: { extId: string; slot: number; starter: boolean; captain: boolean; vice: boolean }[];
   };
+  // live gameweek (null unless a GW is in progress) — written by the FPL sync
+  fplLive: {
+    gw: number;
+    state: "live" | "finished";
+    secured: number;
+    played: number;
+    starters: number;
+    elements: Record<string, [number, number]>; // extId -> [points, minutes]
+    myPoints: number | null;
+    oppPoints: number | null;
+    oppName: string | null;
+  } | null;
   standings: unknown[];
   schedule: unknown[];
   fplMode: string; // 'c' classic / 'h' head-to-head
@@ -49,6 +61,16 @@ function jsonArr(v: string | undefined): unknown[] {
 function jsonObj(v: string | undefined): Record<string, number> {
   try { return v ? JSON.parse(v) : {}; } catch { return {}; }
 }
+function parseFplLive(v: string | undefined): DraftConfig["fplLive"] {
+  try {
+    const o = v ? JSON.parse(v) : null;
+    if (o && o.elements && typeof o.gw === "number") return o;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 function parseLineup(v: string | undefined): DraftConfig["fplLineup"] {
   try {
     const o = v ? JSON.parse(v) : null;
@@ -67,6 +89,7 @@ export async function getDraftConfig(sport: Sport): Promise<DraftConfig> {
     k(sport, "espn_s2"), k(sport, "swid"), k(sport, "league_id"),
     k(sport, "entry_id"), k(sport, "pl_profile"),
     k(sport, "my_squad"), k(sport, "my_lineup"), k(sport, "standings"), k(sport, "schedule"), k(sport, "mode"),
+    k(sport, "live"),
     k(sport, "week"), k(sport, "playoff_weeks"), k(sport, "slots"), k(sport, "my_roster"),
     k(sport, "playoff_teams"), k(sport, "seeding_rule"),
   ]);
@@ -109,6 +132,7 @@ export async function getDraftConfig(sport: Sport): Promise<DraftConfig> {
     entryId: s[k(sport, "entry_id")] ?? null,
     mySquad,
     fplLineup: parseLineup(s[k(sport, "my_lineup")]),
+    fplLive: parseFplLive(s[k(sport, "live")]),
     standings,
     schedule,
     fplMode: s[k(sport, "mode")] || "c",

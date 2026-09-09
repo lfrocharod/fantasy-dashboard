@@ -3,9 +3,16 @@ import { db } from "@/lib/db";
 import { draftPlayers } from "@/lib/db/schema";
 import { getSettings } from "@/lib/settings";
 import { getDashboardSummary } from "@/lib/ucl/queries";
-import { toPlayer as toFpl, bestXI as fplBestXI, type FplPlayer } from "@/app/fpl/lib";
+import {
+  toPlayer as toFpl,
+  bestXI as fplBestXI,
+  valueFor as fplValueFor,
+  type FplPlayer,
+} from "@/app/fpl/lib";
 import {
   toPlayer as toNfl,
+  adjRos,
+  oppFactor,
   optimalLineup,
   weekPoints,
   OUT_STATUS,
@@ -31,6 +38,15 @@ export interface HomeSummary {
     xiFlags: number;
     ingestOk: boolean | null;
     ingestAt: string | null;
+    live: {
+      state: string;
+      secured: number;
+      projectedFinish: number;
+      played: number;
+      starters: number;
+      manualSubs: number;
+      captainNote: string | null;
+    } | null;
   };
   fpl: {
     active: boolean;
@@ -40,6 +56,7 @@ export interface HomeSummary {
     gapToNext: number | null;
     topClaim: { name: string; gain: number } | null;
     injured: number;
+    live: { gw: number; secured: number; played: number; starters: number } | null;
   };
   nfl: {
     active: boolean;
@@ -50,6 +67,7 @@ export interface HomeSummary {
     winPct: number | null;
     lineupIssues: number;
     topClaim: { name: string; gain: number } | null;
+    live: { mine: number; opp: number; final: boolean } | null;
   };
   alerts: Alert[];
 }
@@ -66,7 +84,7 @@ export async function getHomeSummary(): Promise<HomeSummary> {
     db.select().from(draftPlayers).where(eq(draftPlayers.sport, "nfl")).catch(() => []),
     getSettings([
       "model.optimizer_output",
-      "draft.fpl.my_squad", "draft.fpl.standings",
+      "draft.fpl.my_squad", "draft.fpl.standings", "draft.fpl.live",
       "draft.nfl.my_roster", "draft.nfl.week", "draft.nfl.schedule",
       "draft.nfl.slots", "draft.nfl.standings",
     ]),
@@ -93,7 +111,21 @@ export async function getHomeSummary(): Promise<HomeSummary> {
     xiFlags: 0,
     ingestOk: uclRaw?.ingest?.ok ?? null,
     ingestAt: (uclRaw?.ingest?.at ?? null) as string | null,
+    live: uclRaw?.live ?? null,
   };
+  if (ucl.live) {
+    if (ucl.live.manualSubs > 0) {
+      alerts.push({
+        league: "UCL",
+        tone: "warn",
+        text: `Live: ${ucl.live.manualSubs} substitution${ucl.live.manualSubs > 1 ? "s" : ""} still worth making before those players' games kick off.`,
+        href: "/ucl",
+      });
+    }
+    if (ucl.live.captainNote) {
+      alerts.push({ league: "UCL", tone: "accent", text: `Live: ${ucl.live.captainNote}.`, href: "/ucl" });
+    }
+  }
   const uh = hoursUntil(ucl.deadlineIso);
   if (ucl.active && uh != null && uh > 0 && uh < 48) {
     alerts.push({
@@ -126,8 +158,16 @@ export async function getHomeSummary(): Promise<HomeSummary> {
   const fplInjured = fplSquad.filter((p) => p.unavailable).length;
   const fplFreeTop = fplPlayers
     .filter((p) => p.available && !mySquadIds.includes(p.extId) && !p.unavailable)
-    .sort((a, b) => b.horizon - a.horizon)[0];
-  const fplWorstStarter = fplXi ? Math.min(...fplXi.xi.map((p) => p.horizon)) : 0;
+    .sort((a, b) => fplValueFor(b, "medium") - fplValueFor(a, "medium"))[0];
+  const fplWorstStarter = fplXi
+    ? Math.min(...fplXi.xi.map((p) => fplValueFor(p, "medium")))
+    : 0;
+  let fplLive: HomeSummary["fpl"]["live"] = null;
+  try {
+    fplLive = s["draft.fpl.live"] ? JSON.parse(s["draft.fpl.live"]) : null;
+  } catch {
+    /* ignore */
+  }
   const fpl = {
     active: fplSquad.length > 0,
     gw: fplPlayers[0]?.gws?.[0]?.gw ?? null,
@@ -135,10 +175,14 @@ export async function getHomeSummary(): Promise<HomeSummary> {
     rank: null as number | null,
     gapToNext: null as number | null,
     topClaim:
-      fplFreeTop && fplFreeTop.horizon - fplWorstStarter > 4
-        ? { name: fplFreeTop.name, gain: Math.round(fplFreeTop.horizon - fplWorstStarter) }
+      fplFreeTop && fplValueFor(fplFreeTop, "medium") - fplWorstStarter > 4
+        ? {
+            name: fplFreeTop.name,
+            gain: Math.round(fplValueFor(fplFreeTop, "medium") - fplWorstStarter),
+          }
         : null,
     injured: fplInjured,
+    live: fplLive,
   };
   if (fpl.active && fplInjured > 0) {
     alerts.push({
@@ -191,7 +235,10 @@ export async function getHomeSummary(): Promise<HomeSummary> {
     );
     if (benchBest > startWorst + 2) nflIssues++;
   }
-  let nflSchedule: { week: number; home: number; away: number; home_name: string; away_name: string }[] = [];
+  let nflSchedule: {
+    week: number; home: number; away: number; home_name: string; away_name: string;
+    home_pts?: number; away_pts?: number; winner?: string;
+  }[] = [];
   try {
     nflSchedule = s["draft.nfl.schedule"] ? JSON.parse(s["draft.nfl.schedule"]) : [];
   } catch {
@@ -203,17 +250,28 @@ export async function getHomeSummary(): Promise<HomeSummary> {
     (m) => m.week === nflWeek && (m.home === myTeamId || m.away === myTeamId),
   );
   const oppId = match ? (match.home === myTeamId ? match.away : match.home) : null;
+  const nflIAmHome = match?.home === myTeamId;
+  const nflLiveMine = nflIAmHome ? match?.home_pts : match?.away_pts;
+  const nflLiveOpp = nflIAmHome ? match?.away_pts : match?.home_pts;
+  const nflLive =
+    match && ((nflLiveMine ?? 0) > 0 || (nflLiveOpp ?? 0) > 0)
+      ? {
+          mine: Math.round((nflLiveMine ?? 0) * 10) / 10,
+          opp: Math.round((nflLiveOpp ?? 0) * 10) / 10,
+          final: match.winner === "HOME" || match.winner === "AWAY" || match.winner === "TIE",
+        }
+      : null;
   const oppRoster = nflPlayers.filter((p) => p.ownerTeamId === oppId);
   const oppLineup = oppRoster.length ? optimalLineup(oppRoster, nflSlots, 0) : null;
   const myProj = nflLineup ? Math.round(nflLineup.total) : 0;
   const oppProj = oppLineup ? Math.round(oppLineup.total) : null;
   const winPct =
-    oppProj != null ? Math.round(100 / (1 + Math.exp(-(myProj - oppProj) / 16))) : null;
+    oppProj != null ? Math.round(100 / (1 + Math.exp(-(myProj - oppProj) / 19))) : null;
   const nflFreeTop = nflPlayers
     .filter((p) => p.available && !nflRosterIds.includes(p.extId) && !OUT_STATUS.has(p.injury))
-    .sort((a, b) => b.vor - a.vor)[0];
+    .sort((a, b) => b.vor * oppFactor(b) - a.vor * oppFactor(a))[0];
   const nflWorstStarter = nflLineup
-    ? Math.min(...nflLineup.starters.filter((x) => x.p).map((x) => x.p!.rosProj))
+    ? Math.min(...nflLineup.starters.filter((x) => x.p).map((x) => adjRos(x.p!)))
     : 0;
   const nfl = {
     active: nflRoster.length > 0,
@@ -224,9 +282,10 @@ export async function getHomeSummary(): Promise<HomeSummary> {
     winPct,
     lineupIssues: nflIssues,
     topClaim:
-      nflFreeTop && nflFreeTop.rosProj - nflWorstStarter > 12
-        ? { name: nflFreeTop.name, gain: Math.round(nflFreeTop.rosProj - nflWorstStarter) }
+      nflFreeTop && adjRos(nflFreeTop) - nflWorstStarter > 12
+        ? { name: nflFreeTop.name, gain: Math.round(adjRos(nflFreeTop) - nflWorstStarter) }
         : null,
+    live: nflLive,
   };
   if (nfl.active && nflIssues > 0) {
     alerts.push({

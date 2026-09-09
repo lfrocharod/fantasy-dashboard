@@ -21,6 +21,9 @@ interface Match {
   away: number;
   home_name: string;
   away_name: string;
+  home_pts?: number;
+  away_pts?: number;
+  winner?: string; // "HOME" | "AWAY" | "UNDECIDED" | "TIE"
 }
 
 function Tag({ pos }: { pos: string }) {
@@ -36,9 +39,11 @@ function InjTag({ s }: { s: string }) {
   return <span className="ml-1 text-[10px] font-semibold text-[var(--bad)]">{short}</span>;
 }
 
-// crude win prob from projected margin (NFL weekly stdev ~ 28)
+// win prob from projected margin. Each team total has sd ~24 (matches the
+// playoff sim), so the margin's sd is ~34; a logistic that approximates that
+// normal has scale ~19.
 function winProb(margin: number): number {
-  return Math.round(100 / (1 + Math.exp(-margin / 16)));
+  return Math.round(100 / (1 + Math.exp(-margin / 19)));
 }
 
 const POS_SORT = ["QB", "RB", "WR", "TE", "K", "DST"];
@@ -71,6 +76,13 @@ export default function NflOverviewPage() {
   );
   const oppId = myMatch ? (myMatch.home === config?.myTeamId ? myMatch.away : myMatch.home) : null;
   const oppTeam = teams.find((t) => t.teamId === oppId);
+
+  // live/actual matchup score from ESPN (updates through the week)
+  const iAmHome = myMatch?.home === config?.myTeamId;
+  const liveMine = iAmHome ? myMatch?.home_pts : myMatch?.away_pts;
+  const liveOpp = iAmHome ? myMatch?.away_pts : myMatch?.home_pts;
+  const liveFinal = myMatch?.winner === "HOME" || myMatch?.winner === "AWAY" || myMatch?.winner === "TIE";
+  const liveOn = myMatch != null && ((liveMine ?? 0) > 0 || (liveOpp ?? 0) > 0);
 
   const mine = useMemo(() => optimalLineup(myRoster, slots, 0), [myRoster, slots]);
   const theirs = useMemo(
@@ -135,6 +147,14 @@ export default function NflOverviewPage() {
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-xl font-semibold">Week {week} overview</h1>
         <span className="text-sm text-[var(--muted)]">
+          {liveOn && (
+            <>
+              <b style={{ color: (liveMine ?? 0) >= (liveOpp ?? 0) ? "var(--good)" : "var(--bad)" }}>
+                {liveFinal ? "final" : "live"} {fmt(liveMine, 1)}–{fmt(liveOpp, 1)}
+              </b>
+              {" · "}
+            </>
+          )}
           projected <b>{fmt(mine.total, 0)}</b>
           {theirs && (
             <>

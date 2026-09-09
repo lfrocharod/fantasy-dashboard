@@ -1,5 +1,7 @@
 from fantasy_ingest.draft.fpl import (
     _SCORING,
+    _anchor,
+    _anchor_fix_mult,
     _depth_bump,
     _gw_projection,
     _p_start,
@@ -152,6 +154,31 @@ def test_pos_fdr_is_position_aware():
     # A leaky minnow (COV: attack 0.82, defence 1.18) at home -> green for attackers
     weak = _pos_fdr("FWD", "COV", is_home=True)
     assert weak[2] <= 2
+
+
+def test_anchor_fix_mult_punishes_defenders_vs_strong_attacks():
+    # a promoted-club DEF away at MCI (attack 1.42) should be marked well below
+    # neutral; the same DEF at home to a minnow (COV) well above.
+    hard = _anchor_fix_mult("DEF", "MCI", "HUL", is_home=False)
+    easy = _anchor_fix_mult("DEF", "COV", "HUL", is_home=True)
+    assert hard < 0.85
+    assert easy > 1.15
+    assert easy - hard > 0.4
+    # keepers key entirely off the opponent's attack; forwards off its defence
+    gk_hard = _anchor_fix_mult("GKP", "MCI", "HUL", is_home=False)
+    fwd_vs_solid = _anchor_fix_mult("FWD", "ARS", "HUL", is_home=False)  # ARS D 0.56
+    assert gk_hard < 0.85 and fwd_vs_solid < 0.9
+
+
+def test_anchor_regresses_a_tiny_sample_and_respects_the_fixture():
+    el = {"draft_rank": 240, "minutes": 250}  # deep squad DEF, real-ish minutes
+    # 3 GW of an 8.0 ppg clean-sheet streak, away at a top attack
+    hot_hard = _anchor(el, "DEF", ppg=8.0, frm=8.0, opp_code="MCI",
+                       is_home=False, p_start=0.95, games=3, own_code="HUL")
+    # same rate but a full season behind it and a soft home fixture
+    seasoned_easy = _anchor(el, "DEF", ppg=8.0, frm=8.0, opp_code="COV",
+                            is_home=True, p_start=0.95, games=20, own_code="HUL")
+    assert hot_hard < 3.0 < seasoned_easy
 
 
 def test_split_auth_extracts_bearer_and_cookie():

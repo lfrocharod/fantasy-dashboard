@@ -3,7 +3,8 @@
 A private web app to help win my fantasy leagues. **v1 covers the UEFA Champions
 League Fantasy game** (classic scoring, mini-league against friends): unified
 dashboard, projected points (xPts) for start/sit, a free-agent / transfer finder,
-a formation-constrained lineup + captain optimizer, and mini-league analytics.
+a formation-constrained lineup + captain optimizer, mini-league analytics, and a
+live matchday panel (actual points + sub/captain advice once games kick off).
 Built so ESPN NFL/NBA and FPL Draft can be added later as extra modules.
 
 - **Web + DB are free & hosted**: Vercel Hobby + Neon Postgres.
@@ -66,6 +67,8 @@ cd web && npm install
 # put DATABASE_URL (+ the 3 secrets) in web/.env.local
 npm run db:push
 ```
+Re-run `npm run db:push` after pulling schema changes (it diffs `lib/db/schema.ts`
+against the live DB — the files in `db/migrations/` are just a readable record).
 
 ### 4. First ingestion (from your laptop)
 ```bash
@@ -135,6 +138,75 @@ one full `./update.sh` in the early morning for the recent-form scrape, and a
 manual `./update.sh --cl` right before a Champions League deadline. **Cadence
 doesn't matter for correctness** — the app just shows whatever the last run
 wrote, with its timestamp on the home page.
+
+### During a Champions League matchday (live)
+
+Once the first game of a matchday kicks off, the CL **Overview** grows a *Live*
+panel:
+
+- points already banked by your played players (UEFA's live scoring), and the
+  **projected finish** after UEFA's automatic substitutions;
+- the **vice-captain takeover** if your captain blanks;
+- any **manual sub** still worth making (a benched player whose game hasn't
+  started, in for a starter who's already blanked), capped at the game's
+  substitution allowance (read from the feed);
+- a **points sparkline** over the matchday (projected vs secured vs pre-match);
+- a **live mini-league table** — secured + projected for every rival, and the
+  gap to you. It also shows on the *Rivals* tab.
+
+The panel re-fetches itself every minute in the browser, and the *Overview*
+stat-cards + the home command-centre card flip to the live numbers. It's
+Champions-League-only. The web view is only ever as fresh as the last ingest
+run, so loop the ingest while games are on:
+
+```bash
+cd ~/fantasy-dashboard/ingest
+./update.sh --live        # ~15s: actual points + live sub/captain advice, no scrape
+```
+
+```cron
+# CL games are Tue/Wed evenings — times in your machine's local zone
+# (this example is US-Pacific for ~18:00–23:00 CET kickoffs)
+*/10 11-16 * * 2,3  cd ~/fantasy-dashboard/ingest && ./update.sh --live >> /tmp/fantasy.log 2>&1
+```
+
+The panel clears itself once every game is finished and the next matchday is
+fully upcoming. `./run.sh --live` is the CL-only equivalent. Once its first game
+is live, the matchday's projections are **frozen** (start/sit xPts stop drifting
+mid-match, and the calibration harness keeps the genuine pre-match numbers).
+
+**Phone alerts (opt-in).** Set `NTFY_TOPIC` (an [ntfy.sh](https://ntfy.sh) topic
+you've subscribed to) or `ALERT_WEBHOOK` (any URL — gets `{title,text}` JSON) in
+`ingest/.env`, and each `--live` run pushes a notification when a manual sub or a
+vice-captain swap becomes available. De-duped, so a 10-minute cron won't spam.
+
+**Grade the model.** After a matchday, `player_scores` holds every player's real
+points. Compare them to the frozen projections:
+
+```bash
+.venv/bin/python -m fantasy_ingest.calibrate            # all finished matchdays
+.venv/bin/python -m fantasy_ingest.calibrate --matchday 3 --played-only
+```
+
+It reports MAE / bias / correlation overall and by position, price band and
+predicted-points bucket, then a one-line takeaway (e.g. "model runs hot — lower
+`form_weight`"). Read-only.
+
+### Live in the other leagues
+
+The same idea is wired into the draft modules, driven by their own refresh
+(`./update.sh --fpl` / `--nfl`), no extra command:
+
+- **FPL Draft** — while a gameweek is in progress the FPL *Overview* shows a
+  *Live — GW N* panel: points banked, projected finish after FPL's automatic
+  substitutions, the vice-captain takeover, and your head-to-head score vs this
+  week's opponent (from `draft.premierleague.com`'s live element feed).
+- **NFL** — the *Week N overview* header and the home card show the live /
+  final ESPN matchup score next to the projection (ESPN's `totalPoints` updates
+  through the week). No auto-subs — NFL has no bench promotion.
+
+The home command-centre card for each league flips to its live numbers whenever
+one is in progress.
 
 ### Refreshing your logins
 The UEFA session cookie (Settings) and the ESPN `espn_s2` / `SWID` cookies

@@ -3,6 +3,23 @@
 import { useEffect, useState } from "react";
 import { dateTime } from "@/lib/format";
 
+interface XgMiss {
+  id: number;
+  name: string;
+  team: string;
+  price: number;
+  reason: string;
+}
+interface XgCoverage {
+  generatedAt: string;
+  source: string;
+  total: number;
+  matched: number;
+  unmatched: number;
+  byReason: Record<string, number>;
+  notableMissing: XgMiss[];
+  topMissing: XgMiss[];
+}
 interface Cfg {
   leagueId: string;
   leagueCode: string;
@@ -13,6 +30,7 @@ interface Cfg {
   tokenSavedAt: string | null;
   hasToken: boolean;
   modelParams: string;
+  xgCoverage: XgCoverage | null;
 }
 
 export default function SettingsPage() {
@@ -145,6 +163,75 @@ export default function SettingsPage() {
           {msg && <span className="text-sm text-[var(--muted)]">{msg}</span>}
         </div>
       </form>
+
+      {cfg?.xgCoverage && <XgCoveragePanel cov={cfg.xgCoverage} />}
+    </div>
+  );
+}
+
+const REASON_LABEL: Record<string, string> = {
+  no_name_match: "name not found in the stats source",
+  no_stat_row: "matched a player, but no season row",
+  low_minutes: "too few minutes to trust a rate",
+  below_min_price: "skipped (cheap fringe player)",
+};
+
+function XgCoveragePanel({ cov }: { cov: XgCoverage }) {
+  const pct = cov.total ? Math.round((cov.matched / cov.total) * 100) : 0;
+  const misses = cov.notableMissing.length ? cov.notableMissing : cov.topMissing;
+  return (
+    <div className="card space-y-3 p-4 text-sm">
+      <div className="flex items-baseline justify-between">
+        <div className="font-medium">xG data coverage</div>
+        <div className="text-xs text-[var(--muted)]">
+          {cov.source} · {dateTime(cov.generatedAt)}
+        </div>
+      </div>
+      <div className="text-[var(--muted)]">
+        <b style={{ color: pct >= 92 ? "var(--good)" : pct >= 80 ? "var(--warn)" : "var(--bad)" }}>
+          {cov.matched}/{cov.total}
+        </b>{" "}
+        players ({pct}%) got an underlying-stat row.{" "}
+        {Object.entries(cov.byReason)
+          .map(([r, n]) => `${n} ${REASON_LABEL[r] ?? r}`)
+          .join(" · ")}
+      </div>
+
+      {misses.length > 0 && (
+        <>
+          <div className="text-xs text-[var(--muted)]">
+            Notable players with no xGI — fix one by adding a{" "}
+            <code>player_id_overrides</code> row (<code>uefa_player_id</code>,{" "}
+            <code>note = &quot;Sofascore Name|Team&quot;</code>), then re-run ingestion:
+          </div>
+          <div className="table-wrap">
+            <table className="dtable">
+              <thead>
+                <tr>
+                  <th>Player</th>
+                  <th>Team</th>
+                  <th className="num">Price</th>
+                  <th>Why</th>
+                  <th className="num">uefa id</th>
+                </tr>
+              </thead>
+              <tbody>
+                {misses.map((m) => (
+                  <tr key={m.id}>
+                    <td>{m.name}</td>
+                    <td>{m.team}</td>
+                    <td className="num">{m.price.toFixed(1)}</td>
+                    <td className="text-xs text-[var(--muted)]">
+                      {REASON_LABEL[m.reason] ?? m.reason}
+                    </td>
+                    <td className="num font-mono text-xs">{m.id}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }

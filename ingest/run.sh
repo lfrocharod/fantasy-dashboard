@@ -15,6 +15,13 @@
 #                            #   circuit breaker; fixtures are disk-cached so a
 #                            #   re-run only pulls new games and coverage builds
 #                            #   run-over-run. First cold run is partial.
+#   ./run.sh --live          # MATCHDAY REFRESH (~15s): re-pull UEFA data + your
+#                            #   squad + rivals, rebuild the current matchday's
+#                            #   projections and the live-state blob (actual
+#                            #   points so far + auto-sub / manual-sub / vice-
+#                            #   captain advice on the CL overview). No scraping.
+#                            #   Safe to run every few minutes while games are on,
+#                            #   e.g.  */10 18-23 * * 2,3  during CL match weeks.
 #   ./run.sh --matchday 2    # force a matchday
 #
 # Recent form is never fatal — a source failing just means less fresh data; the
@@ -54,7 +61,9 @@ fi
 # Ensure deps. The xG scrape needs the heavier [sources] extra; skip it if the
 # caller passed --skip-sources.
 want_sources=1
-for a in "$@"; do [ "$a" = "--skip-sources" ] && want_sources=0; done
+for a in "$@"; do
+  { [ "$a" = "--skip-sources" ] || [ "$a" = "--live" ]; } && want_sources=0
+done
 if ! .venv/bin/python -c "import fantasy_ingest, curl_cffi" 2>/dev/null; then
   .venv/bin/pip -q install -e .
 fi

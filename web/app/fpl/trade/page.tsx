@@ -9,6 +9,7 @@ import {
   evaluateTrade,
   groupByManager,
   loadBoard,
+  oppTag,
   tradeIdeas,
   type FplPlayer,
   type Horizon,
@@ -81,7 +82,8 @@ export default function TradePage() {
   const byId = useMemo(() => new Map(players.map((p) => [p.extId, p])), [players]);
   const giveP = [...give].map((id) => byId.get(id)!).filter(Boolean);
   const getP = [...get].map((id) => byId.get(id)!).filter(Boolean);
-  const evaluation = giveP.length || getP.length ? evaluateTrade(giveP, getP) : null;
+  const evaluation =
+    giveP.length || getP.length ? evaluateTrade(giveP, getP, me?.players ?? []) : null;
 
   const owners = useMemo(() => {
     const m = new Map<string, { name: string; ids: Set<string> }>();
@@ -228,8 +230,8 @@ export default function TradePage() {
         </h2>
         {suggestions.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">
-            No position-balanced swap clearly improves your {HORIZON_LABEL[horizon]} projection
-            without hurting the rival.
+            No position-balanced swap clearly upgrades the XI you&apos;d field over{" "}
+            {HORIZON_LABEL[horizon]} without fleecing the rival by neutral value.
           </p>
         ) : (
           <div className="card table-wrap">
@@ -239,8 +241,12 @@ export default function TradePage() {
                   <th>Rival</th>
                   <th>You give</th>
                   <th>You get</th>
-                  <th className="num">You +</th>
-                  <th className="num hide-sm">Them +</th>
+                  <th className="num" title="gain to the XI you'd actually field over the window">
+                    XI +
+                  </th>
+                  <th className="num hide-sm" title="swing for the rival by neutral value (season ppg + rank) — ≥0 means they'd want it too">
+                    Them
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -258,6 +264,15 @@ export default function TradePage() {
                       {t.get.map((p) => (
                         <div key={p.extId} className="whitespace-nowrap">
                           <span className="text-[10px] text-[var(--muted)]">{p.pos}</span> {p.name}
+                          {oppTag(p) && (
+                            <span
+                              className="ml-1 text-[10px] font-semibold"
+                              style={{ color: oppTag(p) === "value" ? "var(--good)" : "var(--warn)" }}
+                              title={`season xGI/90 ${p.xgi90.toFixed(2)}${p.pos === "DEF" || p.pos === "GKP" ? ` · xGC/90 ${p.xgc90.toFixed(2)}` : ""}`}
+                            >
+                              {oppTag(p)}
+                            </span>
+                          )}
                         </div>
                       ))}
                     </td>
@@ -280,7 +295,9 @@ export default function TradePage() {
       <Legend
         items={[
           ["Windows", "next GW (short), next 6 GW (medium), rest of season (long)"],
-          ["Δ", "change in projected draft points for that side"],
+          ["You Δ / XI +", "the change to the value of the XI you can actually field — a player who wouldn't start you barely moves it (that's the point). Projections are nudged ±~10% by season xGI/90 (MID/FWD) and xGC/90 (DEF/GKP)."],
+          ["Them Δ / Them", "the swing for the rival valued the way a typical manager would (season points-per-game + draft rank), not by your form-sensitive projection. ≥ 0 means it's a fair ask; a big negative means they'll say no."],
+          ["value / output-led", "the underlying stats run ahead of / behind current output — a buy signal / a regression flag"],
           ["⚑", "a booking from a suspension — matters for medium/long moves, not a one-week rental"],
           ["✚", "currently injured / suspended / doubtful"],
           ["balanced", "a draft trade must have the same positions on both sides"],

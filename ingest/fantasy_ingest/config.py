@@ -17,6 +17,20 @@ class Keys:
     UEFA_AUTH_STATE = "ucl.uefa_auth_state"
     MODEL_PARAMS = "model.params"
     OPTIMIZER_OUTPUT = "model.optimizer_output"
+    # Live-matchday state blob (CL overview). Written during a live/finished
+    # matchday, cleared to "" once the matchday is fully upcoming again.
+    LIVE_STATE = "model.live_state"
+    # Live rival scores blob (per mini-league entry), same cadence as LIVE_STATE.
+    LIVE_RIVALS = "model.live_rivals"
+    # In-matchday substitutions the game allows / rolls over (parsed from the
+    # fixtures feed; a manual `ucl.subs_allowed` row still wins if you set one).
+    SUBS_ALLOWED = "ucl.subs_allowed"
+    SUBS_CARRY = "ucl.subs_carry"
+    # De-dupe key so the matchday push alert only fires when something changes.
+    LAST_ALERT_HASH = "ucl.last_alert_hash"
+    # xG name-match coverage from the last run: which players got an underlying
+    # stat row and which didn't (so a missed star shows up on the Settings page).
+    XG_COVERAGE = "ingest.xg_coverage"
 
 
 @dataclass(slots=True)

@@ -169,6 +169,15 @@ def parse_players(feed: Any) -> tuple[list[Player], dict[int, Team]]:
         goals = _i(_pick(r, "gS", "goalsScored"))
         pen_signal[pid] = (pens_missed * 2.0 + pens_scored * 2.0, goals)
 
+        # Live matchday state: `curGDPts` is points banked so far this matchday,
+        # `isPlayed`/`teamPlayed` whether they've featured. Both are 0 outside a
+        # live/finished matchday, so we only trust them when a fixture says so.
+        live_pts_raw = _pick(r, "curGDPts", "gdPoints", "gdPts")
+        live_played = bool(
+            _i(_pick(r, "isPlayed", "isplayed", default=0))
+            or _i(_pick(r, "teamPlayed", "teamPlyd", default=0))
+        )
+
         players.append(
             Player(
                 uefa_player_id=pid,
@@ -182,6 +191,8 @@ def parse_players(feed: Any) -> tuple[list[Player], dict[int, Team]]:
                 price_momentum=momentum,
                 status_code=status_code,
                 status_detail=detail,
+                live_points=_opt_i(live_pts_raw),
+                live_played=live_played,
             )
         )
         raw_minutes[pid] = last_mins
@@ -252,6 +263,9 @@ class MatchdayInfo:
     matchday: int
     deadline: datetime | None
     is_current: bool
+    # in-matchday substitutions the game allows, and how many roll over
+    subs_allowed: int = 3
+    subs_carry: int = 0
 
 
 def parse_fixtures(
@@ -268,6 +282,8 @@ def parse_fixtures(
                 matchday=md_id,
                 deadline=_dt(_pick(md, "deadline")),
                 is_current=bool(_i(_pick(md, "mdIsCurrent", "gdIsCurrent"))),
+                subs_allowed=_i(_pick(md, "subsAllowed", "subAllowed"), 3) or 3,
+                subs_carry=_i(_pick(md, "maxSubsCf", "subsCf", "subCarryFwd"), 0),
             )
         )
         for m in md.get("match", []) if isinstance(md, dict) else []:
@@ -331,6 +347,7 @@ def parse_my_team(payload: Any, matchday: int) -> tuple[list[SquadPick], float]:
                 is_vice=bool(_i(_pick(r, "isvicecaptain", "isViceCaptain", "isvicecpt"))),
                 bench_order=bench if on_bench else 0,
                 purchase_price=_f(_pick(r, "value", "buyValue", "purchasePrice")),
+                is_played=bool(_i(_pick(r, "isplayed", "isPlayed", default=0))),
             )
         )
     return picks, bank

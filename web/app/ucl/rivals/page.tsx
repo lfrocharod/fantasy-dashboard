@@ -1,12 +1,13 @@
 import { EmptyState, Legend, Section } from "@/components/ui";
-import { fmt } from "@/lib/format";
-import { getCurrentMatchday, getRivals } from "@/lib/ucl/queries";
+import { fmt, relTime } from "@/lib/format";
+import { getCurrentMatchday, getLiveRivals, getRivals } from "@/lib/ucl/queries";
 
 export const dynamic = "force-dynamic";
 
 export default async function RivalsPage() {
   const md = await getCurrentMatchday();
-  const r = await getRivals(md);
+  const [r, liveRivals] = await Promise.all([getRivals(md), getLiveRivals()]);
+  const live = liveRivals && liveRivals.rows.length > 0 ? liveRivals : null;
 
   if (!r.ready) {
     return (
@@ -24,8 +25,80 @@ export default async function RivalsPage() {
     free: "var(--muted)",
   };
 
+  const myLive = live?.rows.find((x) => x.mine) ?? null;
+
   return (
     <div className="space-y-6">
+      {r.stale && (
+        <div className="card p-3 text-sm" style={{ borderLeft: "3px solid var(--warn)" }}>
+          <b style={{ color: "var(--warn)" }}>SQUADS MAY BE STALE</b>{" "}
+          {r.squadsMatchday != null && r.squadsMatchday !== md
+            ? `UEFA hasn't published matchday ${md} squads yet — projecting from matchday ${r.squadsMatchday}. `
+            : ""}
+          {r.squadsAsOf
+            ? `Rival squads last captured ${relTime(r.squadsAsOf)}. `
+            : ""}
+          If a rival has transferred since, their projection and differentials
+          below won&apos;t reflect it — re-run <code>./run.sh</code> (needs a fresh
+          UEFA cookie) to refresh.
+        </div>
+      )}
+
+      {live && myLive && (
+        <Section
+          title={`Live — matchday ${live.matchday}`}
+          right={<span className="text-xs text-[var(--muted)]">updates when ./run.sh --live runs</span>}
+        >
+          <div className="card table-wrap">
+            <table className="dtable">
+              <thead>
+                <tr>
+                  <th className="num">#</th>
+                  <th>Manager</th>
+                  <th className="num">Played</th>
+                  <th className="num">Secured</th>
+                  <th className="num">Proj. finish</th>
+                  <th className="num">vs you</th>
+                </tr>
+              </thead>
+              <tbody>
+                {live.rows.map((v) => (
+                  <tr key={v.entryId} className={v.mine ? "font-semibold" : undefined}>
+                    <td className="num">{v.rank || "–"}</td>
+                    <td>
+                      {v.managerName || v.teamName || v.entryId}
+                      {v.mine && <span className="ml-1 text-[var(--accent)]">you</span>}
+                    </td>
+                    <td className="num">{v.played}</td>
+                    <td className="num">{fmt(v.secured, 0)}</td>
+                    <td className="num font-semibold">{fmt(v.projected, 0)}</td>
+                    <td
+                      className="num"
+                      style={{
+                        color: v.mine
+                          ? "var(--muted)"
+                          : (v.liveGapVsMe ?? 0) > 0
+                            ? "var(--bad)"
+                            : "var(--good)",
+                      }}
+                    >
+                      {v.mine
+                        ? "–"
+                        : `${(v.liveGapVsMe ?? 0) >= 0 ? "+" : ""}${fmt(v.liveGapVsMe, 0)}`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-[var(--muted)]">
+            Secured = points already banked; projected finish blends banked points with xPts for
+            players still to play. Rivals use a top-11 + captain estimate; your row uses the
+            auto-sub-aware number from the Overview.
+          </p>
+        </Section>
+      )}
+
       {r.strategy && (
         <div
           className="card p-3 text-sm"
@@ -70,7 +143,8 @@ export default async function RivalsPage() {
         {r.rivalCount === 1 ? "" : "s"}, from their saved squads — their actual XI and captain where
         UEFA exposes them, otherwise a top-11-by-xPts estimate. Your projected score:{" "}
         <strong>{fmt(r.myProjectedPoints)}</strong>
-        {r.myRank ? ` · currently rank ${r.myRank}` : ""}.
+        {r.myRank ? ` · currently rank ${r.myRank}` : ""}
+        {r.squadsAsOf ? ` · rival squads as of ${relTime(r.squadsAsOf)}` : ""}.
       </p>
 
       <Section title="Rivals — projected this matchday">

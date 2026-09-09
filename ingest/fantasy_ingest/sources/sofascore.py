@@ -39,7 +39,11 @@ class SofaClient:
         _CACHE.mkdir(parents=True, exist_ok=True)
 
     def _cache_path(self, path: str) -> Path:
-        safe = path.strip("/").replace("/", "_").replace("?", "_").replace("&", "_")
+        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in path.strip("/"))
+        if len(safe) > 120:
+            import hashlib
+
+            safe = safe[:80] + "_" + hashlib.sha1(path.encode()).hexdigest()[:16]
         return _CACHE / f"{safe}.json"
 
     def get(self, path: str, *, cache: bool = True, allow_404: bool = False) -> dict | None:
