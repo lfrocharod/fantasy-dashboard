@@ -7,8 +7,11 @@ Once the first game of a matchday kicks off this turns the submitted squad into:
   * the **projected finish** — secured points plus xPts for the players still to
     play — after UEFA's *automatic* substitutions (a starter who ends the
     matchday with no appearance is replaced by the first eligible bench player).
-    UCL Fantasy 2025/26 has **no vice-captain**: if the captain doesn't feature
-    and you didn't move the armband before kick-off, the double is simply lost.
+    UCL Fantasy 2025/26 has **no vice-captain**, but the armband can be moved
+    from day to day within the matchday — even off a captain who has already
+    played (they revert to their base score, the new captain's still-to-come
+    score is doubled). So the captain call stays live until there's no
+    not-yet-kicked-off XI player left to move it to.
   * **manual-sub** levers that are still legal and worth pulling — between match
     days you may swap up to 4 not-yet-played starters for bench players whose
     teams are also still to play (a subbed-out player scores 0, so we only ever
@@ -165,53 +168,69 @@ def build_live_state(
             break
 
     # ---- captain ------------------------------------------------------
-    # UCL Fantasy 2025/26 has NO vice-captain. If the (C) doesn't feature and you
-    # didn't move the armband before kick-off, the double is simply lost. You can
-    # move it mid-matchday to a player whose team is still to play — never once
-    # your captain has kicked off, and never on a single-slot matchday (MD8/final).
+    # UCL Fantasy 2025/26 has NO vice-captain. You CAN move the armband from day
+    # to day within a matchday — even away from a captain who has already played:
+    # they revert to their base score and the new captain (whose team must still
+    # be to play) is doubled instead. So the decision stays live as long as there
+    # is a not-yet-kicked-off XI player to move it to. It closes only on a
+    # single-slot matchday (MD8 / the final) where everything starts at once.
     cap = next((r for r in rows if r["isCaptain"]), None)
     vice = next((r for r in rows if r["isVice"]), None)  # shown as "(V)" only
     cap_eff, cap_note, cap_switch, cap_rec = cap, None, None, None
-    can_move = bool(cap and cap["matchState"] in _PENDING and in_play_open)
-    cap_locked = bool(cap and not can_move)
+    cap_locked = True
     if cap:
-        best_alt = None
-        if can_move:
-            best_alt = max(
-                (r for r in starters
-                 if r["matchState"] in _PENDING and r["playerId"] != cap["playerId"]),
-                key=lambda r: r["xpts"], default=None,
-            )
-            if best_alt and best_alt["xpts"] - cap["xpts"] >= CAPTAIN_SWITCH_MIN_GAIN:
-                cap_switch = {
-                    "toPlayerId": best_alt["playerId"], "toName": best_alt["name"],
-                    "toXpts": best_alt["xpts"], "fromName": cap["name"],
-                    "fromXpts": cap["xpts"], "gain": round(best_alt["xpts"] - cap["xpts"], 1),
-                }
+        cap_played = cap["matchState"] in _LIVE
+        cap_banked = float(cap["actual"] or 0) if cap_played else None
+        # what the armband is worth right now if left alone: banked points once
+        # the captain has featured, otherwise their projection.
+        held = cap_banked if cap_played else cap["xpts"]
 
-        if cap["dnp"]:
-            cap_eff, cap_rec = None, "locked"
-            cap_note = (
-                f"{cap['name']} didn't feature — no captain double this matchday "
-                "(there's no vice-captain; move the armband before kick-off next time)"
-            )
-        elif cap_switch:
+        alts = sorted(
+            (r for r in starters
+             if r["matchState"] in _PENDING and r["playerId"] != cap["playerId"]),
+            key=lambda r: -r["xpts"],
+        ) if in_play_open else []
+        best_alt = alts[0] if alts else None
+        cap_locked = best_alt is None
+
+        if best_alt and best_alt["xpts"] - held >= CAPTAIN_SWITCH_MIN_GAIN:
+            gain = round(best_alt["xpts"] - held, 1)
+            cap_switch = {
+                "toPlayerId": best_alt["playerId"], "toName": best_alt["name"],
+                "toXpts": best_alt["xpts"], "fromName": cap["name"],
+                "fromXpts": round(held, 1), "gain": gain,
+            }
             cap_rec = "switch"
             cap_note = (
+                f"CHANGE the (C): {cap['name']} keeps {cap_banked:.0f} as base — "
+                f"double {best_alt['name']} ({_f1(best_alt['xpts'])} proj) instead, +{gain}"
+                if cap_played else
                 f"CHANGE the (C): {cap['name']} ({_f1(cap['xpts'])}) → "
-                f"{cap_switch['toName']} ({_f1(cap_switch['toXpts'])}) — "
-                f"+{cap_switch['gain']} projected, neither has kicked off"
+                f"{best_alt['name']} ({_f1(best_alt['xpts'])}) — +{gain} projected, "
+                "neither has kicked off"
             )
-        elif can_move:
+        elif best_alt:
             cap_rec = "keep"
-            edge = (f", {_f1(cap['xpts'] - best_alt['xpts'])} clear of {best_alt['name']}"
-                    if best_alt else "")
-            cap_note = f"KEEP the (C) on {cap['name']} — still your top projection{edge}"
-        elif cap["matchState"] in _PENDING:
+            if cap_played:
+                cap_note = (
+                    f"KEEP the (C) on {cap['name']} — {cap_banked:.0f} banked (×2 = "
+                    f"{cap_banked * 2:.0f}) already beats {best_alt['name']}'s "
+                    f"{_f1(best_alt['xpts'])} projection"
+                )
+            else:
+                edge = f", {_f1(cap['xpts'] - best_alt['xpts'])} clear of {best_alt['name']}"
+                cap_note = f"KEEP the (C) on {cap['name']} — still your top projection{edge}"
+        elif not in_play_open and cap["matchState"] in _PENDING:
             cap_rec = "locked"
             cap_note = (
                 f"(C) on {cap['name']} is locked — every game kicks off together, so "
                 "the armband can't be moved once the matchday is under way"
+            )
+        elif cap["dnp"]:
+            cap_eff, cap_rec = None, "locked"
+            cap_note = (
+                f"{cap['name']} didn't feature and no one's left to move the armband to "
+                "— no captain double this matchday"
             )
         else:
             cap_rec = "locked"

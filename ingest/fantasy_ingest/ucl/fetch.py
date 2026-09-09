@@ -13,10 +13,16 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from dateutil import parser as dateparser
 
 from ..types import Fixture, LeagueEntry, Player, Position, SquadPick, Team
+
+# UEFA's Fantasy feeds emit *naive* wall-clock times in their own timezone
+# (Nyon / Zurich — CET in winter, CEST in summer). Treat them as such, not UTC,
+# or every kickoff and deadline is off by an hour or two.
+_UEFA_TZ = ZoneInfo("Europe/Zurich")
 
 _SKILL_TO_POS: dict[int, Position] = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 
@@ -83,9 +89,14 @@ def _dt(v: Any) -> datetime | None:
         return None
     try:
         d = dateparser.parse(str(v))
-        return d if d.tzinfo else d.replace(tzinfo=UTC)
     except (ValueError, OverflowError):
         return None
+    if d is None:
+        return None
+    # naive -> it's Zurich wall-clock; normalise everything to UTC for storage
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=_UEFA_TZ)
+    return d.astimezone(UTC)
 
 
 # --------------------------------------------------------------------------

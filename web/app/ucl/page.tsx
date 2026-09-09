@@ -1,4 +1,4 @@
-import { EmptyState, Legend, Pill, PosBadge, StatCard, StatusDot, Section } from "@/components/ui";
+import { Checklist, EmptyState, Legend, PosBadge, StatCard, StatusDot, Section } from "@/components/ui";
 import { fmt, money, timeUntil, dateTime } from "@/lib/format";
 import {
   getCurrentMatchday,
@@ -9,11 +9,13 @@ import {
   getLiveState,
   getMySquad,
   confirmedOf,
+  leaguePhaseStrategy,
   type SquadRow,
 } from "@/lib/ucl/queries";
 import { hasUsableXg } from "@/lib/ucl/xg";
 import { bestXiPlusCaptain } from "@/lib/ucl/score";
 import { LiveMatchday } from "./LiveMatchday";
+import { CaptaincyCard, type CaptainsBlob } from "./CaptaincyCard";
 import { getSetting, getSettings, KEYS } from "@/lib/settings";
 import { POSITIONS } from "@/lib/ucl/formation";
 import { FDR_TEXT, posFdr, type Pos } from "@/lib/fdr";
@@ -131,6 +133,10 @@ export default async function UclOverview() {
   const { total: projTotal } = bestXiPlusCaptain(squad);
   const myRow = table.rows.find((r) => r.entryId === table.myEntryId);
   const liveNow = live; // ingest only writes the blob for an active / just-finished MD
+  const strategy = leaguePhaseStrategy(table.rows, table.myEntryId, md);
+  const squadIds = new Set(squad.map((r) => r.playerId));
+  const setCaptainId = squad.find((r) => r.isCaptain)?.playerId ?? null;
+  const STRAT_TONE = { protect: "good", hold: "warn", chase: "accent", free: "muted" } as const;
 
   return (
     <div className="space-y-8">
@@ -166,16 +172,30 @@ export default async function UclOverview() {
           rivals={liveRivals && liveRivals.matchday === liveMd ? liveRivals : null}
         />
       ) : (
-        <Section title="Pre-deadline checklist">
-          <div className="card divide-y divide-[var(--border)]">
-            {buildChecklist(squad, opt).map((c, i) => (
-              <div key={i} className="flex items-center gap-2 px-3 py-2 text-sm">
-                <Pill tone={c.ok ? "good" : "warn"}>{c.ok ? "OK" : "DO"}</Pill>
-                <span>{c.text}</span>
-              </div>
-            ))}
-          </div>
-        </Section>
+        <>
+          {strategy && (
+            <div
+              className="card p-3 text-sm"
+              style={{ borderLeft: `3px solid var(--${STRAT_TONE[strategy.mode]})` }}
+            >
+              <b style={{ color: `var(--${STRAT_TONE[strategy.mode]})` }}>
+                {strategy.mode.toUpperCase()}
+              </b>{" "}
+              {strategy.text}
+            </div>
+          )}
+
+          <CaptaincyCard
+            captains={(opt.captains ?? {}) as CaptainsBlob}
+            squadIds={squadIds}
+            currentCaptainId={setCaptainId}
+            strategy={strategy}
+          />
+
+          <Section title="Pre-deadline checklist">
+            <Checklist items={buildChecklist(squad, opt)} />
+          </Section>
+        </>
       )}
 
       <Section title="Your squad">

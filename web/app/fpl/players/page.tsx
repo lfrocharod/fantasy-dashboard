@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Legend } from "@/components/ui";
+import { Legend, Range } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import {
   POS,
@@ -110,9 +110,12 @@ export default function FplPlayersPage() {
               <th>Pos</th>
               <th>Player</th>
               <th className="hide-sm">Team</th>
-              <th>Next</th>
-              <th className="num">Next</th>
-              <th className="num">Σ{gwCols.length}</th>
+              <th>Opp</th>
+              <th className="num">xPts</th>
+              <th className="num hide-sm">Range</th>
+              <th className="num" title={`sum of projected points over the next ${gwCols.length} gameweeks`}>
+                xPts·{gwCols.length}
+              </th>
               <th className="num hide-sm">Start%</th>
               <th className="num hide-sm">CS%</th>
               <th className="num hide-sm">xGI90</th>
@@ -168,6 +171,9 @@ export default function FplPlayersPage() {
                 <td className="hide-sm">{p.team}</td>
                 <td className="text-xs text-[var(--muted)]">{p.nextOpp}</td>
                 <td className="num">{fmt(p.proj)}</td>
+                <td className="num hide-sm">
+                  <Range lo={p.gws[0]?.lo ?? 0} hi={p.gws[0]?.hi ?? 0} mean={p.proj} digits={1} />
+                </td>
                 <td className="num font-semibold">{fmt(p.horizon, 0)}</td>
                 <td className="num hide-sm">{p.pStart ? `${Math.round(p.pStart * 100)}%` : "–"}</td>
                 <td className="num hide-sm">{p.pos === "FWD" ? "–" : Math.round(p.csProb * 100)}</td>
@@ -203,7 +209,8 @@ export default function FplPlayersPage() {
 
       <Legend
         items={[
-          ["Next / Σ", "projected draft points — next gameweek, then the sum over the shown horizon"],
+          ["xPts / xPts·N", "projected draft points — next gameweek, then the sum over the next N shown"],
+          ["Range", "~15th–85th percentile next-GW outcome (blank · mean · haul) — wider for boom/bust attackers, tighter for a nailed defender's appearance + DEFCON floor"],
           ["Start%", "modelled chance of starting the next match"],
           ["CS%", "clean-sheet probability (opponent attack vs your team's defence). GKP/DEF worth 4, MID 1"],
           ["xGI90", "expected goal involvements per 90 — non-penalty xG + xA, this Premier League season"],

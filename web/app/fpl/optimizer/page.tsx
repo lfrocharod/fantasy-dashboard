@@ -17,16 +17,13 @@ import {
   type Horizon,
   type PosFilter,
 } from "../lib";
+import { FDR_BG } from "@/lib/fdr";
 
 const POS_COLOR: Record<string, string> = {
   GKP: "#6b7280", DEF: "#1f6feb", MID: "#1a7f37", FWD: "#cf222e",
 };
 const STATUS_LABEL: Record<string, string> = {
   d: "doubt", i: "injured", s: "susp", u: "unavail", n: "out",
-};
-const FDR_BG: Record<number, string> = {
-  1: "rgba(34,197,94,0.32)", 2: "rgba(132,204,22,0.24)", 3: "rgba(148,163,184,0.14)",
-  4: "rgba(249,115,22,0.24)", 5: "rgba(239,68,68,0.30)",
 };
 
 export default function FplOptimizerPage() {

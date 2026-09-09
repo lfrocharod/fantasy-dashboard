@@ -15,8 +15,10 @@ Reads `DATABASE_URL` the same way the ingest job does. Read-only.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 from collections import defaultdict
+from datetime import UTC, datetime
 
 from .config import Env
 from .db import DB
@@ -132,6 +134,51 @@ def report(rows: list[dict]) -> str:
                "bias is small; MAE is the number to beat")
     out.append(f"Takeaway: {verdict}.")
     return "\n".join(out)
+
+
+def _verdict(s: dict) -> str:
+    if not s.get("n"):
+        return "no finished-matchday data yet"
+    if s["me"] < -0.3:
+        return "model runs HOT — predicts more than players score; lower form_weight / lean on the prior"
+    if s["me"] > 0.3:
+        return "model runs COLD — it's underselling returns"
+    return "bias is small; MAE is the number to beat"
+
+
+def report_json(rows: list[dict]) -> dict:
+    """Structured version of `report()` for the dashboard — written to
+    `ingest.calibration` each run so the Calibration panel is always current."""
+    mds = sorted({r["matchday"] for r in rows})
+    ov = _stats(rows)
+    by_pos = {p: _stats([r for r in rows if r["position"] == p])
+              for p in ("GK", "DEF", "MID", "FWD")}
+    by_md = {str(md): _stats([r for r in rows if r["matchday"] == md]) for md in mds}
+    buckets: dict[str, list] = defaultdict(list)
+    for r in rows:
+        buckets[_pred_bucket(r["xpts"])].append(r)
+    by_bucket = {b: _stats(buckets.get(b, [])) for b in ("0–2", "2–4", "4–6", "6–8", "8+")}
+    return {
+        "generatedAt": datetime.now(UTC).isoformat(),
+        "matchdays": mds,
+        "playerMatchdays": len(rows),
+        "overall": ov,
+        "byPosition": by_pos,
+        "byMatchday": by_md,
+        "byBucket": by_bucket,
+        "verdict": _verdict(ov),
+    }
+
+
+def compute_and_store(db: DB) -> dict | None:
+    """Best-effort: run the calibration and stash it. Returns the blob or None if
+    there's nothing finished to grade yet."""
+    rows = _fetch(db, None, played_only=False)
+    if not rows:
+        return None
+    blob = report_json(rows)
+    db.set_setting("ingest.calibration", json.dumps(blob))
+    return blob
 
 
 def main() -> int:

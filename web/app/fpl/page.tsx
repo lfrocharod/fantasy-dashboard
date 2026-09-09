@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Legend } from "@/components/ui";
+import { Checklist, Legend } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import type { DraftConfig } from "@/lib/draft/queries";
 import { bestXI, squadHorizon, toPlayer, type FplPlayer } from "./lib";
+import { FDR_TEXT } from "@/lib/fdr";
+import { FplFixtureRun } from "./FplFixtureRun";
 import { FplLive } from "./FplLive";
 import { FplSetup } from "./Setup";
 
@@ -14,9 +16,6 @@ const POS_COLOR: Record<string, string> = {
 };
 const STATUS_LABEL: Record<string, string> = {
   d: "doubt", i: "injured", s: "susp", u: "unavail", n: "out",
-};
-const FDR_TEXT: Record<number, string> = {
-  1: "#1a7f37", 2: "#4b9e2f", 3: "var(--muted)", 4: "#d1741f", 5: "#cf222e",
 };
 
 interface Check {
@@ -101,9 +100,8 @@ export default function FplOverviewPage() {
     if (!lu.length) return null;
     const start = lu.filter((p) => p.starter).map((p) => byId.get(p.extId)).filter(Boolean) as FplPlayer[];
     const bench = lu.filter((p) => !p.starter).map((p) => byId.get(p.extId)).filter(Boolean) as FplPlayer[];
-    const capId = lu.find((p) => p.captain)?.extId ?? null;
     const src = config?.fplLineup?.source ?? "";
-    return start.length >= 11 ? { xi: start, bench, capId, src } : null;
+    return start.length >= 11 ? { xi: start, bench, src } : null;
   }, [config, byId]);
 
   const model = useMemo(() => (mySquad.length >= 11 ? bestXI(mySquad) : null), [mySquad]);
@@ -130,7 +128,15 @@ export default function FplOverviewPage() {
       .filter((s) => s!.gain > 0.4) as { out: FplPlayer; in: FplPlayer; gain: number }[];
   }, [setXi, model]);
 
-  const standings = (config?.standings ?? []) as { entry_id: number | null; rank: number }[];
+  const standings = useMemo(
+    () =>
+      (config?.standings ?? []) as {
+        entry_id: number | null;
+        rank: number;
+        total: number;
+      }[],
+    [config],
+  );
   const myRank = standings.find((s) => String(s.entry_id) === String(config?.entryId))?.rank;
   const nextGwProj = xi.reduce((a, p) => a + (p.gws[0]?.xpts ?? p.proj), 0);
   const rosPerGw = mySquad.length
@@ -216,19 +222,7 @@ export default function FplOverviewPage() {
 
           <section className="space-y-2">
             <h2 className="text-sm font-semibold text-[var(--muted)]">PRE-DEADLINE CHECKLIST</h2>
-            <div className="card divide-y divide-[var(--border)]">
-              {buildChecklist(xi, bench, nextGw, setXi?.src ?? null).map((ch, i) => (
-                <div key={i} className="flex items-center gap-2 px-3 py-2 text-sm">
-                  <span
-                    className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white"
-                    style={{ background: ch.ok ? "var(--good)" : "var(--warn)" }}
-                  >
-                    {ch.ok ? "OK" : "DO"}
-                  </span>
-                  <span>{ch.text}</span>
-                </div>
-              ))}
-            </div>
+            <Checklist items={buildChecklist(xi, bench, nextGw, setXi?.src ?? null)} />
           </section>
 
           <section className="space-y-2">
@@ -258,7 +252,6 @@ export default function FplOverviewPage() {
                   {ordered.map((p) => {
                     const g = p.gws[0];
                     const starting = startSet.has(p.extId);
-                    const isCap = setXi?.capId === p.extId;
                     return (
                       <tr key={p.extId} style={starting ? undefined : { opacity: 0.55 }}>
                         <td>
@@ -268,7 +261,6 @@ export default function FplOverviewPage() {
                         </td>
                         <td className="font-medium">
                           {p.name}
-                          {isCap && <span className="ml-1 text-[10px] font-bold text-[var(--accent)]">C</span>}
                           {p.setPiece && (
                             <span className="ml-1 text-[10px] font-semibold text-[var(--accent)]">
                               {p.setPiece.replace("PK2", "PK²")}
@@ -308,10 +300,11 @@ export default function FplOverviewPage() {
             </div>
           </section>
 
+          {mySquad.length > 0 && <FplFixtureRun squad={mySquad} />}
+
           <Legend
             items={[
               ["XI / bench", fromApp ? "your actual FPL lineup (live Pick Team with the pl_profile cookie, otherwise your last fielded XI)" : "the model's best legal XI (no saved lineup pulled yet)"],
-              ["C", "your captain"],
               [
                 "Opp colour",
                 "position-aware fixture difficulty (green easy … red hard): forwards weigh the opponent's defensive solidity, keepers their attacking threat, defenders mostly clean-sheet risk plus some set-piece upside, midfielders mostly attacking",

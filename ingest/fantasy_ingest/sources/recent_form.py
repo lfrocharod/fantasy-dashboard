@@ -127,6 +127,9 @@ def _aggregate_player(client: SofaClient, ss_id: int, last_n: int) -> dict:
     team_map = ev.get("playedForTeamMap", {}) or {}
     bench_map = ev.get("onBenchMap", {}) or {}
     stat_map = ev.get("statisticsMap", {}) or {}
+    # Sofascore stripped goals/assists/cards out of the embedded statisticsMap
+    # (which now only carries rating + minutes) — they live in incidentsMap now.
+    inc_map = ev.get("incidentsMap", {}) or {}
 
     def _is_senior(e: dict) -> bool:
         # drop reserve / academy / youth appearances so a fringe first-teamer's
@@ -162,6 +165,7 @@ def _aggregate_player(client: SofaClient, ss_id: int, last_n: int) -> dict:
         if (e.get("startTimestamp") or 0) > now - 14 * 86400:
             agg["m14"] += 1
         s = stat_map.get(str(eid)) or stat_map.get(eid) or {}
+        inc = inc_map.get(str(eid)) or inc_map.get(eid) or {}
         mins = _num(s.get("minutesPlayed"))
         agg["matches"] += 1
         agg["minutes"] += mins
@@ -172,8 +176,8 @@ def _aggregate_player(client: SofaClient, ss_id: int, last_n: int) -> dict:
             r = _role_of(str(s.get("position") or ""))
             if r:
                 agg["roles"].append(r)
-        agg["goals"] += _num(s.get("goals"))
-        agg["assists"] += _num(s.get("goalAssist"))
+        agg["goals"] += _num(s.get("goals")) or _num(inc.get("goals"))
+        agg["assists"] += _num(s.get("goalAssist")) or _num(inc.get("assists"))
         agg["npxg"] += _num(s.get("expectedGoals"))  # SS xG excludes penalties already
         agg["xa"] += _num(s.get("expectedAssists"))
         agg["shots"] += _num(s.get("totalShots"))

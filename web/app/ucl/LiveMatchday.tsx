@@ -180,7 +180,7 @@ export function LiveMatchday({
             cap?.recommendation === "switch" && cap.switch
               ? `CHANGE → ${cap.switch.toName.split(" ").slice(-1)[0]} (+${fmt(cap.switch.gain, 1)})`
               : cap?.recommendation === "keep"
-                ? "KEEP — top projection"
+                ? "KEEP the armband"
                 : cap?.effectiveName === null
                   ? `no ×2 — ${cap.name.split(" ").slice(-1)[0]} blanked`
                   : cap?.matchState === "finished"
@@ -250,9 +250,6 @@ export function LiveMatchday({
                     : "CAPTAIN"}
               </Pill>{" "}
               {cap.note}
-              {cap.recommendation === "switch" && cap.switch && (
-                <span className="text-[var(--good)]"> (+{fmt(cap.switch.gain, 1)} proj)</span>
-              )}
             </div>
           )}
           {live.autoSubs.map((s, i) => (

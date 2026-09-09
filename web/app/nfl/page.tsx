@@ -1,17 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { Legend } from "@/components/ui";
+import { Checklist, Legend, Range } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import type { DraftConfig } from "@/lib/draft/queries";
 import {
   FDR_BG,
   POS_COLOR,
   groupTeams,
+  lineupMode,
   loadNfl,
   optimalLineup,
   weekPoints,
+  weekRange,
+  winProbFromMargin,
   type NflPlayer,
 } from "./lib";
 
@@ -37,13 +39,6 @@ function InjTag({ s }: { s: string }) {
   if (s === "ACTIVE") return null;
   const short = { QUESTIONABLE: "Q", DOUBTFUL: "D", OUT: "O", IR: "IR", SUSPENSION: "SUS" }[s] ?? s[0];
   return <span className="ml-1 text-[10px] font-semibold text-[var(--bad)]">{short}</span>;
-}
-
-// win prob from projected margin. Each team total has sd ~24 (matches the
-// playoff sim), so the margin's sd is ~34; a logistic that approximates that
-// normal has scale ~19.
-function winProb(margin: number): number {
-  return Math.round(100 / (1 + Math.exp(-margin / 19)));
 }
 
 const POS_SORT = ["QB", "RB", "WR", "TE", "K", "DST"];
@@ -104,6 +99,9 @@ export default function NflOverviewPage() {
   }
 
   const margin = theirs ? mine.total - theirs.total : 0;
+  const winPct = theirs ? winProbFromMargin(margin) : 50;
+  const byPointsSeed = (config?.nflSeedingRule ?? "H2H_RECORD") === "TOTAL_POINTS_SCORED";
+  const mode = lineupMode(winPct, byPointsSeed);
   const changes =
     mine.starters.filter((s) => s.p && (s.p.slot === "BE" || s.p.slot === "IR" || !s.p.slot)).length +
     myRoster.filter((p) => !optIds.has(p.extId) && p.slot && p.slot !== "BE" && p.slot !== "IR").length;
@@ -115,21 +113,23 @@ export default function NflOverviewPage() {
     (a, b) => POS_SORT.indexOf(a.pos) - POS_SORT.indexOf(b.pos) || weekPoints(b, 0) - weekPoints(a, 0),
   );
 
-  const byPoints = (config?.nflSeedingRule ?? "H2H_RECORD") === "TOTAL_POINTS_SCORED";
   const checks: { ok: boolean; text: string; href?: string }[] = [
     {
       ok: changes === 0,
       text: changes === 0 ? "ESPN lineup matches the optimal one" : `${changes} lineup change(s) recommended`,
       href: "/nfl/optimizer",
     },
-    ...(byPoints
-      ? [
-          {
-            ok: true,
-            text: "Playoffs seed by total points — start your highest-ceiling lineup, not the safe floor",
-          },
-        ]
-      : []),
+    {
+      ok: true,
+      text: byPointsSeed
+        ? "League seeds on total points — start your highest-ceiling lineup every week"
+        : mode === "ceiling"
+          ? `Underdog this week (${winPct}%) — start the higher-ceiling options, chase the upset`
+          : mode === "floor"
+            ? `Favoured this week (${winPct}%) — start the safe floor, don't hand back the edge`
+            : `Close matchup (${winPct}%) — start your best straight projection`,
+      href: "/nfl/optimizer",
+    },
     {
       ok: injured.length === 0,
       text: injured.length
@@ -160,7 +160,7 @@ export default function NflOverviewPage() {
             <>
               {" "}vs {oppTeam?.name} <b>{fmt(theirs.total, 0)}</b> —{" "}
               <span style={{ color: margin >= 0 ? "var(--good)" : "var(--bad)" }}>
-                {winProb(margin)}% win
+                {winPct}% win
               </span>
             </>
           )}
@@ -169,24 +169,7 @@ export default function NflOverviewPage() {
 
       <section className="space-y-2">
         <h2 className="text-sm font-semibold text-[var(--muted)]">THIS WEEK — checklist</h2>
-        <div className="card divide-y divide-[var(--border)]">
-          {checks.map((c, i) => (
-            <div key={i} className="flex items-center gap-2 px-3 py-2 text-sm">
-              <span
-                className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white"
-                style={{ background: c.ok ? "var(--good)" : "var(--warn)" }}
-              >
-                {c.ok ? "OK" : "DO"}
-              </span>
-              <span>{c.text}</span>
-              {c.href && !c.ok && (
-                <Link href={c.href} className="ml-auto text-xs text-[var(--accent)]">
-                  open Optimizer →
-                </Link>
-              )}
-            </div>
-          ))}
-        </div>
+        <Checklist items={checks.map((c) => ({ ...c, linkText: "open Optimizer →" }))} />
       </section>
 
       <section className="space-y-2">
@@ -198,6 +181,7 @@ export default function NflOverviewPage() {
                 <th>Player</th>
                 <th>Matchup</th>
                 <th className="num">Wk proj</th>
+                <th className="num hide-sm">Range</th>
                 <th className="num hide-sm">ROS</th>
                 <th></th>
               </tr>
@@ -206,6 +190,7 @@ export default function NflOverviewPage() {
               {ordered.map((p) => {
                 const m = p.matchups[0];
                 const starting = optIds.has(p.extId);
+                const rng = weekRange(p, 0);
                 return (
                   <tr key={p.extId} style={starting ? undefined : { opacity: 0.55 }}>
                     <td className="font-medium">
@@ -223,6 +208,9 @@ export default function NflOverviewPage() {
                       </span>
                     </td>
                     <td className="num font-semibold">{fmt(weekPoints(p, 0))}</td>
+                    <td className="num hide-sm">
+                      <Range lo={rng.lo} hi={rng.hi} />
+                    </td>
                     <td className="num hide-sm">{fmt(p.rosProj, 0)}</td>
                     <td className="text-[10px] text-[var(--muted)]">{starting ? "start" : "bench"}</td>
                   </tr>
@@ -237,6 +225,7 @@ export default function NflOverviewPage() {
         items={[
           ["Matchup colour", "1 (green) easy … 5 (red) hard — opponent defence vs that position"],
           ["Wk proj / ROS", "projected PPR points this week / rest of season"],
+          ["Range", "~15th–85th percentile week (floor–ceiling) — the Optimizer uses it to field a floor or ceiling lineup based on your win odds"],
           ["dimmed row", "not in your optimal lineup this week"],
           ["Win %", "from the projected margin vs this week's opponent"],
         ]}

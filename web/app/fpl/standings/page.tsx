@@ -31,6 +31,61 @@ function projGw(mg: Manager | undefined, gwIdx: number): number {
   return xi.reduce((a, p) => a + (p.gws[gwIdx]?.xpts ?? 0), 0);
 }
 
+function gauss(mean: number, sd: number): number {
+  const u = 1 - Math.random();
+  const v = Math.random();
+  return mean + sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+interface FinishOdds {
+  firstPct: number;
+  topHalfPct: number;
+  meanRank: number;
+}
+
+/**
+ * Monte-Carlo the rest of a total-points season: each team's remaining GWs are
+ * drawn from their best-XI per-GW rate (ROS ÷ GWs left) with a ~32% spread —
+ * a draft XI is far less boom/bust than one player. Turns the deterministic
+ * "projected #3, 2 back" into real odds.
+ */
+function simulateSeason(
+  entries: { id: string; now: number; ros: number }[],
+  gwsLeft: number,
+  iters = 4000,
+): Map<string, FinishOdds> | null {
+  if (gwsLeft < 1 || entries.length < 2 || entries.every((e) => e.ros <= 0)) return null;
+  const half = Math.ceil(entries.length / 2);
+  const first = new Map(entries.map((e) => [e.id, 0]));
+  const topHalf = new Map(entries.map((e) => [e.id, 0]));
+  const rankSum = new Map(entries.map((e) => [e.id, 0]));
+  for (let it = 0; it < iters; it++) {
+    const finals = entries
+      .map((e) => {
+        const perGw = e.ros / gwsLeft;
+        let t = e.now;
+        for (let g = 0; g < gwsLeft; g++) t += Math.max(0, gauss(perGw, 0.32 * perGw + 4));
+        return { id: e.id, t };
+      })
+      .sort((a, b) => b.t - a.t);
+    finals.forEach((f, idx) => {
+      rankSum.set(f.id, (rankSum.get(f.id) ?? 0) + idx + 1);
+      if (idx === 0) first.set(f.id, (first.get(f.id) ?? 0) + 1);
+      if (idx < half) topHalf.set(f.id, (topHalf.get(f.id) ?? 0) + 1);
+    });
+  }
+  return new Map(
+    entries.map((e) => [
+      e.id,
+      {
+        firstPct: (100 * (first.get(e.id) ?? 0)) / iters,
+        topHalfPct: (100 * (topHalf.get(e.id) ?? 0)) / iters,
+        meanRank: (rankSum.get(e.id) ?? 0) / iters,
+      },
+    ]),
+  );
+}
+
 export default function StandingsPage() {
   const [players, setPlayers] = useState<FplPlayer[]>([]);
   const [picks, setPicks] = useState<
@@ -60,6 +115,7 @@ export default function StandingsPage() {
   const byEntry = useMemo(() => new Map(managers.map((m) => [m.entryId, m])), [managers]);
   const isH2H = config?.fplMode === "h";
   const nextGw = players[0]?.gws[0]?.gw ?? 0;
+  const gwsLeft = Math.max(1, 39 - (nextGw || 1));
 
   // current table stays in official rank order; project a final table alongside
   const rows = useMemo(() => {
@@ -75,6 +131,17 @@ export default function StandingsPage() {
       .sort((a, b) => a.rank - b.rank)
       .map((r) => ({ ...r, projRank: projRank.get(r.entry_id) ?? r.rank, gap: leaderFinal - r.finalPts }));
   }, [standings, byEntry]);
+
+  const odds = useMemo(
+    () =>
+      isH2H
+        ? null
+        : simulateSeason(
+            rows.map((r) => ({ id: String(r.entry_id), now: r.total, ros: r.ros })),
+            gwsLeft,
+          ),
+    [rows, gwsLeft, isH2H],
+  );
 
   // "catch the leader" — where you sit, and the single best move to gain ground
   const path = useMemo(() => {
@@ -144,6 +211,8 @@ export default function StandingsPage() {
                 {isH2H && <th className="num hide-sm">W-D-L</th>}
                 <th className="num">Squad ROS</th>
                 <th className="num">Proj. final</th>
+                {odds && <th className="num hide-sm">Win</th>}
+                {odds && <th className="num hide-sm">Top½</th>}
                 <th className="num hide-sm">Gap</th>
               </tr>
             </thead>
@@ -151,6 +220,7 @@ export default function StandingsPage() {
               {rows.map((s) => {
                 const mg = byEntry.get(String(s.entry_id));
                 const move = s.rank - s.projRank; // + = climbing
+                const o = odds?.get(String(s.entry_id));
                 return (
                   <tr key={s.rank} style={mg?.isMine ? { background: "rgba(31,111,235,0.08)" } : undefined}>
                     <td className="num">{s.rank}</td>
@@ -173,6 +243,17 @@ export default function StandingsPage() {
                         </span>
                       )}
                     </td>
+                    {odds && (
+                      <td
+                        className="num hide-sm"
+                        style={{ color: (o?.firstPct ?? 0) >= 20 ? "var(--good)" : undefined }}
+                      >
+                        {o ? (o.firstPct < 1 ? "<1%" : `${Math.round(o.firstPct)}%`) : "–"}
+                      </td>
+                    )}
+                    {odds && (
+                      <td className="num hide-sm">{o ? `${Math.round(o.topHalfPct)}%` : "–"}</td>
+                    )}
                     <td className="num hide-sm text-[var(--muted)]">
                       {s.gap <= 0.5 ? "—" : `-${fmt(s.gap, 0)}`}
                     </td>
@@ -186,6 +267,13 @@ export default function StandingsPage() {
           Rows are the current table. <b>Proj. final</b> = current points + roster&apos;s projected
           rest-of-season output (best legal XI each GW); the <b>→#N</b> tag is where that projection
           puts them (green = climbing, red = slipping).
+          {odds && (
+            <>
+              {" "}
+              <b>Win / Top½</b> are from 4,000 simulations of the {gwsLeft} GW left — each squad&apos;s
+              weekly score drawn from its projected rate with a ~32% spread.
+            </>
+          )}
         </p>
       </section>
 

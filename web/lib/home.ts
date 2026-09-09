@@ -304,5 +304,10 @@ export async function getHomeSummary(): Promise<HomeSummary> {
     });
   }
 
+  // most urgent first — "do this now" (bad) above "worth doing" (warn) above
+  // "an option" (accent); stable within a tone so the code order still reads.
+  const toneW = { bad: 0, warn: 1, accent: 2 } as const;
+  alerts.sort((a, b) => toneW[a.tone] - toneW[b.tone]);
+
   return { ucl, fpl, nfl, alerts };
 }

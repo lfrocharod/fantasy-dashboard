@@ -30,6 +30,8 @@ export const KEYS = {
   // xG name-match coverage from the last run (JSON) — which players got an
   // underlying-stat row and which didn't.
   xgCoverage: "ingest.xg_coverage",
+  // xPts model calibration vs actual matchday points (JSON).
+  calibration: "ingest.calibration",
 } as const;
 
 export async function getSetting(key: string): Promise<string | null> {

@@ -331,11 +331,29 @@ def _gw_projection(
     disc_pts = p_any * sc["yellow_cards"] * 0.16
 
     total = g_pts + a_pts + app_pts + cs_pts + conc_pts + save_pts + dc_pts + bonus_pts + disc_pts
+
+    # per-fixture spread. Goals/assists are Poisson counts (var = mean), scaled by
+    # their point value; a clean sheet is one Bernoulli trial; appearance points
+    # are near-certain; bonus/DEFCON/saves carry ~40% relative noise. The band is
+    # asymmetric — a haul is further from the mean than a blank.
+    gw, aw = sc[f"goals_scored_{pos}"], sc["assists"]
+    cs_hit = p_start * 0.86 * cs_prob
+    var = (
+        exp_g * gw * gw
+        + exp_a * aw * aw
+        + cs_hit * (1.0 - cs_hit) * (sc[f"clean_sheets_{pos}"] ** 2)
+        + (0.42 * (bonus_pts + dc_pts + save_pts)) ** 2
+        + (0.12 * app_pts) ** 2
+    )
+    sd = var**0.5
+    lo = max(0.0, total - 0.85 * sd)
+    hi = total + 1.2 * sd
+
     comp = {
         "goals": round(g_pts, 2), "assists": round(a_pts, 2), "appearance": round(app_pts, 2),
         "clean_sheet": round(cs_pts, 2), "conceded": round(conc_pts, 2), "saves": round(save_pts, 2),
         "defcon": round(dc_pts, 2), "bonus": round(bonus_pts, 2), "discipline": round(disc_pts, 2),
-        "xmins": round(xmins, 0),
+        "xmins": round(xmins, 0), "lo": round(lo, 2), "hi": round(hi, 2),
     }
     return max(0.0, total), round(cs_prob, 3), comp
 
@@ -453,6 +471,12 @@ def _blend_gw(el, pos, sc, own_code, oc, ish, ps, pa, ppg, frm, wm, games=6):
     model, cs, cmp = _gw_projection(el, pos, sc, own_code, oc, ish, ps, pa)
     anchor = _anchor(el, pos, ppg, frm, oc, ish, ps, games, own_code)
     x = wm * model + (1 - wm) * anchor if anchor > 0 else model
+    # carry the model's spread onto the blended point (same absolute band)
+    cmp = {
+        **cmp,
+        "lo": round(max(0.0, x - (model - cmp.get("lo", model))), 2),
+        "hi": round(x + (cmp.get("hi", model) - model), 2),
+    }
     return round(x, 2), cs, cmp
 
 
@@ -517,26 +541,30 @@ def build(next_gw: int, roster: dict[str, int], teams: int, league_id: str | Non
         for gw in gw_list:
             fixtures = [f for f in fx.get(gw, []) if el["team"] in (f["h"], f["a"])]
             if not fixtures:
-                gws.append({"gw": gw, "opp": "", "home": None, "fdr": 0, "xpts": 0.0, "cs": 0.0})
+                gws.append({"gw": gw, "opp": "", "home": None, "fdr": 0,
+                            "xpts": 0.0, "lo": 0.0, "hi": 0.0, "cs": 0.0})
                 fit_gws.append(0.0)
                 continue
-            gx = fx_x = gcs = 0.0
+            gx = fx_x = gcs = glo = ghi = 0.0
             opps = []
             off_fdr = att_fdr = def_fdr = 3
             for f in fixtures:
                 ish = f["h"] == el["team"]
                 oc = club.get(f["a"] if ish else f["h"], "")
-                x, cs, _c = _blend_gw(el, pos, sc, own_code, oc, ish, p_start, p_any, ppg, frm, wm, games)
+                x, cs, c = _blend_gw(el, pos, sc, own_code, oc, ish, p_start, p_any, ppg, frm, wm, games)
                 fxx, _fcs, _fc = _blend_gw(el, pos, sc, own_code, oc, ish, fit_ps, fit_pa, ppg, frm, wm, games)
                 gx += x
                 fx_x += fxx
+                glo += c.get("lo", x)
+                ghi += c.get("hi", x)
                 gcs = max(gcs, cs)
                 att_fdr, def_fdr, off_fdr = _pos_fdr(pos, oc, ish, own_code)
                 opps.append(f"{oc} ({'H' if ish else 'A'})")
             gws.append({"gw": gw, "opp": " + ".join(opps),
                         "home": fixtures[0]["h"] == el["team"], "fdr": off_fdr,
                         "fdrAtt": att_fdr, "fdrDef": def_fdr,
-                        "xpts": round(gx, 2), "cs": gcs})
+                        "xpts": round(gx, 2), "lo": round(glo, 2), "hi": round(ghi, 2),
+                        "cs": gcs})
             fit_gws.append(round(fx_x, 2))
 
         next_x = gws[0]["xpts"] if gws else 0.0

@@ -32,6 +32,8 @@ export interface PlayerRow {
   uefaForm: number;
   xpts: number | null;
   xptsCaptain: number | null;
+  xptsHigh: number | null;
+  xptsLow: number | null;
   value: number | null;
   pStart: number | null;
   expMinutes: number | null;
@@ -79,6 +81,8 @@ const playerSelect = {
   uefaForm: players.uefaForm,
   xpts: projections.xpts,
   xptsCaptain: projections.xptsCaptain,
+  xptsHigh: projections.xptsHigh,
+  xptsLow: projections.xptsLow,
   value: projections.value,
   pStart: projections.pStart,
   expMinutes: projections.expMinutes,
@@ -501,7 +505,7 @@ export interface RivalReport {
     mine: boolean;
   }[];
   captainPicks: { playerId: number; name: string; count: number; mine: boolean }[];
-  strategy: { mode: "protect" | "hold" | "chase" | "free"; text: string; mdsLeft: number } | null;
+  strategy: LeagueStrategy | null;
   rivalCount: number;
   // when the rival squads we projected were last captured from UEFA, the
   // matchday they belong to, and whether that's stale enough to warn about
@@ -512,6 +516,66 @@ export interface RivalReport {
 }
 
 const RIVAL_STALE_MS = 2 * 24 * 60 * 60 * 1000;
+
+export type LeagueStrategyMode = "protect" | "hold" | "chase" | "free";
+export interface LeagueStrategy {
+  mode: LeagueStrategyMode;
+  text: string;
+  mdsLeft: number;
+  // one-word steer for the captaincy widget: play the safe (higher-floor) pick
+  // or the differential (higher-ceiling) one.
+  captain: "safe" | "match" | "differential" | "best";
+}
+
+/**
+ * What your league-phase table position says about how to play the armband and
+ * differentials. Pure — `standings` is any list carrying entryId / rank /
+ * totalPoints / managerName; league phase is 8 matchdays.
+ */
+export function leaguePhaseStrategy(
+  standings: { entryId: string; rank: number; totalPoints: number; managerName?: string }[],
+  myEntryId: string | null,
+  matchday: number,
+  lastLeagueMd = 8,
+): LeagueStrategy | null {
+  const mdsLeft = Math.max(0, lastLeagueMd - matchday + 1);
+  const me = standings.find((r) => r.entryId === myEntryId);
+  if (!me || me.rank == null) return null;
+  const room = mdsLeft * 14; // ~a plausible points swing between two managers per MD
+  const behind = standings.find((r) => r.rank === me.rank + 1);
+  const ahead = standings.find((r) => r.rank === me.rank - 1);
+  const gapAhead = ahead ? ahead.totalPoints - me.totalPoints : null;
+  const leadOverBehind = behind ? me.totalPoints - behind.totalPoints : null;
+  if (me.rank === 1) {
+    return (leadOverBehind ?? 999) > room
+      ? {
+          mode: "protect",
+          mdsLeft,
+          captain: "safe",
+          text: `You lead by ${leadOverBehind ?? "—"} with ${mdsLeft} MD left — protect it. Own what your rivals own (template), take the safe captain, and don't chase differentials that only help if they blow up.`,
+        }
+      : {
+          mode: "hold",
+          mdsLeft,
+          captain: "match",
+          text: `Lead is only ${leadOverBehind ?? "—"} with ${mdsLeft} MD left — match your nearest rival's captain and their big differentials so a single haul can't flip the table.`,
+        };
+  }
+  if (gapAhead != null && gapAhead <= room) {
+    return {
+      mode: "chase",
+      mdsLeft,
+      captain: "differential",
+      text: `${gapAhead} pts behind ${ahead?.managerName ?? "the spot ahead"} with ${mdsLeft} MD left — you need variance. Fade template, take the aggressive (differential) captain, and prioritise low-owned high-xPts players from the list below.`,
+    };
+  }
+  return {
+    mode: "free",
+    mdsLeft,
+    captain: "best",
+    text: "Out of realistic range of a prize place — just play the highest expected points every matchday, no need to hedge or gamble.",
+  };
+}
 
 /** A rival's saved squad — new rows are [{id,c,s,b}], older ones a bare list. */
 function normSquad(raw: unknown): {
@@ -754,43 +818,7 @@ export async function getRivals(matchday: number): Promise<RivalReport> {
 
   // chase / protect: what your table position says about how to play the armband
   // and differentials over the rest of the league phase
-  const mdsLeft = Math.max(0, 8 - matchday + 1);
-  const meStanding = standings.find((r) => r.entryId === myEntryId);
-  const rank = meStanding?.rank ?? null;
-  const room = mdsLeft * 14; // ~a plausible points swing between two managers per MD
-  let strategy: RivalReport["strategy"] = null;
-  if (rank != null && meStanding) {
-    const behind = standings.find((r) => r.rank === rank + 1);
-    const ahead = standings.find((r) => r.rank === rank - 1);
-    const gapAhead = ahead ? ahead.totalPoints - meStanding.totalPoints : null;
-    const leadOverBehind = behind ? meStanding.totalPoints - behind.totalPoints : null;
-    if (rank === 1) {
-      strategy =
-        (leadOverBehind ?? 999) > room
-          ? {
-              mode: "protect",
-              mdsLeft,
-              text: `You lead by ${leadOverBehind ?? "—"} with ${mdsLeft} MD left — protect it. Own what your rivals own (template), take the safe captain, and don't chase differentials that only help if they blow up.`,
-            }
-          : {
-              mode: "hold",
-              mdsLeft,
-              text: `Lead is only ${leadOverBehind ?? "—"} with ${mdsLeft} MD left — match your nearest rival's captain and their big differentials so a single haul can't flip the table.`,
-            };
-    } else if (gapAhead != null && gapAhead <= room) {
-      strategy = {
-        mode: "chase",
-        mdsLeft,
-        text: `${gapAhead} pts behind ${ahead?.managerName ?? "the spot ahead"} with ${mdsLeft} MD left — you need variance. Fade template, take the aggressive (differential) captain, and prioritise low-owned high-xPts players from the list below.`,
-      };
-    } else {
-      strategy = {
-        mode: "free",
-        mdsLeft,
-        text: `Out of realistic range of a prize place — just play the highest expected points every matchday, no need to hedge or gamble.`,
-      };
-    }
-  }
+  const strategy = leaguePhaseStrategy(standings, myEntryId, matchday);
 
   return {
     ready: true,

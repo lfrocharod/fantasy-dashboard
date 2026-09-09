@@ -112,11 +112,30 @@ export default function NflPlayersPage() {
     return out;
   }, [mineLineup, bestAt]);
 
-  // week streamers: best available DST + K by this week's matchup
-  const streamers = useMemo(
-    () => ({ DST: bestAt("DST", true), K: bestAt("K", true) }),
-    [bestAt],
-  );
+  // streaming plan — top few available DST / K / QB / TE over the next 3 weeks,
+  // with each option's best week flagged (matchup grid rendered below)
+  const week = config?.nflWeek ?? 1;
+  const streamPlan = useMemo(() => {
+    const wl = (i: number) => Math.max(3, 15 - (week + i));
+    return (["DST", "K", "QB", "TE"] as const)
+      .map((position) => ({
+        position,
+        options: freeAgents
+          .filter((p) => p.pos === position && !OUT_STATUS.has(p.injury))
+          .map((p) => {
+            const wk = [0, 1, 2].map((i) => ({
+              opp: p.matchups[i]?.opp ?? "",
+              fdr: p.matchups[i]?.fdr ?? 0,
+              proj: weekPoints(p, i, wl(i)),
+            }));
+            const best = wk.reduce((bi, w, i, a) => (w.proj > a[bi].proj ? i : bi), 0);
+            return { p, wk, best, total3: wk.reduce((a, w) => a + w.proj, 0) };
+          })
+          .sort((a, b) => b.total3 - a.total3)
+          .slice(0, 3),
+      }))
+      .filter((g) => g.options.length > 0);
+  }, [freeAgents, week]);
 
   const list = useMemo(() => {
     let l = freeAgents.filter((p) => !OUT_STATUS.has(p.injury));
@@ -158,7 +177,7 @@ export default function NflPlayersPage() {
           ))}
         </div>
       </div>
-      {(holes.length > 0 || streamers.DST || streamers.K) && (
+      {holes.length > 0 && (
         <div className="card space-y-2 p-3 text-sm">
           {holes.map(({ gap, fill, reason }) => (
             <div key={gap.extId}>
@@ -174,25 +193,62 @@ export default function NflPlayersPage() {
               )}
             </div>
           ))}
-          {(streamers.DST || streamers.K) && (
-            <div className="text-[var(--muted)]">
-              <b className="text-[var(--text)]">Streamers:</b>{" "}
-              {streamers.DST && (
-                <>
-                  DST <b>{streamers.DST.name}</b> ({fmt(weekPoints(streamers.DST, 0))}
-                  {streamers.DST.matchups[0]?.opp ? `, ${streamers.DST.matchups[0].opp}` : ""})
-                </>
-              )}
-              {streamers.DST && streamers.K ? " · " : ""}
-              {streamers.K && (
-                <>
-                  K <b>{streamers.K.name}</b> ({fmt(weekPoints(streamers.K, 0))}
-                  {streamers.K.matchups[0]?.opp ? `, ${streamers.K.matchups[0].opp}` : ""})
-                </>
-              )}
-            </div>
-          )}
         </div>
+      )}
+
+      {streamPlan.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold text-[var(--muted)]">
+            STREAMING — best available, next 3 weeks
+          </h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {streamPlan.map((g) => (
+              <div key={g.position} className="card p-3 text-sm">
+                <div className="mb-1 font-semibold">
+                  <Tag pos={g.position} /> {g.position}
+                </div>
+                <table className="dtable">
+                  <thead>
+                    <tr>
+                      <th>Player</th>
+                      {[0, 1, 2].map((i) => (
+                        <th key={i} className="num">
+                          W{week + i}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {g.options.map(({ p, wk, best }) => (
+                      <tr key={p.extId}>
+                        <td className="font-medium">
+                          {p.name} <span className="text-[var(--muted)]">{p.team}</span>
+                        </td>
+                        {wk.map((w, i) => (
+                          <td
+                            key={i}
+                            className="num tabular-nums"
+                            style={w.fdr ? { background: FDR_BG[w.fdr] } : undefined}
+                            title={w.opp ? `${w.opp} · matchup ${w.fdr}/5` : "bye"}
+                          >
+                            <span className={i === best ? "font-bold" : undefined}>
+                              {w.proj > 0 ? fmt(w.proj) : "–"}
+                            </span>
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-[var(--muted)]">
+            Ranked by combined 3-week projection; the bold week is each option&apos;s best matchup —
+            stream the one whose good week is now, hold for the one whose good week is later. Cell
+            colour = that week&apos;s matchup (green easy … red hard).
+          </p>
+        </section>
       )}
 
       <div className="flex flex-wrap gap-1">

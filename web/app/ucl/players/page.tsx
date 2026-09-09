@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Legend, PosBadge, StatusDot } from "@/components/ui";
+import { Legend, PosBadge, Range, StatusDot } from "@/components/ui";
 import { fmt } from "@/lib/format";
 import { POSITIONS, type Position } from "@/lib/ucl/formation";
 import type { PlayerRow } from "@/lib/ucl/queries";
@@ -145,6 +145,7 @@ export default function PlayersPage() {
               <th className="num hide-sm">Rtg</th>
               <th className="num">Start%</th>
               <th className="num">xPts</th>
+              <th className="num hide-sm">Range</th>
               <th className="num hide-sm">xPts(C)</th>
               <th className="num">Value</th>
               <th></th>
@@ -247,6 +248,14 @@ export default function PlayersPage() {
                       )}
                     </td>
                     <td className="num font-semibold">{fmt(p.xpts)}</td>
+                    <td className="num hide-sm">
+                      <Range
+                        lo={p.xptsLow ?? 0}
+                        hi={p.xptsHigh ?? 0}
+                        mean={p.xpts ?? undefined}
+                        digits={1}
+                      />
+                    </td>
                     <td className="num hide-sm">{fmt(p.xptsCaptain)}</td>
                     <td className="num">{fmt(p.value, 2)}</td>
                     <td>{owned.has(p.playerId) ? <span className="text-[var(--muted)]">owned</span> : ""}</td>
@@ -255,7 +264,7 @@ export default function PlayersPage() {
             })}
             {rows.length === 0 && !loading && (
               <tr>
-                <td colSpan={14} className="text-center text-[var(--muted)]">
+                <td colSpan={15} className="text-center text-[var(--muted)]">
                   No players — has the ingestion job run and produced projections?
                 </td>
               </tr>
@@ -273,6 +282,7 @@ export default function PlayersPage() {
           ["✓ / ⑂ (next to Start%)", "named in the confirmed starting XI / confirmed on the bench (official lineup, ~1h before kick-off)"],
           ["⚠ (next to Start%)", "our start-probability sources disagree (recent lineups vs season minutes vs price) — treat as a rotation or fitness question"],
           ["xPts / xPts(C)", "expected points, and if captained — the model already folds season xG (xGI90) into this, so a strong xGI with a modest xPts usually means minutes/rotation risk, not an undervaluation"],
+          ["Range", "~15th–85th percentile outcome (blank · mean · haul) — wide for boom/bust attackers, tight for a nailed defender's appearance floor"],
           ["Value", "xPts per €m"],
           ["DIFF", "low ownership + high projection — a rank-gaining differential"],
           ["📈 / 📉", "price likely to rise / fall from transfer traffic"],
