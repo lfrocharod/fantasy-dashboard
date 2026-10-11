@@ -18,22 +18,22 @@ def overview(session: DB) -> S.NflOverview:
     return V.overview(session)
 
 
-@router.get("/players", response_model=S.PlayersResponse)
+@router.get("/players", response_model=S.NflPlayersResponse)
 def players(
     session: DB,
     horizon: Literal["week", "ros"] = "ros",
     position: Annotated[str, Query(pattern="^(ALL|QB|RB|WR|TE|DST|K)$")] = "ALL",
-) -> S.PlayersResponse:
+) -> S.NflPlayersResponse:
     return V.players_page(session, horizon, position)
 
 
-@router.get("/teams", response_model=S.TeamsResponse)
-def teams(session: DB) -> S.TeamsResponse:
+@router.get("/teams", response_model=S.NflTeamsResponse)
+def teams(session: DB) -> S.NflTeamsResponse:
     return V.teams_page(session)
 
 
-@router.get("/fixtures", response_model=S.FixturesResponse)
-def fixtures(session: DB) -> S.FixturesResponse:
+@router.get("/fixtures", response_model=S.NflFixturesResponse)
+def fixtures(session: DB) -> S.NflFixturesResponse:
     return V.fixtures_page(session)
 
 
@@ -42,21 +42,21 @@ def optimizer(session: DB) -> S.NflOptimizer:
     return V.optimizer_page(session)
 
 
-@router.get("/rivals", response_model=S.RivalsResponse)
-def rivals(session: DB) -> S.RivalsResponse:
+@router.get("/rivals", response_model=S.NflRivalsResponse)
+def rivals(session: DB) -> S.NflRivalsResponse:
     return V.rivals_page(session)
 
 
-@router.get("/standings", response_model=S.StandingsResponse)
-def standings(session: DB, seeding: S.SeedingRule | None = None) -> S.StandingsResponse:
+@router.get("/standings", response_model=S.NflStandingsResponse)
+def standings(session: DB, seeding: S.SeedingRule | None = None) -> S.NflStandingsResponse:
     return V.standings_page(session, seeding)
 
 
-@router.get("/trade", response_model=S.TradeLab)
-def trade_lab(session: DB, rival: int | None = None) -> S.TradeLab:
+@router.get("/trade", response_model=S.NflTradeLab)
+def trade_lab(session: DB, rival: int | None = None) -> S.NflTradeLab:
     return V.trade_lab(session, rival)
 
 
-@router.post("/trade/evaluate", response_model=S.TradeEvaluation)
-def evaluate_trade(body: S.TradeRequest, session: DB) -> S.TradeEvaluation:
+@router.post("/trade/evaluate", response_model=S.NflTradeEvaluation)
+def evaluate_trade(body: S.NflTradeRequest, session: DB) -> S.NflTradeEvaluation:
     return V.evaluate_trade(session, body.give, body.get)

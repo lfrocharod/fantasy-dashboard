@@ -199,7 +199,7 @@ def optimizer_page(session: Session) -> S.NflOptimizer:
 # ---- players & free agents -------------------------------------------------------------------
 
 
-def players_page(session: Session, horizon: str, position: str) -> S.PlayersResponse:
+def players_page(session: Session, horizon: str, position: str) -> S.NflPlayersResponse:
     lg = load(session)
     mine_ids = {p.ext_id for p in lg.my_roster}
     lineup = A.optimal_lineup(lg.my_roster, lg.slots, 0)
@@ -265,7 +265,7 @@ def players_page(session: Session, horizon: str, position: str) -> S.PlayersResp
         rows.sort(key=lambda t: (-t[1], -t[2]))
     else:
         rows.sort(key=lambda t: (-(t[0].vor * A.opp_factor(t[0])), -t[2]))
-    return S.PlayersResponse(
+    return S.NflPlayersResponse(
         week=lg.week, horizon=horizon, position=position,  # type: ignore[arg-type]
         holes=holes, stream=stream,
         free_agents=[S.FreeAgentRow(player=out(p), value=v, upgrade=u) for p, v, u in rows[:40]],
@@ -275,18 +275,18 @@ def players_page(session: Session, horizon: str, position: str) -> S.PlayersResp
 # ---- clubs -------------------------------------------------------------------------------------
 
 
-def fixtures_page(session: Session) -> S.FixturesResponse:
+def fixtures_page(session: Session) -> S.NflFixturesResponse:
     lg = load(session)
     clubs = A.nfl_club_fixtures(lg.players)
-    return S.FixturesResponse(
+    return S.NflFixturesResponse(
         weeks=[c.week for c in clubs[0].cells] if clubs else [],
         clubs=[S.NflClubFix.model_validate(c) for c in clubs],
     )
 
 
-def teams_page(session: Session) -> S.TeamsResponse:
+def teams_page(session: Session) -> S.NflTeamsResponse:
     lg = load(session)
-    return S.TeamsResponse(clubs=[
+    return S.NflTeamsResponse(clubs=[
         S.NflClubDossier(team=d.team, fixtures=[S.WeekOpp.model_validate(c) for c in d.fixtures],
                          avg_fdr=d.avg_fdr, starters=outs(d.starters), bench=outs(d.bench),
                          doubts=outs(d.doubts), bye=d.bye)
@@ -302,7 +302,7 @@ def _manager_out(m: A.NflManager) -> S.NflManager:
                         by_pos={k: outs(v) for k, v in m.by_pos.items()}, ros_total=m.ros_total)
 
 
-def rivals_page(session: Session) -> S.RivalsResponse:
+def rivals_page(session: Session) -> S.NflRivalsResponse:
     lg = load(session)
     teams = lg.teams()
     opp, _ = _opponent(lg)
@@ -325,13 +325,13 @@ def rivals_page(session: Session) -> S.RivalsResponse:
             lineup=[S.SlotRow(slot=s.slot, player=out(s.player) if s.player else None)
                     for s in theirs.starters],
         )
-    return S.RivalsResponse(week=lg.week, opponent=opponent, teams=[_manager_out(t) for t in teams])
+    return S.NflRivalsResponse(week=lg.week, opponent=opponent, teams=[_manager_out(t) for t in teams])
 
 
 # ---- standings ----------------------------------------------------------------------------------
 
 
-def standings_page(session: Session, seeding: str | None) -> S.StandingsResponse:
+def standings_page(session: Session, seeding: str | None) -> S.NflStandingsResponse:
     lg = load(session)
     espn_rule = lg.seeding_rule if lg.seeding_rule in ("H2H_RECORD", "TOTAL_POINTS_SCORED") else "H2H_RECORD"
     rule = seeding if seeding in ("H2H_RECORD", "TOTAL_POINTS_SCORED") else espn_rule
@@ -357,7 +357,7 @@ def standings_page(session: Session, seeding: str | None) -> S.StandingsResponse
         key=lambda s: (-s.pf, -s.wins) if by_points else (-s.wins, s.losses, -s.pf),
     )
     rows = [
-        S.StandingRow(
+        S.NflStandingRow(
             team_id=s.team_id, name=s.name, wins=s.wins, losses=s.losses, ties=s.ties, pf=s.pf,
             mine=s.team_id == lg.my_team_id, in_line=i < lg.playoff_teams,
             proj_wins=by_team[s.team_id].proj_wins if s.team_id in by_team else None,
@@ -405,7 +405,7 @@ def standings_page(session: Session, seeding: str | None) -> S.StandingsResponse
                                  weeks=[S.WeekOpp.model_validate(m) for m in p.matchups
                                         if m.week in playoff_weeks]))
     runs.sort(key=lambda r: r.avg)
-    return S.StandingsResponse(
+    return S.NflStandingsResponse(
         rule=rule, espn_rule=espn_rule, by_points=by_points,  # type: ignore[arg-type]
         playoff_teams=lg.playoff_teams, reg_weeks=lg.reg_weeks, playoff_weeks=playoff_weeks,
         rows=rows, pace=pace, byes=byes, playoff_runs=runs,
@@ -415,7 +415,7 @@ def standings_page(session: Session, seeding: str | None) -> S.StandingsResponse
 # ---- trades --------------------------------------------------------------------------------------
 
 
-def trade_lab(session: Session, rival_id: int | None) -> S.TradeLab:
+def trade_lab(session: Session, rival_id: int | None) -> S.NflTradeLab:
     lg = load(session)
     teams = lg.teams()
     me = next((t for t in teams if t.is_mine), None)
@@ -441,18 +441,18 @@ def trade_lab(session: Session, rival_id: int | None) -> S.TradeLab:
         surplus = [S.SurplusRow(player=out(p), fills_need=p.pos in need, tag=A.opp_tag(p))
                    for p in cands]
     ideas = A.nfl_trade_ideas(me, rivals, lg.slots) if me else []
-    return S.TradeLab(
+    return S.NflTradeLab(
         me=_manager_out(me) if me else None,
         rivals=[_manager_out(t) for t in rivals],
         rival=_manager_out(rival) if rival else None,
-        ideas=[S.TradeIdea(rival_name=t.rival_name, rival_team_id=t.rival_team_id,
+        ideas=[S.NflTradeIdea(rival_name=t.rival_name, rival_team_id=t.rival_team_id,
                            give=out(t.give), get=out(t.get), my_gain=t.my_gain,
                            their_gain=t.their_gain) for t in ideas],
         their_surplus=surplus,
     )
 
 
-def evaluate_trade(session: Session, give_ids: Sequence[str], get_ids: Sequence[str]) -> S.TradeEvaluation:
+def evaluate_trade(session: Session, give_ids: Sequence[str], get_ids: Sequence[str]) -> S.NflTradeEvaluation:
     """Your side on opportunity-adjusted ROS; the rival's on the raw provider
     projection — how a typical manager would value it."""
     lg = load(session)
@@ -494,7 +494,7 @@ def evaluate_trade(session: Session, give_ids: Sequence[str], get_ids: Sequence[
         verdict = "Even on value but fills a roster hole — worth proposing."
     else:
         verdict = "Marginal — roughly even."
-    return S.TradeEvaluation(
+    return S.NflTradeEvaluation(
         me_week=js_round(me_week * 10) / 10, me_ros=js_round(me_ros), them_ros=js_round(them_ros),
         warnings=warns, verdict=verdict, need_pos=need,
     )

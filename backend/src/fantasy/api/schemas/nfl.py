@@ -137,7 +137,7 @@ class FreeAgentRow(Schema):
     upgrade: float  # vs your worst starter at the position
 
 
-class PlayersResponse(Schema):
+class NflPlayersResponse(Schema):
     week: int
     horizon: Literal["week", "ros"]
     position: str
@@ -163,7 +163,7 @@ class OpponentView(Schema):
     lineup: list[SlotRow]
 
 
-class RivalsResponse(Schema):
+class NflRivalsResponse(Schema):
     week: int
     opponent: OpponentView | None
     teams: list[NflManager]
@@ -185,16 +185,16 @@ class NflClubDossier(Schema):
     bye: int
 
 
-class FixturesResponse(Schema):
+class NflFixturesResponse(Schema):
     weeks: list[int]
     clubs: list[NflClubFix]
 
 
-class TeamsResponse(Schema):
+class NflTeamsResponse(Schema):
     clubs: list[NflClubDossier]
 
 
-class StandingRow(Schema):
+class NflStandingRow(Schema):
     team_id: int
     name: str
     wins: int
@@ -231,20 +231,20 @@ class PlayoffRun(Schema):
     weeks: list[WeekOpp]
 
 
-class StandingsResponse(Schema):
+class NflStandingsResponse(Schema):
     rule: SeedingRule
     espn_rule: SeedingRule
     by_points: bool
     playoff_teams: int
     reg_weeks: int
     playoff_weeks: list[int]
-    rows: list[StandingRow]
+    rows: list[NflStandingRow]
     pace: Pace | None
     byes: list[ByeGap]
     playoff_runs: list[PlayoffRun]
 
 
-class TradeIdea(Schema):
+class NflTradeIdea(Schema):
     rival_name: str
     rival_team_id: int
     give: NflPlayer
@@ -259,20 +259,20 @@ class SurplusRow(Schema):
     tag: str
 
 
-class TradeLab(Schema):
+class NflTradeLab(Schema):
     me: NflManager | None
     rivals: list[NflManager]
     rival: NflManager | None
-    ideas: list[TradeIdea]
+    ideas: list[NflTradeIdea]
     their_surplus: list[SurplusRow]
 
 
-class TradeRequest(Schema):
+class NflTradeRequest(Schema):
     give: list[str]
     get: list[str]
 
 
-class TradeEvaluation(Schema):
+class NflTradeEvaluation(Schema):
     me_week: float
     me_ros: int
     them_ros: int
