@@ -1,0 +1,11 @@
+[Unit]
+Description=Fantasy full sync — daily, with the recent-form scrape
+
+[Timer]
+OnCalendar=*-*-* 05:40
+Persistent=true
+RandomizedDelaySec=300
+Unit=fantasy-sync@full.service
+
+[Install]
+WantedBy=timers.target

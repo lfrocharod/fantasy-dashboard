@@ -1,0 +1,53 @@
+# Local stack: Postgres + migrations + the API serving the built SPA.
+#
+#   docker compose up --build                     # empty app at http://localhost:8000
+#   docker compose --profile demo up --build      # same, filled with the demo dataset
+#
+# The demo profile WIPES this database and loads the anonymised sample leagues.
+name: fantasy
+
+services:
+  db:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fantasy
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "fantasy"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build: { context: ., target: jobs }
+    command: ["db", "upgrade"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/fantasy
+    depends_on:
+      db: { condition: service_healthy }
+
+  demo:
+    profiles: ["demo"]
+    build: { context: ., target: jobs }
+    command: ["demo", "seed"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/fantasy
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  api:
+    build: { context: ., target: api }
+    ports: ["8000:8080"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/fantasy
+      # read-only, no login — the right default for a local look around
+      DEMO_MODE: "1"
+      COOKIE_SECURE: "0"
+      SESSION_SECRET: local-only-session-secret-change-me
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+volumes:
+  pgdata:

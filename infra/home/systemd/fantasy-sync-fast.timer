@@ -1,0 +1,11 @@
+[Unit]
+Description=Fantasy fast sync — every 30 minutes, 06:00–23:30
+
+[Timer]
+OnCalendar=*-*-* 06..23:00/30
+Persistent=true
+RandomizedDelaySec=90
+Unit=fantasy-sync@fast.service
+
+[Install]
+WantedBy=timers.target
