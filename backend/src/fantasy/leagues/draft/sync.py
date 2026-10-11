@@ -219,9 +219,12 @@ def _sync_fpl(db: DB, env: Env, cfg: dict) -> int:
     # overview has.
     live = None
     try:
-        cur_gw = (_bootstrap_events(c).get("current")) if entry_id else None
-        if cur_gw and my_lineup:
-            live = _fpl_live_score(c, int(cur_gw), my_lineup, det, entry_id)
+        if entry_id and my_lineup:
+            # a fresh client: the one above closed with its `with` block
+            with _client(auth) as c:
+                cur_gw = _bootstrap_events(c).get("current")
+                if cur_gw:
+                    live = _fpl_live_score(c, int(cur_gw), my_lineup, det, entry_id)
     except Exception as e:  # noqa: BLE001
         _log(f"fpl live skipped: {e}")
     db.put_document(Docs.FPL_LIVE, live)
