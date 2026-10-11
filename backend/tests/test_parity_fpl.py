@@ -19,6 +19,16 @@ from fantasy.leagues.fpl.players import FplPlayer
 HERE = Path(__file__).parent / "parity"
 INPUTS = json.loads((HERE / "inputs.json").read_text())["fpl"]
 GOLD = json.loads((HERE / "goldens.json").read_text())["fpl"]
+
+
+@pytest.fixture(autouse=True)
+def typescript_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The goldens prove the port is faithful, so they run under the rule the
+    TypeScript had: at least three midfielders. The app has since followed FPL
+    Draft's real minimum of two (see test_fpl_draft.py)."""
+    monkeypatch.setitem(A.XI_MIN, "MID", 3)
+
+
 H = ("short", "medium", "season")
 
 
