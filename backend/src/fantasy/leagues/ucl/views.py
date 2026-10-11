@@ -25,8 +25,9 @@ from fantasy.core.store import get_document, get_settings
 from fantasy.football.fdr import blended_rate, pos_fdr
 from fantasy.football.formation import pick_formation_xi
 from fantasy.football.jsmath import js_round, round1
+from fantasy.leagues.ucl.model.projections import MIN_XG_MINUTES
 
-XG_MIN_MINUTES = 200.0  # same bar the projection model trusts a matched xG sample at
+XG_MIN_MINUTES = MIN_XG_MINUTES  # the bar the projection model trusts a matched xG sample at
 XG_MIN_MATCHES = 3
 LAST_LEAGUE_MD = 8
 POSITIONS = ("GK", "DEF", "MID", "FWD")

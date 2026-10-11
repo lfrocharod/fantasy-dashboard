@@ -12,9 +12,6 @@ __pycache__/
 !.env.example
 
 # build
-web/.next/
-web/out/
-web/next-env.d.ts
 dist/
 build/
 

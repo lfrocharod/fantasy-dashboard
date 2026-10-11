@@ -21,9 +21,9 @@ _MAX_NPXG90 = 1.5
 _MAX_XA90 = 1.1
 _MAX_SHOTS90 = 7.0
 # Below this the matched xG sample is dropped as unreliable / a likely bad
-# identity match. The web keeps the same bar (web/lib/ucl/xg.ts) so the UI never
-# shows an xGI/90 rate this model isn't actually using.
-_MIN_XG_MINUTES = 200.0
+# identity match. The UCL views use the same bar, so the UI never shows an
+# xGI/90 rate this model isn't actually using.
+MIN_XG_MINUTES = 200.0
 
 
 def _poisson(rng: random.Random, mu: float) -> int:
@@ -213,7 +213,7 @@ def project_player(
     # Guard against bad identity matches in the xG source (e.g. a star mapped to
     # a youth-team namesake with 90 minutes and a freak per-90 rate): drop tiny
     # samples entirely and clamp implausible rates.
-    if s.minutes and s.minutes < _MIN_XG_MINUTES:
+    if s.minutes and s.minutes < MIN_XG_MINUTES:
         s = PlayerStat(player_id=s.player_id)
     elif s.npxg90 > _MAX_NPXG90 or s.xag90 > _MAX_XA90 or s.shots90 > _MAX_SHOTS90:
         s = PlayerStat(
