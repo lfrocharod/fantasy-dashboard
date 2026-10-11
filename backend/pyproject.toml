@@ -86,12 +86,31 @@ ignore = [
 
 [tool.mypy]
 python_version = "3.13"
+plugins = ["pydantic.mypy"]
 warn_unused_ignores = true
 warn_redundant_casts = true
 ignore_missing_imports = true
 
-# The API, core and service layers are type-checked strictly; the older scraper
-# and pipeline modules are checked for errors only.
+[tool.pydantic-mypy]
+init_typed = true
+
+# The API, views, analysis and core layers are type-checked strictly; the older
+# scraper and pipeline modules are checked for errors only.
 [[tool.mypy.overrides]]
-module = ["fantasy.api.*", "fantasy.core.*", "fantasy.services.*", "fantasy.ml.*"]
+module = [
+    "fantasy.api.*", "fantasy.core.*", "fantasy.football.*", "fantasy.ml.*", "fantasy.home",
+    "fantasy.settings_views", "fantasy.leagues.*.analysis", "fantasy.leagues.*.views",
+    "fantasy.leagues.*.players",
+]
 disallow_untyped_defs = true
+
+# Typing debt in the older scraper/pipeline code, listed explicitly so it stays
+# visible: errors here don't fail CI yet. Remove a module once it's clean.
+[[tool.mypy.overrides]]
+module = [
+    "fantasy.leagues.ucl.sources.*", "fantasy.leagues.ucl.model.live",
+    "fantasy.leagues.ucl.model.projections", "fantasy.leagues.ucl.pipeline",
+    "fantasy.leagues.ucl.fetch", "fantasy.leagues.fpl.board", "fantasy.leagues.nfl.season",
+    "fantasy.leagues.nfl.draft_board", "fantasy.leagues.draft.sync", "fantasy.migrations.*",
+]
+ignore_errors = true

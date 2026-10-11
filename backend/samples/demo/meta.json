@@ -1,0 +1,17 @@
+{
+  "recorded_at": "2026-10-11T07:12:46.284999+00:00",
+  "fpl": {
+    "current_gw": 6,
+    "live_gws": [
+      4,
+      5,
+      6
+    ],
+    "players": 667
+  },
+  "nfl": {
+    "current_week": 5,
+    "players": 327,
+    "games": 272
+  }
+}

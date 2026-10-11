@@ -90,11 +90,18 @@ def best_xi(squad: Sequence[FplPlayer], score: Score = _proj) -> Lineup:
     return Lineup(xi=xi, bench=bench, formation=f"{count['DEF']}-{count['MID']}-{count['FWD']}")
 
 
+def _gw_score(gi: int) -> Score:
+    def score(p: FplPlayer) -> float:
+        return p.gw_xpts(gi)
+
+    return score
+
+
 def squad_horizon(squad: Sequence[FplPlayer], gw_indexes: Iterable[int]) -> float:
     """Total from the best XI each gameweek."""
     total = 0.0
     for gi in gw_indexes:
-        xi = best_xi(squad, lambda p, gi=gi: p.gw_xpts(gi)).xi
+        xi = best_xi(squad, _gw_score(gi)).xi
         total += sum(p.gw_xpts(gi) for p in xi)
     return total
 
