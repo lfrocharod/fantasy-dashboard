@@ -17,7 +17,7 @@ from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 
 from fantasy import __version__
-from fantasy.api.routers import auth, draft, fpl, health, home, nfl, settings, ucl
+from fantasy.api.routers import auth, draft, fpl, health, home, nba, nfl, settings, ucl
 
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -59,7 +59,7 @@ def create_app() -> FastAPI:
             response.headers.setdefault("Cache-Control", "no-store")
         return response
 
-    for r in (health, auth, home, settings, ucl, fpl, nfl, draft):
+    for r in (health, auth, home, settings, ucl, fpl, nfl, nba, draft):
         app.include_router(r.router)
 
     dist = _frontend_dir()

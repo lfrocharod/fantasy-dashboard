@@ -29,7 +29,7 @@ def save_ucl(body: UclSettingsUpdate, session: DB) -> Ok:
 
 
 @router.get("/draft", response_model=DraftConfig)
-def get_draft(session: DB, sport: Literal["nfl", "fpl"] = "nfl") -> DraftConfig:
+def get_draft(session: DB, sport: Literal["nfl", "fpl", "nba"] = "nfl") -> DraftConfig:
     return V.draft_config(session, sport)
 
 

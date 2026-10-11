@@ -7,7 +7,7 @@ from typing import Literal
 from fantasy.api.schemas.common import Schema
 from fantasy.api.schemas.ucl import XgCoverage
 
-LeagueTag = Literal["UCL", "FPL", "NFL"]
+LeagueTag = Literal["UCL", "FPL", "NFL", "NBA"]
 
 
 class Alert(Schema):
@@ -80,6 +80,19 @@ class NflHome(Schema):
     live: NflLiveHome | None
 
 
+class NbaHome(Schema):
+    active: bool
+    period: int | None
+    days_left: int
+    my_proj: int
+    opp_name: str | None
+    opp_proj: int | None
+    win_pct: int | None
+    live: NflLiveHome | None
+    tonight: int  # lineup changes to make for the next game day
+    top_stream: Claim | None
+
+
 class Freshness(Schema):
     """When each league's data last landed — the home runner going quiet shows
     up here before it costs a deadline."""
@@ -93,6 +106,7 @@ class HomeSummary(Schema):
     ucl: UclHome
     fpl: FplHome
     nfl: NflHome
+    nba: NbaHome
     alerts: list[Alert]
     freshness: list[Freshness]
 
@@ -123,7 +137,7 @@ class UclSettingsUpdate(Schema):
 
 
 class DraftConfig(Schema):
-    sport: Literal["nfl", "fpl"]
+    sport: Literal["nfl", "fpl", "nba"]
     league_id: str
     my_team_id: str
     my_slot: str
@@ -133,10 +147,12 @@ class DraftConfig(Schema):
     roster: str
     entry_id: str
     has_cookies: bool
+    # NBA: no ESPN cookies of its own, but the NFL ones are stored (same account)
+    shared_login: bool = False
 
 
 class DraftConfigUpdate(Schema):
-    sport: Literal["nfl", "fpl"] = "nfl"
+    sport: Literal["nfl", "fpl", "nba"] = "nfl"
     league_id: str | None = None
     my_team_id: int | None = None
     my_slot: int | None = None

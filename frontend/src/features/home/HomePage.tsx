@@ -14,8 +14,8 @@ export default function HomePage() {
 }
 
 function Home({ sum }: { sum: Api["HomeSummary"] }) {
-  const anyActive = sum.ucl.active || sum.fpl.active || sum.nfl.active;
-  const { ucl, fpl, nfl } = sum;
+  const anyActive = sum.ucl.active || sum.fpl.active || sum.nfl.active || sum.nba.active;
+  const { ucl, fpl, nfl, nba } = sum;
   return (
     <>
       {sum.alerts.length > 0 && (
@@ -46,7 +46,7 @@ function Home({ sum }: { sum: Api["HomeSummary"] }) {
         />
       )}
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <LeagueCard
           to="/ucl"
           title="Champions League"
@@ -101,6 +101,20 @@ function Home({ sum }: { sum: Api["HomeSummary"] }) {
             ["Top waiver", nfl.topClaim ? `${nfl.topClaim.name} (+${nfl.topClaim.gain})` : "—"],
           ]}
         />
+        <LeagueCard
+          to="/nba"
+          title="NBA"
+          active={nba.active}
+          rows={[
+            ["Matchup", nba.period ? `${nba.period} · ${nba.daysLeft} days left` : "–"],
+            nba.live
+              ? ["Score", `${fmt(nba.live.mine, 0)}–${fmt(nba.live.opp, 0)} vs ${nba.oppName ?? "opp"}`]
+              : ["Projected", nba.oppName ? `${nba.myProj} vs ${nba.oppName} ${nba.oppProj ?? ""}` : String(nba.myProj)],
+            ["Win prob", nba.winPct != null ? `${nba.winPct}%` : "–"],
+            ["Next game day", nba.tonight ? `${nba.tonight} to start` : "lineup set"],
+            ["Top stream", nba.topStream ? `${nba.topStream.name} (+${nba.topStream.gain})` : "—"],
+          ]}
+        />
       </div>
 
       <div className="flex flex-wrap gap-3 text-xs text-[var(--muted)]">
@@ -122,6 +136,8 @@ function Home({ sum }: { sum: Api["HomeSummary"] }) {
             ["/nfl/optimizer", "NFL optimizer"],
             ["/nfl/players", "NFL free agents"],
             ["/nfl/standings", "NFL league"],
+            ["/nba/lineup", "NBA lineups"],
+            ["/nba/players", "NBA streams"],
           ].map(([to, label]) => (
             <Link key={to} to={to} className="btn">
               {label}

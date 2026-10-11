@@ -9,6 +9,8 @@
   a 5-manager league is drafted around it.
 * NFL: an in-season board built from nflverse aggregates and this season's
   schedule; a 10-team league is drafted and played to date.
+* NBA: ESPN's public player pool and the NBA schedule; a 10-team points league
+  is drafted and played into matchup 4, then stored by the real sync code.
 
 Manager and team names are invented. It wipes league data first, so never
 point it at a real database.
@@ -497,6 +499,167 @@ def seed_nfl(db: DB, rng: random.Random) -> None:
     ])
 
 
+# ---- NBA ---------------------------------------------------------------------------------
+
+NBA_TEAMS = [
+    (1, "Pick & Roll"), (2, "Full Court Press"), (3, "Demo Hoopers"), (4, "Fast Break"),
+    (5, "Box Out"), (6, "Sixth Men"), (7, "Triple Threat"), (8, "Buzzer Beaters"),
+    (9, "Zone Defense"), (10, "Bank Shots"),
+]
+MY_NBA = 3
+NBA_TODAY = 30  # Wednesday of matchup 4: two days of it played, five to go
+NBA_PERIODS = 19
+# ESPN's standard points scoring: stat id → points
+NBA_SCORING = {0: 1, 1: 4, 2: 4, 3: 2, 6: 1, 11: -2, 13: 2, 14: -1, 15: 1, 16: -1, 17: 1}
+NBA_SLOT_ID = {"PG": 0, "SG": 1, "SF": 2, "PF": 3, "C": 4, "G": 5, "F": 6, "UT": 11, "BE": 12,
+               "IR": 13}
+
+
+def _nba_settings() -> dict[str, Any]:
+    """An ESPN-shaped settings block for a standard 10-team points league."""
+    units = {str(mp): [mp] for mp in range(1, NBA_PERIODS + 1)}
+    units.update({"20": [20, 21], "21": [22, 23]})
+    return {
+        "name": "Demo NBA League",
+        "scoringSettings": {"scoringType": "H2H_POINTS", "scoringItems": [
+            {"statId": k, "points": v} for k, v in NBA_SCORING.items()]},
+        "rosterSettings": {
+            "lineupSlotCounts": {"0": 1, "1": 1, "2": 1, "3": 1, "4": 1, "5": 1, "6": 1, "11": 3,
+                                 "12": 3, "13": 1},
+            "positionLimits": {"5": 4}, "lineupLocktimeType": "INDIVIDUAL_GAME",
+        },
+        "scheduleSettings": {"matchupPeriodCount": NBA_PERIODS, "matchupPeriods": units,
+                             "playoffTeamCount": 4, "playoffSeedingRule": "H2H_RECORD"},
+        "acquisitionSettings": {"matchupAcquisitionLimit": 7, "matchupLimitPerScoringPeriod": False,
+                                "waiverHours": 24, "waiverProcessDays": ["SUNDAY"]},
+        "tradeSettings": {"deadlineDate": int(datetime(2027, 2, 26, 17, tzinfo=UTC).timestamp() * 1000)},
+    }
+
+
+def seed_nba(db: DB, rng: random.Random) -> None:
+    """A 10-team ESPN points league drafted from the recorded player pool,
+    played through matchup 3 and into matchup 4, then written through the same
+    `store` the real sync uses."""
+    from types import SimpleNamespace
+
+    from fantasy.leagues.nba import analysis as A
+    from fantasy.leagues.nba import board, sync
+    from fantasy.leagues.nba import league as L
+    from fantasy.leagues.nba.players import OUT_STATUS, NbaPlayer
+
+    snap = _load_gz("nba_snapshot.json.gz")
+    season = int(snap["season"])
+    settings = _nba_settings()
+    status = {"currentMatchupPeriod": 4, "firstScoringPeriod": 1, "finalScoringPeriod": 167,
+              "latestScoringPeriod": NBA_TODAY}
+    rules = L.parse_rules({"settings": settings, "status": status})
+    pro, day_dates = L.pro_teams(snap["schedule"])
+    cal = L.build_calendar(rules, day_dates)
+    games = {t.id: t.games for t in pro.values()}
+    by_id = {str(p["id"]): p for p in snap["players"]}
+    rows = board.build_rows([{"player": p} for p in snap["players"]], [], rules, pro, season)
+    players = {
+        r.ext_id: NbaPlayer.from_row(SimpleNamespace(
+            ext_id=r.ext_id, name=r.name, team=r.team, primary_pos=r.primary_pos,
+            positions=",".join(r.positions), proj_points=r.proj_points, adp=r.adp,
+            injury_status=r.injury_status, raw=r.raw))
+        for r in rows
+    }
+
+    # the draft: a noisy best-available snake, at most four centres, balance late
+    board_order = sorted(
+        (p for p in players.values() if p.injury not in OUT_STATUS),
+        key=lambda p: -p.fppg * rng.uniform(0.92, 1.08))
+    rosters: dict[int, list[NbaPlayer]] = {t: [] for t, _ in NBA_TEAMS}
+    taken: set[str] = set()
+    seq = [t for rnd in range(13) for t, _ in (NBA_TEAMS if rnd % 2 == 0 else NBA_TEAMS[::-1])]
+    for rnd_pick, team in enumerate(seq):
+        mine = rosters[team]
+        need = [g for g, ok in (("G", lambda p: "G" in p.slots), ("F", lambda p: "F" in p.slots),
+                                ("C", lambda p: "C" in p.slots))
+                if sum(1 for x in mine if ok(x)) < 2]
+        for p in board_order:
+            if p.ext_id in taken or (p.pos == "C" and sum(1 for x in mine if x.pos == "C") >= 4):
+                continue
+            if rnd_pick >= 8 * len(NBA_TEAMS) and need and not any(g in p.slots for g in need):
+                continue
+            mine.append(p)
+            taken.add(p.ext_id)
+            break
+    injured = next((p for p in sorted(players.values(), key=lambda p: -p.fppg)
+                    if p.injury in OUT_STATUS and p.ext_id not in taken), None)
+
+    # tonight's lineups — yours with one fixable mistake for the checklist to catch
+    slots = A.slot_list(rules.slots)
+    slot_of: dict[str, str] = {}
+    for team, roster in rosters.items():
+        playing = [p for p in roster if A.plays(p, NBA_TODAY, games)]
+        seats, _ = A.best_lineup(playing, A.game_value, slots)
+        for seat in seats:
+            if seat.player:
+                slot_of[seat.player.ext_id] = seat.slot
+        for p in roster:  # nobody idle in a starting slot except the deliberate mistake
+            slot_of.setdefault(p.ext_id, "BE")
+        if team == MY_NBA:
+            ut = next((s.player for s in seats if s.player and s.slot == "UT"), None)
+            idle = next((p for p in roster if not A.plays(p, NBA_TODAY, games)), None)
+            if ut and idle:
+                slot_of[ut.ext_id], slot_of[idle.ext_id] = "BE", "UT"
+    if injured:
+        rosters[MY_NBA].append(injured)
+        slot_of[injured.ext_id] = "IR"
+
+    # results: matchups 1-3 played, matchup 4 up to yesterday
+    ids = [t for t, _ in NBA_TEAMS]
+    names = dict(NBA_TEAMS)
+    form = {t: rng.uniform(0.93, 1.07) for t in ids}
+    rec = {t: {"wins": 0, "losses": 0, "pf": 0.0, "pa": 0.0} for t in ids}
+    schedule = []
+    for mp, h, a in _round_robin(ids, NBA_PERIODS):
+        first, last = cal.periods[mp]
+        played = range(first, min(last, NBA_TODAY - 1) + 1)
+        scores = []
+        for t in (h, a):
+            mean, var = A.team_period(rosters[t], played, games, len(slots))
+            scores.append(round(max(0.0, rng.gauss(mean * form[t], math.sqrt(var))), 1) if mean else 0.0)
+        hs, as_ = scores
+        done = last < NBA_TODAY
+        winner = ("HOME" if hs > as_ else "AWAY") if done else "UNDECIDED"
+        if done:
+            for t, me, them in ((h, hs, as_), (a, as_, hs)):
+                rec[t]["pf"] += me
+                rec[t]["pa"] += them
+                rec[t]["wins" if me > them else "losses"] += 1
+        schedule.append({"matchupPeriodId": mp, "winner": winner,
+                         "home": {"teamId": h, "totalPoints": hs}, "away": {"teamId": a, "totalPoints": as_}})
+    standing = sorted(ids, key=lambda t: (-rec[t]["wins"], -rec[t]["pf"]))
+
+    def entry(p: NbaPlayer) -> dict[str, Any]:
+        return {"playerId": int(p.ext_id), "lineupSlotId": NBA_SLOT_ID[slot_of.get(p.ext_id, "BE")],
+                "playerPoolEntry": {"player": by_id[p.ext_id]}}
+
+    lg = {
+        "settings": settings, "status": status, "scoringPeriodId": NBA_TODAY,
+        "teams": [{
+            "id": t, "name": names[t], "abbrev": names[t][:4].upper(),
+            "record": {"overall": {"wins": rec[t]["wins"], "losses": rec[t]["losses"], "ties": 0,
+                                   "pointsFor": round(rec[t]["pf"], 1),
+                                   "pointsAgainst": round(rec[t]["pa"], 1)}},
+            "playoffSeed": standing.index(t) + 1, "waiverRank": len(ids) - standing.index(t),
+            "transactionCounter": {"matchupAcquisitionTotals": {"4": 2} if t == MY_NBA else {}},
+            "roster": {"entries": [entry(p) for p in rosters[t]]},
+        } for t in ids],
+        "schedule": schedule,
+    }
+    owner = {p.ext_id: t for t, roster in rosters.items() for p in roster}
+    pool = [{"player": p, "status": "ONTEAM" if str(p["id"]) in owner else "FREEAGENT",
+             "onTeamId": owner.get(str(p["id"]), 0)} for p in snap["players"]]
+    db.set_setting("draft.nba.league_id", "demo")
+    db.set_setting("draft.nba.my_team_id", str(MY_NBA))
+    db.set_setting("draft.nba.year", str(season))
+    sync.store(db, lg, pool, snap["schedule"], season, MY_NBA, pinned_today=NBA_TODAY)
+
+
 def seed(database_url: str | None = None, seed: int = SEED) -> None:
     if database_url:
         os.environ["DATABASE_URL"] = database_url  # the UCL pipeline reads it from the env
@@ -507,6 +670,7 @@ def seed(database_url: str | None = None, seed: int = SEED) -> None:
     seed_ucl(db, rng)
     seed_fpl(db, random.Random(seed + 1))
     seed_nfl(db, random.Random(seed + 2))
+    seed_nba(db, random.Random(seed + 3))
     db.close()
 
 

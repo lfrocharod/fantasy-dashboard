@@ -26,3 +26,6 @@ soccerdata_cache/
 
 .pytest_cache/
 .ruff_cache/
+
+# local Vercel CLI output (vercel link / vercel build)
+.vercel/

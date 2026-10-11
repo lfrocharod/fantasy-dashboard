@@ -11,7 +11,8 @@
             "enum": [
               "UCL",
               "FPL",
-              "NFL"
+              "NFL",
+              "NBA"
             ],
             "title": "League",
             "type": "string"
@@ -1055,10 +1056,16 @@
             "title": "Scoring",
             "type": "string"
           },
+          "sharedLogin": {
+            "default": false,
+            "title": "Sharedlogin",
+            "type": "boolean"
+          },
           "sport": {
             "enum": [
               "nfl",
-              "fpl"
+              "fpl",
+              "nba"
             ],
             "title": "Sport",
             "type": "string"
@@ -1082,7 +1089,8 @@
           "year",
           "roster",
           "entryId",
-          "hasCookies"
+          "hasCookies",
+          "sharedLogin"
         ],
         "title": "DraftConfig",
         "type": "object"
@@ -1175,7 +1183,8 @@
             "default": "nfl",
             "enum": [
               "nfl",
-              "fpl"
+              "fpl",
+              "nba"
             ],
             "title": "Sport",
             "type": "string"
@@ -2635,7 +2644,8 @@
             "enum": [
               "UCL",
               "FPL",
-              "NFL"
+              "NFL",
+              "NBA"
             ],
             "title": "League",
             "type": "string"
@@ -2860,6 +2870,9 @@
             "title": "Freshness",
             "type": "array"
           },
+          "nba": {
+            "$ref": "#/components/schemas/NbaHome"
+          },
           "nfl": {
             "$ref": "#/components/schemas/NflHome"
           },
@@ -2871,6 +2884,7 @@
           "ucl",
           "fpl",
           "nfl",
+          "nba",
           "alerts",
           "freshness"
         ],
@@ -4079,6 +4093,1462 @@
           "fplEp"
         ],
         "title": "ModelCheckRow",
+        "type": "object"
+      },
+      "NbaDay": {
+        "properties": {
+          "benched": {
+            "items": {
+              "$ref": "#/components/schemas/NbaPlayer"
+            },
+            "title": "Benched",
+            "type": "array"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "idle": {
+            "items": {
+              "$ref": "#/components/schemas/NbaPlayer"
+            },
+            "title": "Idle",
+            "type": "array"
+          },
+          "openSlots": {
+            "title": "Openslots",
+            "type": "integer"
+          },
+          "points": {
+            "title": "Points",
+            "type": "number"
+          },
+          "seats": {
+            "items": {
+              "$ref": "#/components/schemas/NbaSeat"
+            },
+            "title": "Seats",
+            "type": "array"
+          },
+          "weekday": {
+            "title": "Weekday",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "date",
+          "weekday",
+          "seats",
+          "benched",
+          "idle",
+          "points",
+          "openSlots"
+        ],
+        "title": "NbaDay",
+        "type": "object"
+      },
+      "NbaDayCount": {
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "games": {
+            "title": "Games",
+            "type": "integer"
+          },
+          "light": {
+            "title": "Light",
+            "type": "boolean"
+          },
+          "myGames": {
+            "title": "Mygames",
+            "type": "integer"
+          },
+          "weekday": {
+            "title": "Weekday",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "date",
+          "weekday",
+          "games",
+          "myGames",
+          "light"
+        ],
+        "title": "NbaDayCount",
+        "type": "object"
+      },
+      "NbaFreeAgent": {
+        "properties": {
+          "player": {
+            "$ref": "#/components/schemas/NbaPlayer"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "player",
+          "value"
+        ],
+        "title": "NbaFreeAgent",
+        "type": "object"
+      },
+      "NbaHome": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "daysLeft": {
+            "title": "Daysleft",
+            "type": "integer"
+          },
+          "live": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NflLiveHome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "myProj": {
+            "title": "Myproj",
+            "type": "integer"
+          },
+          "oppName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oppname"
+          },
+          "oppProj": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oppproj"
+          },
+          "period": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period"
+          },
+          "tonight": {
+            "title": "Tonight",
+            "type": "integer"
+          },
+          "topStream": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Claim"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "winPct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winpct"
+          }
+        },
+        "required": [
+          "active",
+          "period",
+          "daysLeft",
+          "myProj",
+          "oppName",
+          "oppProj",
+          "winPct",
+          "live",
+          "tonight",
+          "topStream"
+        ],
+        "title": "NbaHome",
+        "type": "object"
+      },
+      "NbaLine": {
+        "description": "Per-game box score: this season's once he's played five games, else\nESPN's projection (or last season).",
+        "properties": {
+          "ast": {
+            "default": 0.0,
+            "title": "Ast",
+            "type": "number"
+          },
+          "blk": {
+            "default": 0.0,
+            "title": "Blk",
+            "type": "number"
+          },
+          "fgPct": {
+            "default": 0.0,
+            "title": "Fgpct",
+            "type": "number"
+          },
+          "ftPct": {
+            "default": 0.0,
+            "title": "Ftpct",
+            "type": "number"
+          },
+          "min": {
+            "default": 0.0,
+            "title": "Min",
+            "type": "number"
+          },
+          "pts": {
+            "default": 0.0,
+            "title": "Pts",
+            "type": "number"
+          },
+          "reb": {
+            "default": 0.0,
+            "title": "Reb",
+            "type": "number"
+          },
+          "stl": {
+            "default": 0.0,
+            "title": "Stl",
+            "type": "number"
+          },
+          "to": {
+            "default": 0.0,
+            "title": "To",
+            "type": "number"
+          },
+          "tpm": {
+            "default": 0.0,
+            "title": "Tpm",
+            "type": "number"
+          }
+        },
+        "required": [
+          "pts",
+          "reb",
+          "ast",
+          "stl",
+          "blk",
+          "tpm",
+          "to",
+          "min",
+          "fgPct",
+          "ftPct"
+        ],
+        "title": "NbaLine",
+        "type": "object"
+      },
+      "NbaLineup": {
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/NbaDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "games": {
+            "title": "Games",
+            "type": "integer"
+          },
+          "hasRoster": {
+            "title": "Hasroster",
+            "type": "boolean"
+          },
+          "lost": {
+            "title": "Lost",
+            "type": "integer"
+          },
+          "openSlots": {
+            "title": "Openslots",
+            "type": "integer"
+          },
+          "period": {
+            "title": "Period",
+            "type": "integer"
+          },
+          "todayBench": {
+            "items": {
+              "$ref": "#/components/schemas/NbaPlayer"
+            },
+            "title": "Todaybench",
+            "type": "array"
+          },
+          "todayStart": {
+            "items": {
+              "$ref": "#/components/schemas/NbaPlayer"
+            },
+            "title": "Todaystart",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "number"
+          }
+        },
+        "required": [
+          "period",
+          "hasRoster",
+          "days",
+          "total",
+          "games",
+          "lost",
+          "openSlots",
+          "todayStart",
+          "todayBench"
+        ],
+        "title": "NbaLineup",
+        "type": "object"
+      },
+      "NbaMoves": {
+        "properties": {
+          "left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "perDay": {
+            "title": "Perday",
+            "type": "boolean"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          },
+          "waiverNote": {
+            "title": "Waivernote",
+            "type": "string"
+          }
+        },
+        "required": [
+          "limit",
+          "perDay",
+          "used",
+          "left",
+          "waiverNote"
+        ],
+        "title": "NbaMoves",
+        "type": "object"
+      },
+      "NbaOverview": {
+        "properties": {
+          "checklist": {
+            "items": {
+              "$ref": "#/components/schemas/CheckItem"
+            },
+            "title": "Checklist",
+            "type": "array"
+          },
+          "daysLeft": {
+            "title": "Daysleft",
+            "type": "integer"
+          },
+          "firstDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firstdate"
+          },
+          "hasRoster": {
+            "title": "Hasroster",
+            "type": "boolean"
+          },
+          "isPlayoffs": {
+            "title": "Isplayoffs",
+            "type": "boolean"
+          },
+          "lastDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastdate"
+          },
+          "leagueName": {
+            "title": "Leaguename",
+            "type": "string"
+          },
+          "moves": {
+            "$ref": "#/components/schemas/NbaMoves"
+          },
+          "period": {
+            "title": "Period",
+            "type": "integer"
+          },
+          "roster": {
+            "items": {
+              "$ref": "#/components/schemas/NbaRosterRow"
+            },
+            "title": "Roster",
+            "type": "array"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NbaScore"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seasonOver": {
+            "title": "Seasonover",
+            "type": "boolean"
+          },
+          "streams": {
+            "items": {
+              "$ref": "#/components/schemas/NbaStream"
+            },
+            "title": "Streams",
+            "type": "array"
+          },
+          "todayDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Todaydate"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "leagueName",
+          "period",
+          "firstDate",
+          "lastDate",
+          "todayDate",
+          "daysLeft",
+          "isPlayoffs",
+          "seasonOver",
+          "hasRoster",
+          "score",
+          "checklist",
+          "roster",
+          "streams",
+          "moves",
+          "warnings"
+        ],
+        "title": "NbaOverview",
+        "type": "object"
+      },
+      "NbaPeriod": {
+        "properties": {
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "firstDate": {
+            "title": "Firstdate",
+            "type": "string"
+          },
+          "lastDate": {
+            "title": "Lastdate",
+            "type": "string"
+          },
+          "period": {
+            "title": "Period",
+            "type": "integer"
+          },
+          "playoffs": {
+            "title": "Playoffs",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "period",
+          "firstDate",
+          "lastDate",
+          "days",
+          "playoffs"
+        ],
+        "title": "NbaPeriod",
+        "type": "object"
+      },
+      "NbaPlayer": {
+        "properties": {
+          "adp": {
+            "title": "Adp",
+            "type": "number"
+          },
+          "extId": {
+            "title": "Extid",
+            "type": "string"
+          },
+          "fppg": {
+            "title": "Fppg",
+            "type": "number"
+          },
+          "fppgL15": {
+            "title": "Fppgl15",
+            "type": "number"
+          },
+          "fppgLast": {
+            "title": "Fppglast",
+            "type": "number"
+          },
+          "fppgNow": {
+            "title": "Fppgnow",
+            "type": "number"
+          },
+          "fppgProj": {
+            "title": "Fppgproj",
+            "type": "number"
+          },
+          "gamesLeft": {
+            "default": 0,
+            "title": "Gamesleft",
+            "type": "integer"
+          },
+          "gamesNext": {
+            "default": 0,
+            "title": "Gamesnext",
+            "type": "integer"
+          },
+          "gpL15": {
+            "title": "Gpl15",
+            "type": "integer"
+          },
+          "gpNow": {
+            "title": "Gpnow",
+            "type": "integer"
+          },
+          "injury": {
+            "title": "Injury",
+            "type": "string"
+          },
+          "line": {
+            "$ref": "#/components/schemas/NbaLine"
+          },
+          "lineSource": {
+            "title": "Linesource",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ownerName": {
+            "title": "Ownername",
+            "type": "string"
+          },
+          "ownerTeamId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ownerteamid"
+          },
+          "pctChange": {
+            "title": "Pctchange",
+            "type": "number"
+          },
+          "pctOwned": {
+            "title": "Pctowned",
+            "type": "number"
+          },
+          "pctStarted": {
+            "title": "Pctstarted",
+            "type": "number"
+          },
+          "playoffGames": {
+            "default": 0,
+            "title": "Playoffgames",
+            "type": "integer"
+          },
+          "pos": {
+            "title": "Pos",
+            "type": "string"
+          },
+          "positions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Positions",
+            "type": "array"
+          },
+          "ros": {
+            "default": 0.0,
+            "title": "Ros",
+            "type": "number"
+          },
+          "slot": {
+            "title": "Slot",
+            "type": "string"
+          },
+          "slots": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Slots",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "team": {
+            "title": "Team",
+            "type": "string"
+          },
+          "today": {
+            "default": "",
+            "title": "Today",
+            "type": "string"
+          },
+          "weekPoints": {
+            "default": 0.0,
+            "title": "Weekpoints",
+            "type": "number"
+          }
+        },
+        "required": [
+          "extId",
+          "name",
+          "team",
+          "pos",
+          "positions",
+          "slots",
+          "fppg",
+          "fppgProj",
+          "fppgNow",
+          "gpNow",
+          "fppgLast",
+          "fppgL15",
+          "gpL15",
+          "line",
+          "lineSource",
+          "injury",
+          "pctOwned",
+          "pctStarted",
+          "pctChange",
+          "status",
+          "ownerTeamId",
+          "ownerName",
+          "slot",
+          "adp",
+          "gamesLeft",
+          "gamesNext",
+          "weekPoints",
+          "ros",
+          "playoffGames",
+          "today"
+        ],
+        "title": "NbaPlayer",
+        "type": "object"
+      },
+      "NbaPlayersResponse": {
+        "properties": {
+          "period": {
+            "title": "Period",
+            "type": "integer"
+          },
+          "position": {
+            "title": "Position",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/NbaFreeAgent"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "show": {
+            "enum": [
+              "free",
+              "all"
+            ],
+            "title": "Show",
+            "type": "string"
+          },
+          "sort": {
+            "enum": [
+              "fppg",
+              "week",
+              "ros",
+              "trend"
+            ],
+            "title": "Sort",
+            "type": "string"
+          },
+          "streams": {
+            "items": {
+              "$ref": "#/components/schemas/NbaStream"
+            },
+            "title": "Streams",
+            "type": "array"
+          }
+        },
+        "required": [
+          "period",
+          "sort",
+          "position",
+          "show",
+          "rows",
+          "streams"
+        ],
+        "title": "NbaPlayersResponse",
+        "type": "object"
+      },
+      "NbaPlayoffGames": {
+        "properties": {
+          "byPeriod": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Byperiod",
+            "type": "array"
+          },
+          "player": {
+            "$ref": "#/components/schemas/NbaPlayer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "player",
+          "byPeriod",
+          "total"
+        ],
+        "title": "NbaPlayoffGames",
+        "type": "object"
+      },
+      "NbaRivalsResponse": {
+        "properties": {
+          "period": {
+            "title": "Period",
+            "type": "integer"
+          },
+          "teams": {
+            "items": {
+              "$ref": "#/components/schemas/NbaTeam"
+            },
+            "title": "Teams",
+            "type": "array"
+          }
+        },
+        "required": [
+          "period",
+          "teams"
+        ],
+        "title": "NbaRivalsResponse",
+        "type": "object"
+      },
+      "NbaRosterRow": {
+        "properties": {
+          "lost": {
+            "title": "Lost",
+            "type": "integer"
+          },
+          "player": {
+            "$ref": "#/components/schemas/NbaPlayer"
+          },
+          "starts": {
+            "title": "Starts",
+            "type": "integer"
+          },
+          "today": {
+            "enum": [
+              "start",
+              "bench",
+              "no game",
+              "IR",
+              "out"
+            ],
+            "title": "Today",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player",
+          "starts",
+          "lost",
+          "today"
+        ],
+        "title": "NbaRosterRow",
+        "type": "object"
+      },
+      "NbaScheduleResponse": {
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/NbaDayCount"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "periods": {
+            "items": {
+              "$ref": "#/components/schemas/NbaPeriod"
+            },
+            "title": "Periods",
+            "type": "array"
+          },
+          "teams": {
+            "items": {
+              "$ref": "#/components/schemas/NbaTeamGames"
+            },
+            "title": "Teams",
+            "type": "array"
+          }
+        },
+        "required": [
+          "periods",
+          "teams",
+          "days"
+        ],
+        "title": "NbaScheduleResponse",
+        "type": "object"
+      },
+      "NbaScore": {
+        "properties": {
+          "myPoints": {
+            "title": "Mypoints",
+            "type": "number"
+          },
+          "myProj": {
+            "title": "Myproj",
+            "type": "number"
+          },
+          "myRemaining": {
+            "title": "Myremaining",
+            "type": "number"
+          },
+          "oppName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oppname"
+          },
+          "oppPoints": {
+            "title": "Opppoints",
+            "type": "number"
+          },
+          "oppProj": {
+            "title": "Oppproj",
+            "type": "number"
+          },
+          "oppRemaining": {
+            "title": "Oppremaining",
+            "type": "number"
+          },
+          "winPct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winpct"
+          }
+        },
+        "required": [
+          "myPoints",
+          "myRemaining",
+          "myProj",
+          "oppName",
+          "oppPoints",
+          "oppRemaining",
+          "oppProj",
+          "winPct"
+        ],
+        "title": "NbaScore",
+        "type": "object"
+      },
+      "NbaSeat": {
+        "properties": {
+          "opp": {
+            "title": "Opp",
+            "type": "string"
+          },
+          "player": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NbaPlayer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slot": {
+            "title": "Slot",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slot",
+          "player",
+          "opp"
+        ],
+        "title": "NbaSeat",
+        "type": "object"
+      },
+      "NbaStandingRow": {
+        "properties": {
+          "inLine": {
+            "title": "Inline",
+            "type": "boolean"
+          },
+          "losses": {
+            "title": "Losses",
+            "type": "integer"
+          },
+          "mine": {
+            "title": "Mine",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "pa": {
+            "title": "Pa",
+            "type": "number"
+          },
+          "pf": {
+            "title": "Pf",
+            "type": "number"
+          },
+          "playoffPct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoffpct"
+          },
+          "projWins": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projwins"
+          },
+          "teamId": {
+            "title": "Teamid",
+            "type": "integer"
+          },
+          "ties": {
+            "title": "Ties",
+            "type": "integer"
+          },
+          "topSeedPct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topseedpct"
+          },
+          "wins": {
+            "title": "Wins",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "teamId",
+          "name",
+          "wins",
+          "losses",
+          "ties",
+          "pf",
+          "pa",
+          "mine",
+          "inLine",
+          "playoffPct",
+          "topSeedPct",
+          "projWins"
+        ],
+        "title": "NbaStandingRow",
+        "type": "object"
+      },
+      "NbaStandingsResponse": {
+        "properties": {
+          "playoffGames": {
+            "items": {
+              "$ref": "#/components/schemas/NbaPlayoffGames"
+            },
+            "title": "Playoffgames",
+            "type": "array"
+          },
+          "playoffPeriods": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Playoffperiods",
+            "type": "array"
+          },
+          "playoffTeams": {
+            "title": "Playoffteams",
+            "type": "integer"
+          },
+          "regPeriods": {
+            "title": "Regperiods",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/NbaStandingRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "tradeDeadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tradedeadline"
+          },
+          "upcoming": {
+            "items": {
+              "$ref": "#/components/schemas/NbaUpcoming"
+            },
+            "title": "Upcoming",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows",
+          "playoffTeams",
+          "regPeriods",
+          "playoffPeriods",
+          "upcoming",
+          "playoffGames",
+          "tradeDeadline"
+        ],
+        "title": "NbaStandingsResponse",
+        "type": "object"
+      },
+      "NbaStream": {
+        "properties": {
+          "add": {
+            "$ref": "#/components/schemas/NbaPlayer"
+          },
+          "drop": {
+            "$ref": "#/components/schemas/NbaPlayer"
+          },
+          "gain": {
+            "title": "Gain",
+            "type": "number"
+          },
+          "games": {
+            "title": "Games",
+            "type": "integer"
+          },
+          "rosDelta": {
+            "title": "Rosdelta",
+            "type": "number"
+          }
+        },
+        "required": [
+          "add",
+          "drop",
+          "gain",
+          "games",
+          "rosDelta"
+        ],
+        "title": "NbaStream",
+        "type": "object"
+      },
+      "NbaTeam": {
+        "properties": {
+          "isMine": {
+            "title": "Ismine",
+            "type": "boolean"
+          },
+          "losses": {
+            "title": "Losses",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "pf": {
+            "title": "Pf",
+            "type": "number"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/NbaPlayer"
+            },
+            "title": "Players",
+            "type": "array"
+          },
+          "teamId": {
+            "title": "Teamid",
+            "type": "integer"
+          },
+          "ties": {
+            "title": "Ties",
+            "type": "integer"
+          },
+          "weekProj": {
+            "title": "Weekproj",
+            "type": "number"
+          },
+          "wins": {
+            "title": "Wins",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "teamId",
+          "name",
+          "isMine",
+          "wins",
+          "losses",
+          "ties",
+          "pf",
+          "weekProj",
+          "players"
+        ],
+        "title": "NbaTeam",
+        "type": "object"
+      },
+      "NbaTeamGames": {
+        "properties": {
+          "games": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Games",
+            "type": "array"
+          },
+          "mine": {
+            "title": "Mine",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "team": {
+            "title": "Team",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team",
+          "name",
+          "games",
+          "mine"
+        ],
+        "title": "NbaTeamGames",
+        "type": "object"
+      },
+      "NbaTradeEvaluation": {
+        "properties": {
+          "myPlayoffGames": {
+            "title": "Myplayoffgames",
+            "type": "integer"
+          },
+          "myRos": {
+            "title": "Myros",
+            "type": "number"
+          },
+          "myWeek": {
+            "title": "Myweek",
+            "type": "number"
+          },
+          "rosterMoves": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rostermoves",
+            "type": "array"
+          },
+          "theirRos": {
+            "title": "Theirros",
+            "type": "number"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "myRos",
+          "myWeek",
+          "theirRos",
+          "myPlayoffGames",
+          "rosterMoves",
+          "warnings",
+          "verdict"
+        ],
+        "title": "NbaTradeEvaluation",
+        "type": "object"
+      },
+      "NbaTradeIdea": {
+        "properties": {
+          "get": {
+            "$ref": "#/components/schemas/NbaPlayer"
+          },
+          "give": {
+            "$ref": "#/components/schemas/NbaPlayer"
+          },
+          "myGain": {
+            "title": "Mygain",
+            "type": "number"
+          },
+          "rivalId": {
+            "title": "Rivalid",
+            "type": "integer"
+          },
+          "rivalName": {
+            "title": "Rivalname",
+            "type": "string"
+          },
+          "theirGain": {
+            "title": "Theirgain",
+            "type": "number"
+          }
+        },
+        "required": [
+          "rivalId",
+          "rivalName",
+          "give",
+          "get",
+          "myGain",
+          "theirGain"
+        ],
+        "title": "NbaTradeIdea",
+        "type": "object"
+      },
+      "NbaTradeLab": {
+        "properties": {
+          "ideas": {
+            "items": {
+              "$ref": "#/components/schemas/NbaTradeIdea"
+            },
+            "title": "Ideas",
+            "type": "array"
+          },
+          "me": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NbaTeam"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rival": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NbaTeam"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rivals": {
+            "items": {
+              "$ref": "#/components/schemas/NbaTeam"
+            },
+            "title": "Rivals",
+            "type": "array"
+          },
+          "tradeDeadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tradedeadline"
+          },
+          "weeksLeft": {
+            "title": "Weeksleft",
+            "type": "number"
+          }
+        },
+        "required": [
+          "me",
+          "rivals",
+          "rival",
+          "ideas",
+          "weeksLeft",
+          "tradeDeadline"
+        ],
+        "title": "NbaTradeLab",
+        "type": "object"
+      },
+      "NbaTradeRequest": {
+        "properties": {
+          "get": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Get",
+            "type": "array"
+          },
+          "give": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Give",
+            "type": "array"
+          }
+        },
+        "required": [
+          "give",
+          "get"
+        ],
+        "title": "NbaTradeRequest",
+        "type": "object"
+      },
+      "NbaUpcoming": {
+        "properties": {
+          "myProj": {
+            "title": "Myproj",
+            "type": "number"
+          },
+          "oppName": {
+            "title": "Oppname",
+            "type": "string"
+          },
+          "oppProj": {
+            "title": "Oppproj",
+            "type": "number"
+          },
+          "period": {
+            "title": "Period",
+            "type": "integer"
+          },
+          "winPct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winpct"
+          }
+        },
+        "required": [
+          "period",
+          "oppName",
+          "myProj",
+          "oppProj",
+          "winPct"
+        ],
+        "title": "NbaUpcoming",
         "type": "object"
       },
       "NflClubDossier": {
@@ -9502,6 +10972,465 @@
         ]
       }
     },
+    "/api/nba/lineup": {
+      "get": {
+        "operationId": "nba_lineup",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "fd_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fd Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NbaLineup"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lineup",
+        "tags": [
+          "nba"
+        ]
+      }
+    },
+    "/api/nba/overview": {
+      "get": {
+        "operationId": "nba_overview",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "fd_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fd Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NbaOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Overview",
+        "tags": [
+          "nba"
+        ]
+      }
+    },
+    "/api/nba/players": {
+      "get": {
+        "operationId": "nba_players",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "week",
+              "enum": [
+                "fppg",
+                "week",
+                "ros",
+                "trend"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "position",
+            "required": false,
+            "schema": {
+              "default": "ALL",
+              "pattern": "^(ALL|PG|SG|SF|PF|C)$",
+              "title": "Position",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "show",
+            "required": false,
+            "schema": {
+              "default": "free",
+              "enum": [
+                "free",
+                "all"
+              ],
+              "title": "Show",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "fd_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fd Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NbaPlayersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Players",
+        "tags": [
+          "nba"
+        ]
+      }
+    },
+    "/api/nba/rivals": {
+      "get": {
+        "operationId": "nba_rivals",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "fd_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fd Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NbaRivalsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rivals",
+        "tags": [
+          "nba"
+        ]
+      }
+    },
+    "/api/nba/schedule": {
+      "get": {
+        "operationId": "nba_schedule",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "fd_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fd Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NbaScheduleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Schedule",
+        "tags": [
+          "nba"
+        ]
+      }
+    },
+    "/api/nba/standings": {
+      "get": {
+        "operationId": "nba_standings",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "fd_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fd Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NbaStandingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Standings",
+        "tags": [
+          "nba"
+        ]
+      }
+    },
+    "/api/nba/trade": {
+      "get": {
+        "operationId": "nba_trade_lab",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "rival",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Rival"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "fd_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fd Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NbaTradeLab"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trade Lab",
+        "tags": [
+          "nba"
+        ]
+      }
+    },
+    "/api/nba/trade/evaluate": {
+      "post": {
+        "operationId": "nba_evaluate_trade",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "fd_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fd Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NbaTradeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NbaTradeEvaluation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evaluate Trade",
+        "tags": [
+          "nba"
+        ]
+      }
+    },
     "/api/nfl/fixtures": {
       "get": {
         "operationId": "nfl_fixtures",
@@ -10047,7 +11976,8 @@
               "default": "nfl",
               "enum": [
                 "nfl",
-                "fpl"
+                "fpl",
+                "nba"
               ],
               "title": "Sport",
               "type": "string"

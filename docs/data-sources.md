@@ -37,6 +37,9 @@ club says "doubt", that gap **is** the signal a point estimate would hide.
 | NFL | FantasyPros | weekly + rest-of-season expert-consensus ranks | scrape (`var ecrData`) |
 | NFL | ESPN public scoreboard | pro schedule, opponent, bye weeks | public JSON |
 | NFL | Defensive-matchup table | pass- vs rush-defence strength → position matchup rating | static, self-tunes |
+| **NBA** | ESPN Fantasy API (basketball) | league rules and scoring, rosters and daily lineup slots, matchups and live scores, standings, pickup limits | cookie-auth JSON (the NFL login works) |
+| NBA | ESPN player pool (`kona_player_info`) | per-game averages in the league's scoring (ESPN projection, this season, last season, last 15 days), injury tags, % rostered and its trend | public JSON; league-scored when fetched in the league |
+| NBA | ESPN pro schedule (`proTeamSchedules_wl`) | every NBA game by scoring period → games per matchup, light days, playoff-round games | public JSON |
 | **ML (FPL)** | [vaastav/Fantasy-Premier-League](https://github.com/vaastav/Fantasy-Premier-League) | seven seasons of per-fixture player history (training + backtest) | public CSV (code MIT, data © Premier League); downloaded at run time, never committed |
 
 For **injury / team news**, the primary feed already carries an
@@ -65,6 +68,15 @@ the blend degrades gracefully.
 | Betting markets (anytime scorer / clean sheet / cards) | market-implied goal, assist, CS, card probabilities | free odds APIs need a key; scraping odds pages is brittle |
 | Understat per-match (not just season) | rolling xG form, home/away splits | already have the client; just a wider pull |
 | PhysioRoom / Ben Dinnery injury table | return-date estimates for `stash & wait` | single page, fairly stable HTML |
+
+### NBA
+
+| Source | Adds | Notes / risk |
+|---|---|---|
+| **NBA official injury report** | game-day status (probable / questionable / out) an hour or so before tip | a PDF per day — parseable, but late |
+| Projected minutes (Rotowire / FantasyLabs) | minutes when a starter sits — the biggest single-game swing | mostly paywalled |
+| Vegas game totals / spreads | pace and blowout risk → per-game ceiling and floor | free-ish odds pages |
+| Basketball-Reference game logs | per-game fantasy points for a real variance model | scrape, polite rate |
 
 ### NFL
 

@@ -1,16 +1,18 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { $api, fetchClient, type Api } from "@/api/client";
+import { parseEspnTeamUrl } from "@/features/nba/common";
 
-type Sport = "fpl" | "nfl";
+type Sport = "fpl" | "nfl" | "nba";
 type Update = Api["DraftConfigUpdate"];
 
-/** League connection for the two draft leagues — FPL Draft and ESPN NFL.
+/** League connection for FPL Draft and the ESPN leagues (NFL, NBA).
  * Secrets are write-only: the form shows whether one is stored, never its value. */
 export function DraftSetup({ sport }: { sport: Sport }) {
   const q = $api.useQuery("get", "/api/settings/draft", { params: { query: { sport } } });
   if (!q.data) return <div className="card p-4 text-sm text-[var(--muted)]">Loading setup…</div>;
-  return sport === "fpl" ? <FplForm cfg={q.data} /> : <NflForm cfg={q.data} />;
+  if (sport === "fpl") return <FplForm cfg={q.data} />;
+  return sport === "nba" ? <NbaForm cfg={q.data} /> : <NflForm cfg={q.data} />;
 }
 
 function useSave(sport: Sport) {
@@ -161,6 +163,74 @@ function NflForm({ cfg }: { cfg: Api["DraftConfig"] }) {
         <div className="text-xs text-[var(--muted)]">
           ESPN cookies (for private leagues: live pick sync and real roster rules) — DevTools → Application → Cookies →
           fantasy.espn.com. {cfg.hasCookies && <b className="text-[var(--good)]">stored ✓</b>}
+        </div>
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <input className="input font-mono text-xs" value={espnS2} onChange={(e) => setEspnS2(e.target.value)} placeholder="espn_s2 = …" />
+          <input className="input font-mono text-xs" value={swid} onChange={(e) => setSwid(e.target.value)} placeholder="SWID = {…}" />
+        </div>
+      </div>
+      <Actions busy={busy} msg={msg} />
+    </form>
+  );
+}
+
+function NbaForm({ cfg }: { cfg: Api["DraftConfig"] }) {
+  const { save, msg, busy } = useSave("nba");
+  const [f, setF] = useState(() => ({ leagueId: cfg.leagueId, myTeamId: cfg.myTeamId, year: cfg.year }));
+  const [url, setUrl] = useState("");
+  const [espnS2, setEspnS2] = useState("");
+  const [swid, setSwid] = useState("");
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((s) => ({ ...s, [k]: e.target.value }));
+
+  function fromUrl(v: string) {
+    setUrl(v);
+    const p = parseEspnTeamUrl(v);
+    setF((s) => ({ leagueId: p.leagueId ?? s.leagueId, myTeamId: p.teamId ?? s.myTeamId, year: p.seasonId ?? s.year }));
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const ok = await save({
+      leagueId: f.leagueId.trim(),
+      myTeamId: num(f.myTeamId),
+      year: num(f.year),
+      ...(espnS2.trim() ? { espnS2: espnS2.trim() } : {}),
+      ...(swid.trim() ? { swid: swid.trim() } : {}),
+    });
+    if (ok) {
+      setEspnS2("");
+      setSwid("");
+      setUrl("");
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="card space-y-3 p-4 text-sm">
+      <Field label="Your ESPN team page URL — fills in the rest">
+        <input className="input w-full font-mono text-xs" value={url} onChange={(e) => fromUrl(e.target.value)}
+          placeholder="https://fantasy.espn.com/basketball/team?leagueId=…&teamId=…&seasonId=…" />
+      </Field>
+      <div className="grid grid-cols-3 gap-3">
+        <Field label="ESPN league ID">
+          <input className="input w-full" value={f.leagueId} onChange={set("leagueId")} />
+        </Field>
+        <Field label="Your team ID">
+          <input className="input w-full" inputMode="numeric" value={f.myTeamId} onChange={set("myTeamId")} />
+        </Field>
+        <Field label="Season (the year it ends)">
+          <input className="input w-full" inputMode="numeric" value={f.year} onChange={set("year")} />
+        </Field>
+      </div>
+      <div className="border-t border-[var(--border)] pt-3">
+        <div className="text-xs text-[var(--muted)]">
+          ESPN login — only needed for a private league.{" "}
+          {cfg.hasCookies ? (
+            <b className="text-[var(--good)]">stored ✓</b>
+          ) : cfg.sharedLogin ? (
+            <b className="text-[var(--good)]">Using your NFL login (same ESPN account) — leave these blank.</b>
+          ) : (
+            "DevTools → Application → Cookies → fantasy.espn.com."
+          )}
         </div>
         <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <input className="input font-mono text-xs" value={espnS2} onChange={(e) => setEspnS2(e.target.value)} placeholder="espn_s2 = …" />

@@ -52,6 +52,20 @@ const nfl: RouteObject = {
   ],
 };
 
+const nba: RouteObject = {
+  path: "nba",
+  lazy: lazy(() => import("@/features/nba/NbaLayout")),
+  children: [
+    { index: true, lazy: lazy(() => import("@/features/nba/OverviewPage")) },
+    { path: "lineup", lazy: lazy(() => import("@/features/nba/LineupPage")) },
+    { path: "players", lazy: lazy(() => import("@/features/nba/PlayersPage")) },
+    { path: "schedule", lazy: lazy(() => import("@/features/nba/SchedulePage")) },
+    { path: "standings", lazy: lazy(() => import("@/features/nba/StandingsPage")) },
+    { path: "rivals", lazy: lazy(() => import("@/features/nba/RivalsPage")) },
+    { path: "trade", lazy: lazy(() => import("@/features/nba/TradePage")) },
+  ],
+};
+
 export const routes: RouteObject[] = [
   { path: "/login", Component: LoginPage },
   {
@@ -63,6 +77,7 @@ export const routes: RouteObject[] = [
       ucl,
       fpl,
       nfl,
+      nba,
       { path: "*", lazy: lazy(() => import("@/features/home/NotFoundPage")) },
     ],
   },

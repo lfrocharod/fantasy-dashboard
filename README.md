@@ -2,11 +2,12 @@
 
 [![CI](https://github.com/lfrocharod/fantasy-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/lfrocharod/fantasy-dashboard/actions/workflows/ci.yml)
 
-A decision engine for three fantasy leagues I play — **UEFA Champions League
-Fantasy**, **FPL Draft** and **ESPN fantasy football** — in one web app. It
-pulls each game's data on a schedule, projects every player's points, and turns
-that into decisions: who to captain, start, sign, trade or bench, with the
-reasoning shown next to the number.
+A decision engine for the four fantasy leagues I play — **UEFA Champions
+League Fantasy**, **FPL Draft**, **ESPN fantasy football** and **ESPN fantasy
+basketball** — in one web app. It pulls each game's data on a schedule,
+projects every player's points, and turns that into decisions: who to captain,
+start, sign, stream, trade or bench, with the reasoning shown next to the
+number.
 
 <p align="center">
   <img src="docs/screenshots/ucl-overview.png" width="49%" alt="Champions League overview: captaincy verdict, pre-deadline checklist, squad with fixture difficulty">
@@ -15,6 +16,10 @@ reasoning shown next to the number.
 <p align="center">
   <img src="docs/screenshots/ucl-optimizer.png" width="49%" alt="Optimizer: wildcard squad, best XI, transfers">
   <img src="docs/screenshots/nfl-league.png" width="49%" alt="NFL league: standings with simulated playoff odds">
+</p>
+<p align="center">
+  <img src="docs/screenshots/nba-overview.png" width="49%" alt="NBA overview: matchup projection, checklist, roster with games left, streaming add/drops">
+  <img src="docs/screenshots/nba-lineup.png" width="49%" alt="NBA daily lineups: the best legal lineup for each day of the matchup">
 </p>
 
 _Screenshots are from the demo dataset: real public player data, made-up
@@ -33,6 +38,12 @@ managers and teams. `docker compose --profile demo up` runs it locally._
 * **NFL (ESPN)** — floor / ceiling lineups chosen by win probability, streaming
   plans, buy-low / sell-high flags from expected-points models, Monte Carlo
   playoff odds, and a draft-night board.
+* **NBA (ESPN, head-to-head points)** — the best legal lineup for every day of
+  the matchup (an exact slot assignment, not a heuristic), win probability as
+  games are played, streaming add/drops that only count the games a pickup
+  would actually start, games per matchup and light days for the whole NBA,
+  playoff odds, and a trade lab valued on this season's form and the games each
+  team has left.
 * **A learned FPL model** — gradient-boosted trees on seven seasons of public
   data, judged by a walk-forward backtest and graded live every gameweek next to
   the structural model and FPL's own estimate (below).
@@ -149,8 +160,8 @@ runner, secrets, cost); [docs/data-sources.md](docs/data-sources.md) lists
 every source.
 
 ```
-backend/    the fantasy package: api/, leagues/{ucl,fpl,nfl}/, ml/, migrations/, cli.py
-frontend/   the SPA: features/{ucl,fpl,nfl,home,settings}/, shared/, generated api/
+backend/    the fantasy package: api/, leagues/{ucl,fpl,nfl,nba}/, ml/, migrations/, cli.py
+frontend/   the SPA: features/{ucl,fpl,nfl,nba,home,settings}/, shared/, generated api/
 infra/      home/ (the systemd runner: install.sh, fantasy-run, timers)
 vercel.json the two Vercel services and their routing
 docs/       operations, ADRs, the model report, data sources
