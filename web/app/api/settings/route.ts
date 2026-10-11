@@ -11,7 +11,7 @@ export async function GET() {
     KEYS.leagueId,
     KEYS.leagueCode,
     KEYS.entryId,
-    KEYS.currentMatchday,
+    KEYS.matchdayOverride,
     KEYS.deadline,
     KEYS.uefaAuthState,
     KEYS.uefaTokenSavedAt,
@@ -28,7 +28,7 @@ export async function GET() {
     leagueId: s[KEYS.leagueId] ?? "",
     leagueCode: s[KEYS.leagueCode] ?? "",
     entryId: s[KEYS.entryId] ?? "",
-    currentMatchday: s[KEYS.currentMatchday] ?? "",
+    currentMatchday: s[KEYS.matchdayOverride] ?? "",
     deadlineIso: s[KEYS.deadline] ?? "",
     authState: s[KEYS.uefaAuthState] ?? "unknown",
     tokenSavedAt: s[KEYS.uefaTokenSavedAt] ?? null,
@@ -42,7 +42,7 @@ const patchSchema = z.object({
   leagueId: z.string().max(64).optional(),
   leagueCode: z.string().max(32).optional(),
   entryId: z.string().max(64).optional(),
-  currentMatchday: z.coerce.number().int().min(1).max(20).optional(),
+  currentMatchday: z.coerce.number().int().min(0).max(20).optional(), // 0 = clear the pin
   // Raw UEFA session token (Bearer value or cookie string). Stored encrypted.
   uefaToken: z.string().min(8).max(8000).optional(),
   modelParams: z.string().max(8000).optional(),
@@ -61,7 +61,7 @@ export async function POST(req: Request) {
     await setSetting(KEYS.leagueCode, body.leagueCode.trim().toUpperCase());
   if (body.entryId !== undefined) await setSetting(KEYS.entryId, body.entryId.trim());
   if (body.currentMatchday !== undefined)
-    await setSetting(KEYS.currentMatchday, String(body.currentMatchday));
+    await setSetting(KEYS.matchdayOverride, body.currentMatchday ? String(body.currentMatchday) : "");
   if (body.modelParams !== undefined) await setSetting(KEYS.modelParams, body.modelParams);
 
   if (body.uefaToken) {

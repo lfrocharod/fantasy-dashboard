@@ -13,6 +13,8 @@ export const KEYS = {
   leagueCode: "ucl.league_code",
   entryId: "ucl.entry_id",
   currentMatchday: "ucl.current_matchday",
+  // manual pin from the Settings page; blank = follow the game
+  matchdayOverride: "ucl.matchday_override",
   deadline: "ucl.deadline_iso",
   // AES-GCM encrypted (see lib/crypto.ts). One of these is enough for ingestion.
   uefaToken: "ucl.uefa_token_enc",

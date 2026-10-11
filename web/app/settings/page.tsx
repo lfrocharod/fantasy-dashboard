@@ -60,7 +60,7 @@ export default function SettingsPage() {
     setBusy(true);
     setMsg(null);
     const body: Record<string, unknown> = { leagueCode, entryId, modelParams };
-    if (currentMatchday) body.currentMatchday = Number(currentMatchday);
+    body.currentMatchday = currentMatchday ? Number(currentMatchday) : 0;
     if (uefaToken.trim()) body.uefaToken = uefaToken.trim();
     const res = await fetch("/api/settings", {
       method: "POST",
