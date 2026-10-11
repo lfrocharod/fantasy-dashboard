@@ -8,6 +8,7 @@ const LINKS = [
   { to: "/ucl", label: "Champions League", short: "UCL", end: false },
   { to: "/fpl", label: "FPL Draft", short: "FPL", end: false },
   { to: "/nfl", label: "NFL", short: "NFL", end: false },
+  { to: "/nba", label: "NBA", short: "NBA", end: false },
   { to: "/settings", label: "Settings", short: "Settings", end: false },
 ];
 
@@ -55,7 +56,7 @@ function DemoBanner() {
   return (
     <div className="border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] px-4 py-2 text-center text-xs">
       <b>Live demo</b> — anonymised sample leagues, read-only. Real public player data (UEFA sample feeds,
-      FPL, nflverse); every manager and team name is made up.{" "}
+      FPL, nflverse, ESPN); every manager and team name is made up.{" "}
       <a className="text-[var(--accent)] underline" href="https://github.com/lfrocharod/fantasy-dashboard">
         Source on GitHub
       </a>

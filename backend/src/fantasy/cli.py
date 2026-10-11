@@ -2,12 +2,13 @@
 Vercel build (migrations) and in the compose stack.
 
     fantasy sync ucl [--mode fast|full|live] [--if-live]   # Champions League
-    fantasy sync fpl | nfl                                 # board + league sync
+    fantasy sync fpl | nfl | nba                           # board + league sync
     fantasy sync all [--mode fast|full]                    # every league
     fantasy draft-board --sport nfl --sync --loop 15       # draft-night pick tracker
     fantasy calibrate [--matchday N] [--played-only]       # grade the UCL model
     fantasy db upgrade | current | stamp REV               # Alembic migrations
     fantasy ml backtest | train                            # the learned FPL points model
+    fantasy nba snapshot --league-id ID --season Y --out F # raw ESPN basketball JSON (dev)
     fantasy serve [--port 8000] [--reload]                 # the API (+ built SPA)
 
 Configuration comes from the environment, falling back to $FANTASY_ENV_FILE or
@@ -27,7 +28,7 @@ from collections.abc import Callable
 
 from fantasy.config import load_env_file
 
-LEAGUES = ("ucl", "fpl", "nfl")
+LEAGUES = ("ucl", "fpl", "nfl", "nba")
 
 
 def _log(msg: str) -> None:
@@ -70,6 +71,19 @@ def _sync_draft(sport: str, args: argparse.Namespace) -> int:
     return 0
 
 
+def _sync_nba(args: argparse.Namespace) -> int:
+    from fantasy.config import Env
+    from fantasy.core.db import DB
+    from fantasy.leagues.nba import sync
+
+    env = Env.load()
+    db = DB(env.database_url)
+    try:
+        return sync.run(db, env)
+    finally:
+        db.close()
+
+
 def _run_isolated(label: str, fn: Callable[[], int]) -> bool:
     _log(f"── {label} " + "─" * max(4, 60 - len(label)))
     started = time.monotonic()
@@ -90,6 +104,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
         for lg in (x for x in LEAGUES if x in wanted):
             if lg == "ucl":
                 ok = _run_isolated("Champions League", functools.partial(_sync_ucl, args))
+            elif lg == "nba":
+                ok = _run_isolated("NBA", functools.partial(_sync_nba, args))
             else:
                 ok = _run_isolated(lg.upper(), functools.partial(_sync_draft, lg, args))
             if not ok:
@@ -101,6 +117,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
         return 0
     if args.league == "ucl":
         return _sync_ucl(args)
+    if args.league == "nba":
+        return _sync_nba(args)
     return _sync_draft(args.league, args)
 
 
@@ -170,6 +188,42 @@ def cmd_ml(args: argparse.Namespace) -> int:
     from fantasy.ml import cli as ml_cli  # pandas / scikit-learn only when asked for
 
     return ml_cli.run(args)
+
+
+def cmd_nba_snapshot(args: argparse.Namespace) -> int:
+    """League + player pool + NBA schedule as raw ESPN JSON, using the ESPN
+    login stored in the database (NBA's own, else the NFL one). The cookies are
+    never printed or written out; the file holds league data only (mode 600)."""
+    import json
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from fantasy.config import Env
+    from fantasy.core.db import DB
+    from fantasy.leagues.nba import espn, sync
+
+    env = Env.load()
+    db = DB(env.database_url)
+    try:
+        s2, swid = sync.cookies(db, env)
+    finally:
+        db.close()
+    if not (s2 and swid):
+        _log("no ESPN cookies stored (NBA or NFL setup) — a private league will refuse this")
+    with espn.client(s2, swid) as c:
+        league = espn.fetch_league(c, args.season, args.league_id)
+        players = espn.fetch_players(c, args.season, args.league_id)
+        schedule = espn.fetch_pro_schedule(c, args.season)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.touch(mode=0o600, exist_ok=True)
+    out.write_text(json.dumps({"fetched_at": datetime.now(UTC).isoformat(), "league": league,
+                               "players": players, "pro_schedule": schedule}))
+    sett = league.get("settings", {})
+    _log(f"saved {out}: '{sett.get('name')}' · "
+         f"{sett.get('scoringSettings', {}).get('scoringType')} · {len(league.get('teams', []))} teams · "
+         f"{len(players)} players")
+    return 0
 
 
 def cmd_openapi(args: argparse.Namespace) -> int:
@@ -256,6 +310,14 @@ def build_parser() -> argparse.ArgumentParser:
     mb.set_defaults(func=cmd_ml)
     mt = msub.add_parser("train", help="fit on all history and save the model")
     mt.set_defaults(func=cmd_ml)
+
+    nb = sub.add_parser("nba", help="ESPN fantasy basketball tools")
+    nsub = nb.add_subparsers(dest="nba_cmd", required=True)
+    ns = nsub.add_parser("snapshot", help="save the league's raw ESPN data to a file (for development)")
+    ns.add_argument("--league-id", required=True)
+    ns.add_argument("--season", type=int, required=True)
+    ns.add_argument("--out", required=True)
+    ns.set_defaults(func=cmd_nba_snapshot)
 
     o = sub.add_parser("openapi", help="print the OpenAPI schema (no server needed)")
     o.set_defaults(func=cmd_openapi)

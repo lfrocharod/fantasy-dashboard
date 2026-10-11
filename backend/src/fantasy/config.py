@@ -40,6 +40,8 @@ class Docs:
     UCL_XG_COVERAGE = "ucl.xg_coverage"
     # FPL Draft live gameweek (points banked, H2H score), while a GW is on.
     FPL_LIVE = "fpl.live"
+    # ESPN basketball: rules, the matchup calendar and the NBA schedule.
+    NBA_LEAGUE = "nba.league"
 
 
 @dataclass(slots=True)

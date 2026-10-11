@@ -14,6 +14,7 @@ export function StatCard({ label, value, sub }: { label: string; value: ReactNod
 const POS_COLOR: Record<string, string> = {
   GK: "#8957e5", GKP: "#6b7280", DEF: "#1f6feb", MID: "#1a7f37", FWD: "#cf222e",
   QB: "#8957e5", RB: "#1a7f37", WR: "#1f6feb", TE: "#b7791f", K: "#6b7280", DST: "#cf222e",
+  PG: "#8957e5", SG: "#1f6feb", SF: "#1a7f37", PF: "#b7791f", C: "#cf222e",
 };
 
 export function PosBadge({ position, small = false }: { position: string; small?: boolean }) {

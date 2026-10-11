@@ -17,6 +17,7 @@ pytestmark = pytest.mark.db
 PAGES = [
     "/api/home",
     "/api/settings/ucl", "/api/settings/draft?sport=fpl", "/api/settings/draft?sport=nfl",
+    "/api/settings/draft?sport=nba",
     "/api/ucl/overview", "/api/ucl/players", "/api/ucl/players?position=MID&maxPrice=8",
     "/api/ucl/teams", "/api/ucl/fixtures", "/api/ucl/optimizer", "/api/ucl/rivals",
     "/api/ucl/league",
@@ -28,6 +29,10 @@ PAGES = [
     "/api/nfl/teams", "/api/nfl/fixtures", "/api/nfl/optimizer", "/api/nfl/rivals",
     "/api/nfl/standings", "/api/nfl/standings?seeding=TOTAL_POINTS_SCORED", "/api/nfl/trade",
     "/api/draft/board?sport=nfl",
+    "/api/nba/overview", "/api/nba/lineup", "/api/nba/players",
+    "/api/nba/players?sort=ros&position=C&show=all", "/api/nba/players?sort=trend",
+    "/api/nba/schedule", "/api/nba/standings", "/api/nba/rivals", "/api/nba/trade",
+    "/api/nba/trade?rival=1",
 ]
 
 
@@ -133,7 +138,7 @@ def test_demo_mode_is_open_but_read_only(client, monkeypatch: pytest.MonkeyPatch
 def test_home_ranks_alerts_by_urgency(client) -> None:  # type: ignore[no-untyped-def]
     _login(client)
     h = client.get("/api/home").json()
-    assert h["ucl"]["active"] and h["fpl"]["active"] and h["nfl"]["active"]
+    assert h["ucl"]["active"] and h["fpl"]["active"] and h["nfl"]["active"] and h["nba"]["active"]
     order = {"bad": 0, "warn": 1, "accent": 2}
     tones = [order[a["tone"]] for a in h["alerts"]]
     assert tones == sorted(tones)
@@ -162,6 +167,43 @@ def test_fpl_trade_evaluation(client) -> None:  # type: ignore[no-untyped-def]
         "/api/fpl/trade/evaluate", json={"give": [give["extId"]], "get": []}
     ).json()
     assert lopsided["balanced"] is False
+
+
+def test_nba_catches_the_lineup_mistake(client) -> None:  # type: ignore[no-untyped-def]
+    """The demo leaves an idle player in a UT slot and a playing one on the bench."""
+    _login(client)
+    o = client.get("/api/nba/overview").json()
+    assert o["period"] == 4 and o["daysLeft"] == 5 and o["score"]["oppName"]
+    assert not o["checklist"][0]["ok"] and o["checklist"][0]["text"].startswith("Tonight: start")
+    lineup = client.get("/api/nba/lineup").json()
+    assert lineup["todayStart"] and lineup["todayBench"]
+    assert lineup["days"][0]["date"] == o["todayDate"]
+    ir = [r for r in o["roster"] if r["today"] == "IR"]
+    assert len(ir) == 1 and ir[0]["player"]["slot"] == "IR"
+
+
+def test_nba_trade_two_for_one_frees_a_spot(client) -> None:  # type: ignore[no-untyped-def]
+    _login(client)
+    lab = client.get("/api/nba/trade").json()
+    mine = lab["me"]["players"]
+    theirs = lab["rivals"][0]["players"]
+    ev = client.post("/api/nba/trade/evaluate", json={
+        "give": [mine[-1]["extId"], mine[-2]["extId"]], "get": [theirs[0]["extId"]],
+    }).json()
+    assert any(m.startswith("add ") for m in ev["rosterMoves"]) and ev["verdict"]
+    one_for_two = client.post("/api/nba/trade/evaluate", json={
+        "give": [mine[-1]["extId"]], "get": [theirs[-1]["extId"], theirs[-2]["extId"]],
+    }).json()
+    assert any(m.startswith("drop ") for m in one_for_two["rosterMoves"])
+
+
+def test_nba_setup_round_trip(client) -> None:  # type: ignore[no-untyped-def]
+    _login(client)
+    body = {"sport": "nba", "leagueId": " 1727 ", "myTeamId": 4, "year": 2027}
+    assert client.post("/api/settings/draft", json=body).status_code == 200
+    cfg = client.get("/api/settings/draft?sport=nba").json()
+    assert (cfg["leagueId"], cfg["myTeamId"], cfg["year"]) == ("1727", "4", "2027")
+    assert cfg["hasCookies"] is False
 
 
 def test_nfl_standings_seeding_toggle(client) -> None:  # type: ignore[no-untyped-def]

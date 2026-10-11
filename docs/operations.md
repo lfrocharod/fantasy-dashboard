@@ -45,8 +45,9 @@ always-on (a Raspberry Pi works: `infra/home/install.sh` is all it needs).
 ## What does need a human
 
 * **Expired logins.** The UEFA session cookie (Settings), the ESPN `espn_s2` /
-  `SWID` cookies (NFL → Draft board → Setup) and the optional FPL Draft token
-  expire every few weeks. Settings shows the UEFA state; the home page flags a
+  `SWID` cookies (NFL → Draft board → Setup; basketball uses the same ones
+  unless it has its own) and the optional FPL Draft token expire every few
+  weeks. Settings shows the UEFA state; the home page flags a
   league that stops updating. Re-paste in the app — the next sync uses it.
 * **Draft night.** `fantasy draft-board --sport nfl --sync --loop 15` follows
   live ESPN picks every 15 seconds for the evening.
@@ -92,7 +93,9 @@ later release).
    migrates (a no-op if the deploy already did), installs and starts the
    timers, trains the FPL model once, and retires the old `ingest/` timers and
    cron lines.
-4. **Retire the old app** — delete `web/` and `db/`, and ship the migration
+4. **Basketball:** NBA → Setup → paste your ESPN team page URL (it fills the
+   league, team and season) → Save. The next sync pulls the league.
+5. **Retire the old app** — delete `web/` and `db/`, and ship the migration
    that drops the legacy `settings` keys (kept until now so the old site keeps
    working mid-cutover).
 

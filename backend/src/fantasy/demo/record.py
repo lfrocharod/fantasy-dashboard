@@ -160,11 +160,60 @@ def record_nfl(client: httpx.Client, season: int) -> dict[str, Any]:
     return {"current_week": current_week, "players": len(keep), "games": len(schedule)}
 
 
+# ESPN basketball stat ids kept per split: the scoring stats, the box score, GP
+_NBA_STATS = ("0", "1", "2", "3", "6", "11", "13", "14", "15", "16", "17", "19", "20", "40", "42")
+
+
+def record_nba(client: httpx.Client, season: int) -> dict[str, Any]:
+    """ESPN's public basketball data (no login): the most-owned players with
+    their projection and last season, and every NBA team's schedule."""
+    from fantasy.leagues.nba import espn
+
+    pool = espn.fetch_players(client, season, None, limit=400)
+    keep_splits = {f"10{season}", f"00{season - 1}"}
+    players = []
+    for e in pool:
+        p = e.get("player", {}) or {}
+        if not p.get("proTeamId"):
+            continue
+        own = p.get("ownership", {}) or {}
+        players.append({
+            "id": p["id"], "fullName": p.get("fullName", ""),
+            "defaultPositionId": p.get("defaultPositionId"), "eligibleSlots": p.get("eligibleSlots", []),
+            "proTeamId": p["proTeamId"], "injuryStatus": p.get("injuryStatus") or "ACTIVE",
+            "ownership": {k: own.get(k) for k in ("percentOwned", "percentStarted", "percentChange",
+                                                  "averageDraftPosition")},
+            "stats": [
+                {"id": st["id"], "appliedAverage": st.get("appliedAverage"),
+                 "averageStats": {k: v for k, v in (st.get("averageStats") or {}).items()
+                                  if k in _NBA_STATS}}
+                for st in p.get("stats", []) or [] if st.get("id") in keep_splits
+            ],
+        })
+    sched = espn.fetch_pro_schedule(client, season)
+    teams = [
+        {"id": t["id"], "abbrev": t.get("abbrev"), "location": t.get("location"), "name": t.get("name"),
+         "proGamesByScoringPeriod": {
+             sp: [{k: g.get(k) for k in ("date", "homeProTeamId", "awayProTeamId", "scoringPeriodId")}
+                  for g in games]
+             for sp, games in (t.get("proGamesByScoringPeriod") or {}).items()}}
+        for t in (sched.get("settings", {}) or {}).get("proTeams", []) if t.get("id")
+    ]
+    _save_gz("nba_snapshot.json.gz", {"season": season, "players": players,
+                                      "schedule": {"settings": {"proTeams": teams}}})
+    return {"season": season, "players": len(players), "teams": len(teams)}
+
+
 def record(season: int | None = None) -> dict[str, Any]:
     now = datetime.now(UTC)
     nfl_season = season or (now.year if now.month >= 8 else now.year - 1)
+    nba_season = now.year + 1 if now.month >= 8 else now.year
     with httpx.Client(headers=_UA, timeout=60, follow_redirects=True) as client:
         meta = {"recorded_at": now.isoformat(), "fpl": record_fpl(client),
                 "nfl": record_nfl(client, nfl_season)}
+    from fantasy.leagues.nba import espn
+
+    with espn.client() as client:
+        meta["nba"] = record_nba(client, nba_season)
     (DEMO_DIR / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     return meta

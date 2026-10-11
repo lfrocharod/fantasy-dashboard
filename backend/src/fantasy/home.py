@@ -15,6 +15,9 @@ from fantasy.core import models as M
 from fantasy.football.jsmath import js_round
 from fantasy.leagues.fpl import analysis as FA
 from fantasy.leagues.fpl import views as fpl_views
+from fantasy.leagues.nba import analysis as BA
+from fantasy.leagues.nba import views as nba_views
+from fantasy.leagues.nba.players import OUT_STATUS as NBA_OUT
 from fantasy.leagues.nfl import analysis as NA
 from fantasy.leagues.nfl import views as nfl_views
 from fantasy.leagues.nfl.players import OUT_STATUS
@@ -181,6 +184,53 @@ def _nfl(session: Session, alerts: list[S.Alert]) -> S.NflHome:
     return out
 
 
+def _nba(session: Session, alerts: list[S.Alert]) -> S.NbaHome:
+    lg = nba_views.load(session)
+    roster = lg.my_roster
+    if not roster:
+        return S.NbaHome(active=False, period=lg.period if lg.periods else None, days_left=0,
+                         my_proj=0, opp_name=None, opp_proj=None, win_pct=None, live=None,
+                         tonight=0, top_stream=None)
+    left = lg.days_left
+    plan = BA.plan_days(roster, left, lg.games, lg.slots)
+    score = nba_views._score(lg, lg.period, left, plan)
+    start, _ = nba_views._today_moves(lg, roster)
+    streams = BA.streams(roster, nba_views._free(lg), left, lg.games, lg.slots,
+                         nba_views._ros(lg), lg.limits)
+    top = next((s for s in streams if s.ros_delta >= -50 and s.gain >= 10), None)
+    live = None
+    if score and (score.my_points or score.opp_points):
+        live = S.NflLiveHome(mine=score.my_points, opp=score.opp_points, final=False)
+    out = S.NbaHome(
+        active=True, period=lg.period, days_left=len(left),
+        my_proj=js_round(score.my_proj if score else plan.total),
+        opp_name=score.opp_name if score else None,
+        opp_proj=js_round(score.opp_proj) if score else None,
+        win_pct=score.win_pct if score else None, live=live, tonight=len(start),
+        top_stream=S.Claim(name=top.add.name, gain=js_round(top.gain)) if top else None,
+    )
+    when = nba_views._when(lg, lg.pinned)
+    if start:
+        alerts.append(S.Alert(
+            league="NBA", tone="bad", href="/nba/lineup",
+            text=f"{when}: start {', '.join(p.name for p in start)} — benched with a game.",
+        ))
+    healthy_ir = [p for p in roster if p.slot == "IR" and p.injury not in NBA_OUT]
+    if healthy_ir:
+        alerts.append(S.Alert(
+            league="NBA", tone="bad", href="/nba/lineup",
+            text=f"{healthy_ir[0].name} is healthy but on IR — activate him before ESPN blocks "
+            "your other moves.",
+        ))
+    if out.win_pct is not None and out.win_pct < 40:
+        alerts.append(S.Alert(
+            league="NBA", tone="warn", href="/nba/players",
+            text=f"You're the underdog vs {out.opp_name} this matchup ({out.win_pct}% win) — "
+            "stream for games.",
+        ))
+    return out
+
+
 def _freshness(session: Session, alerts: list[S.Alert], active: dict[str, bool]) -> list[S.Freshness]:
     now = datetime.now(UTC)
     ucl_at = session.scalar(select(func.max(M.Player.updated_at)))
@@ -191,7 +241,8 @@ def _freshness(session: Session, alerts: list[S.Alert], active: dict[str, bool])
         ).tuples()
     }
     out = []
-    for tag, at in (("UCL", ucl_at), ("FPL", board.get("fpl")), ("NFL", board.get("nfl"))):
+    for tag, at in (("UCL", ucl_at), ("FPL", board.get("fpl")), ("NFL", board.get("nfl")),
+                    ("NBA", board.get("nba"))):
         stale = bool(active[tag] and at and now - at > STALE_AFTER)
         out.append(S.Freshness(league=tag, updated_at=at.isoformat() if at else None, stale=stale))  # type: ignore[arg-type]
         if stale and at:
@@ -208,7 +259,9 @@ def summary(session: Session) -> S.HomeSummary:
     ucl = _ucl(session, alerts)
     fpl = _fpl(session, alerts)
     nfl = _nfl(session, alerts)
-    fresh = _freshness(session, alerts, {"UCL": ucl.active, "FPL": fpl.active, "NFL": nfl.active})
+    nba = _nba(session, alerts)
+    fresh = _freshness(session, alerts, {"UCL": ucl.active, "FPL": fpl.active, "NFL": nfl.active,
+                                         "NBA": nba.active})
     # most urgent first; stable within a tone so the order above still reads
     alerts.sort(key=lambda a: TONE_ORDER[a.tone])
-    return S.HomeSummary(ucl=ucl, fpl=fpl, nfl=nfl, alerts=alerts, freshness=fresh)
+    return S.HomeSummary(ucl=ucl, fpl=fpl, nfl=nfl, nba=nba, alerts=alerts, freshness=fresh)

@@ -17,6 +17,7 @@ from fantasy.core import models as M
 from fantasy.core.secretbox import encrypt
 from fantasy.core.store import get_document, get_settings, set_setting
 from fantasy.leagues.draft.types import DEFAULT_ROSTER, FPL_ROSTER
+from fantasy.leagues.nba.league import default_season
 
 
 def ucl_settings(session: Session) -> S.UclSettings:
@@ -67,19 +68,21 @@ def draft_config(session: Session, sport: str) -> S.DraftConfig:
     s = get_settings(session, [p + k for k in (
         "league_id", "my_team_id", "my_slot", "teams", "scoring", "year", "espn_s2", "swid",
         "roster", "entry_id", "pl_profile",
-    )])
+    )] + ["draft.nfl.espn_s2", "draft.nfl.swid"])
+    own = bool(s.get(p + "espn_s2") and s.get(p + "swid"))
+    nba = sport == "nba"
     return S.DraftConfig(
         sport=sport,  # type: ignore[arg-type]
         league_id=s.get(p + "league_id", ""),
         my_team_id=s.get(p + "my_team_id", ""),
         my_slot=s.get(p + "my_slot", ""),
-        teams=s.get(p + "teams", "12"),
-        scoring=s.get(p + "scoring", "ppr"),
-        year=s.get(p + "year", "2026"),
+        teams=s.get(p + "teams", "10" if nba else "12"),
+        scoring=s.get(p + "scoring", "" if nba else "ppr"),
+        year=s.get(p + "year", str(default_season()) if nba else "2026"),
         roster=s.get(p + "roster", ""),
         entry_id=s.get(p + "entry_id", ""),
-        has_cookies=bool(s.get(p + "pl_profile")) if sport == "fpl"
-        else bool(s.get(p + "espn_s2") and s.get(p + "swid")),
+        has_cookies=bool(s.get(p + "pl_profile")) if sport == "fpl" else own,
+        shared_login=nba and not own and bool(s.get("draft.nfl.espn_s2") and s.get("draft.nfl.swid")),
     )
 
 

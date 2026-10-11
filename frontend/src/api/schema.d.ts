@@ -261,6 +261,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/nba/lineup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lineup */
+        get: operations["nba_lineup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/nba/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Overview */
+        get: operations["nba_overview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/nba/players": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Players */
+        get: operations["nba_players"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/nba/rivals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Rivals */
+        get: operations["nba_rivals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/nba/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Schedule */
+        get: operations["nba_schedule"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/nba/standings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Standings */
+        get: operations["nba_standings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/nba/trade": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Trade Lab */
+        get: operations["nba_trade_lab"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/nba/trade/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Evaluate Trade */
+        post: operations["nba_evaluate_trade"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/nfl/fixtures": {
         parameters: {
             query?: never;
@@ -598,7 +734,7 @@ export interface components {
              * League
              * @enum {string}
              */
-            league: "UCL" | "FPL" | "NFL";
+            league: "UCL" | "FPL" | "NFL" | "NBA";
             /** Text */
             text: string;
             /**
@@ -998,10 +1134,15 @@ export interface components {
             /** Scoring */
             scoring: string;
             /**
+             * Sharedlogin
+             * @default false
+             */
+            sharedLogin: boolean;
+            /**
              * Sport
              * @enum {string}
              */
-            sport: "nfl" | "fpl";
+            sport: "nfl" | "fpl" | "nba";
             /** Teams */
             teams: string;
             /** Year */
@@ -1028,7 +1169,7 @@ export interface components {
              * @default nfl
              * @enum {string}
              */
-            sport?: "nfl" | "fpl";
+            sport?: "nfl" | "fpl" | "nba";
             /** Swid */
             swid?: string | null;
             /** Teams */
@@ -1500,7 +1641,7 @@ export interface components {
              * League
              * @enum {string}
              */
-            league: "UCL" | "FPL" | "NFL";
+            league: "UCL" | "FPL" | "NFL" | "NBA";
             /** Stale */
             stale: boolean;
             /** Updatedat */
@@ -1565,6 +1706,7 @@ export interface components {
             fpl: components["schemas"]["FplHome"];
             /** Freshness */
             freshness: components["schemas"]["Freshness"][];
+            nba: components["schemas"]["NbaHome"];
             nfl: components["schemas"]["NflHome"];
             ucl: components["schemas"]["UclHome"];
         };
@@ -2074,6 +2216,517 @@ export interface components {
             round: number;
             /** Structural */
             structural: number | null;
+        };
+        /** NbaDay */
+        NbaDay: {
+            /** Benched */
+            benched: components["schemas"]["NbaPlayer"][];
+            /** Date */
+            date: string;
+            /** Day */
+            day: number;
+            /** Idle */
+            idle: components["schemas"]["NbaPlayer"][];
+            /** Openslots */
+            openSlots: number;
+            /** Points */
+            points: number;
+            /** Seats */
+            seats: components["schemas"]["NbaSeat"][];
+            /** Weekday */
+            weekday: string;
+        };
+        /** NbaDayCount */
+        NbaDayCount: {
+            /** Date */
+            date: string;
+            /** Day */
+            day: number;
+            /** Games */
+            games: number;
+            /** Light */
+            light: boolean;
+            /** Mygames */
+            myGames: number;
+            /** Weekday */
+            weekday: string;
+        };
+        /** NbaFreeAgent */
+        NbaFreeAgent: {
+            player: components["schemas"]["NbaPlayer"];
+            /** Value */
+            value: number;
+        };
+        /** NbaHome */
+        NbaHome: {
+            /** Active */
+            active: boolean;
+            /** Daysleft */
+            daysLeft: number;
+            live: components["schemas"]["NflLiveHome"] | null;
+            /** Myproj */
+            myProj: number;
+            /** Oppname */
+            oppName: string | null;
+            /** Oppproj */
+            oppProj: number | null;
+            /** Period */
+            period: number | null;
+            /** Tonight */
+            tonight: number;
+            topStream: components["schemas"]["Claim"] | null;
+            /** Winpct */
+            winPct: number | null;
+        };
+        /**
+         * NbaLine
+         * @description Per-game box score: this season's once he's played five games, else
+         *     ESPN's projection (or last season).
+         */
+        NbaLine: {
+            /**
+             * Ast
+             * @default 0
+             */
+            ast: number;
+            /**
+             * Blk
+             * @default 0
+             */
+            blk: number;
+            /**
+             * Fgpct
+             * @default 0
+             */
+            fgPct: number;
+            /**
+             * Ftpct
+             * @default 0
+             */
+            ftPct: number;
+            /**
+             * Min
+             * @default 0
+             */
+            min: number;
+            /**
+             * Pts
+             * @default 0
+             */
+            pts: number;
+            /**
+             * Reb
+             * @default 0
+             */
+            reb: number;
+            /**
+             * Stl
+             * @default 0
+             */
+            stl: number;
+            /**
+             * To
+             * @default 0
+             */
+            to: number;
+            /**
+             * Tpm
+             * @default 0
+             */
+            tpm: number;
+        };
+        /** NbaLineup */
+        NbaLineup: {
+            /** Days */
+            days: components["schemas"]["NbaDay"][];
+            /** Games */
+            games: number;
+            /** Hasroster */
+            hasRoster: boolean;
+            /** Lost */
+            lost: number;
+            /** Openslots */
+            openSlots: number;
+            /** Period */
+            period: number;
+            /** Todaybench */
+            todayBench: components["schemas"]["NbaPlayer"][];
+            /** Todaystart */
+            todayStart: components["schemas"]["NbaPlayer"][];
+            /** Total */
+            total: number;
+        };
+        /** NbaMoves */
+        NbaMoves: {
+            /** Left */
+            left: number | null;
+            /** Limit */
+            limit: number | null;
+            /** Perday */
+            perDay: boolean;
+            /** Used */
+            used: number;
+            /** Waivernote */
+            waiverNote: string;
+        };
+        /** NbaOverview */
+        NbaOverview: {
+            /** Checklist */
+            checklist: components["schemas"]["CheckItem"][];
+            /** Daysleft */
+            daysLeft: number;
+            /** Firstdate */
+            firstDate: string | null;
+            /** Hasroster */
+            hasRoster: boolean;
+            /** Isplayoffs */
+            isPlayoffs: boolean;
+            /** Lastdate */
+            lastDate: string | null;
+            /** Leaguename */
+            leagueName: string;
+            moves: components["schemas"]["NbaMoves"];
+            /** Period */
+            period: number;
+            /** Roster */
+            roster: components["schemas"]["NbaRosterRow"][];
+            score: components["schemas"]["NbaScore"] | null;
+            /** Seasonover */
+            seasonOver: boolean;
+            /** Streams */
+            streams: components["schemas"]["NbaStream"][];
+            /** Todaydate */
+            todayDate: string | null;
+            /** Warnings */
+            warnings: string[];
+        };
+        /** NbaPeriod */
+        NbaPeriod: {
+            /** Days */
+            days: number;
+            /** Firstdate */
+            firstDate: string;
+            /** Lastdate */
+            lastDate: string;
+            /** Period */
+            period: number;
+            /** Playoffs */
+            playoffs: boolean;
+        };
+        /** NbaPlayer */
+        NbaPlayer: {
+            /** Adp */
+            adp: number;
+            /** Extid */
+            extId: string;
+            /** Fppg */
+            fppg: number;
+            /** Fppgl15 */
+            fppgL15: number;
+            /** Fppglast */
+            fppgLast: number;
+            /** Fppgnow */
+            fppgNow: number;
+            /** Fppgproj */
+            fppgProj: number;
+            /**
+             * Gamesleft
+             * @default 0
+             */
+            gamesLeft: number;
+            /**
+             * Gamesnext
+             * @default 0
+             */
+            gamesNext: number;
+            /** Gpl15 */
+            gpL15: number;
+            /** Gpnow */
+            gpNow: number;
+            /** Injury */
+            injury: string;
+            line: components["schemas"]["NbaLine"];
+            /** Linesource */
+            lineSource: string;
+            /** Name */
+            name: string;
+            /** Ownername */
+            ownerName: string;
+            /** Ownerteamid */
+            ownerTeamId: number | null;
+            /** Pctchange */
+            pctChange: number;
+            /** Pctowned */
+            pctOwned: number;
+            /** Pctstarted */
+            pctStarted: number;
+            /**
+             * Playoffgames
+             * @default 0
+             */
+            playoffGames: number;
+            /** Pos */
+            pos: string;
+            /** Positions */
+            positions: string[];
+            /**
+             * Ros
+             * @default 0
+             */
+            ros: number;
+            /** Slot */
+            slot: string;
+            /** Slots */
+            slots: string[];
+            /** Status */
+            status: string;
+            /** Team */
+            team: string;
+            /**
+             * Today
+             * @default
+             */
+            today: string;
+            /**
+             * Weekpoints
+             * @default 0
+             */
+            weekPoints: number;
+        };
+        /** NbaPlayersResponse */
+        NbaPlayersResponse: {
+            /** Period */
+            period: number;
+            /** Position */
+            position: string;
+            /** Rows */
+            rows: components["schemas"]["NbaFreeAgent"][];
+            /**
+             * Show
+             * @enum {string}
+             */
+            show: "free" | "all";
+            /**
+             * Sort
+             * @enum {string}
+             */
+            sort: "fppg" | "week" | "ros" | "trend";
+            /** Streams */
+            streams: components["schemas"]["NbaStream"][];
+        };
+        /** NbaPlayoffGames */
+        NbaPlayoffGames: {
+            /** Byperiod */
+            byPeriod: number[];
+            player: components["schemas"]["NbaPlayer"];
+            /** Total */
+            total: number;
+        };
+        /** NbaRivalsResponse */
+        NbaRivalsResponse: {
+            /** Period */
+            period: number;
+            /** Teams */
+            teams: components["schemas"]["NbaTeam"][];
+        };
+        /** NbaRosterRow */
+        NbaRosterRow: {
+            /** Lost */
+            lost: number;
+            player: components["schemas"]["NbaPlayer"];
+            /** Starts */
+            starts: number;
+            /**
+             * Today
+             * @enum {string}
+             */
+            today: "start" | "bench" | "no game" | "IR" | "out";
+        };
+        /** NbaScheduleResponse */
+        NbaScheduleResponse: {
+            /** Days */
+            days: components["schemas"]["NbaDayCount"][];
+            /** Periods */
+            periods: components["schemas"]["NbaPeriod"][];
+            /** Teams */
+            teams: components["schemas"]["NbaTeamGames"][];
+        };
+        /** NbaScore */
+        NbaScore: {
+            /** Mypoints */
+            myPoints: number;
+            /** Myproj */
+            myProj: number;
+            /** Myremaining */
+            myRemaining: number;
+            /** Oppname */
+            oppName: string | null;
+            /** Opppoints */
+            oppPoints: number;
+            /** Oppproj */
+            oppProj: number;
+            /** Oppremaining */
+            oppRemaining: number;
+            /** Winpct */
+            winPct: number | null;
+        };
+        /** NbaSeat */
+        NbaSeat: {
+            /** Opp */
+            opp: string;
+            player: components["schemas"]["NbaPlayer"] | null;
+            /** Slot */
+            slot: string;
+        };
+        /** NbaStandingRow */
+        NbaStandingRow: {
+            /** Inline */
+            inLine: boolean;
+            /** Losses */
+            losses: number;
+            /** Mine */
+            mine: boolean;
+            /** Name */
+            name: string;
+            /** Pa */
+            pa: number;
+            /** Pf */
+            pf: number;
+            /** Playoffpct */
+            playoffPct: number | null;
+            /** Projwins */
+            projWins: number | null;
+            /** Teamid */
+            teamId: number;
+            /** Ties */
+            ties: number;
+            /** Topseedpct */
+            topSeedPct: number | null;
+            /** Wins */
+            wins: number;
+        };
+        /** NbaStandingsResponse */
+        NbaStandingsResponse: {
+            /** Playoffgames */
+            playoffGames: components["schemas"]["NbaPlayoffGames"][];
+            /** Playoffperiods */
+            playoffPeriods: number[];
+            /** Playoffteams */
+            playoffTeams: number;
+            /** Regperiods */
+            regPeriods: number;
+            /** Rows */
+            rows: components["schemas"]["NbaStandingRow"][];
+            /** Tradedeadline */
+            tradeDeadline: string | null;
+            /** Upcoming */
+            upcoming: components["schemas"]["NbaUpcoming"][];
+        };
+        /** NbaStream */
+        NbaStream: {
+            add: components["schemas"]["NbaPlayer"];
+            drop: components["schemas"]["NbaPlayer"];
+            /** Gain */
+            gain: number;
+            /** Games */
+            games: number;
+            /** Rosdelta */
+            rosDelta: number;
+        };
+        /** NbaTeam */
+        NbaTeam: {
+            /** Ismine */
+            isMine: boolean;
+            /** Losses */
+            losses: number;
+            /** Name */
+            name: string;
+            /** Pf */
+            pf: number;
+            /** Players */
+            players: components["schemas"]["NbaPlayer"][];
+            /** Teamid */
+            teamId: number;
+            /** Ties */
+            ties: number;
+            /** Weekproj */
+            weekProj: number;
+            /** Wins */
+            wins: number;
+        };
+        /** NbaTeamGames */
+        NbaTeamGames: {
+            /** Games */
+            games: number[];
+            /** Mine */
+            mine: number;
+            /** Name */
+            name: string;
+            /** Team */
+            team: string;
+        };
+        /** NbaTradeEvaluation */
+        NbaTradeEvaluation: {
+            /** Myplayoffgames */
+            myPlayoffGames: number;
+            /** Myros */
+            myRos: number;
+            /** Myweek */
+            myWeek: number;
+            /** Rostermoves */
+            rosterMoves: string[];
+            /** Theirros */
+            theirRos: number;
+            /** Verdict */
+            verdict: string;
+            /** Warnings */
+            warnings: string[];
+        };
+        /** NbaTradeIdea */
+        NbaTradeIdea: {
+            get: components["schemas"]["NbaPlayer"];
+            give: components["schemas"]["NbaPlayer"];
+            /** Mygain */
+            myGain: number;
+            /** Rivalid */
+            rivalId: number;
+            /** Rivalname */
+            rivalName: string;
+            /** Theirgain */
+            theirGain: number;
+        };
+        /** NbaTradeLab */
+        NbaTradeLab: {
+            /** Ideas */
+            ideas: components["schemas"]["NbaTradeIdea"][];
+            me: components["schemas"]["NbaTeam"] | null;
+            rival: components["schemas"]["NbaTeam"] | null;
+            /** Rivals */
+            rivals: components["schemas"]["NbaTeam"][];
+            /** Tradedeadline */
+            tradeDeadline: string | null;
+            /** Weeksleft */
+            weeksLeft: number;
+        };
+        /** NbaTradeRequest */
+        NbaTradeRequest: {
+            /** Get */
+            get: string[];
+            /** Give */
+            give: string[];
+        };
+        /** NbaUpcoming */
+        NbaUpcoming: {
+            /** Myproj */
+            myProj: number;
+            /** Oppname */
+            oppName: string;
+            /** Oppproj */
+            oppProj: number;
+            /** Period */
+            period: number;
+            /** Winpct */
+            winPct: number | null;
         };
         /** NflClubDossier */
         NflClubDossier: {
@@ -4018,6 +4671,264 @@ export interface operations {
             };
         };
     };
+    nba_lineup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                fd_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NbaLineup"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    nba_overview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                fd_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NbaOverview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    nba_players: {
+        parameters: {
+            query?: {
+                sort?: "fppg" | "week" | "ros" | "trend";
+                position?: string;
+                show?: "free" | "all";
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                fd_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NbaPlayersResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    nba_rivals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                fd_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NbaRivalsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    nba_schedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                fd_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NbaScheduleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    nba_standings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                fd_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NbaStandingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    nba_trade_lab: {
+        parameters: {
+            query?: {
+                rival?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                fd_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NbaTradeLab"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    nba_evaluate_trade: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                fd_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NbaTradeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NbaTradeEvaluation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     nfl_fixtures: {
         parameters: {
             query?: never;
@@ -4331,7 +5242,7 @@ export interface operations {
     settings_get_draft: {
         parameters: {
             query?: {
-                sport?: "nfl" | "fpl";
+                sport?: "nfl" | "fpl" | "nba";
             };
             header?: never;
             path?: never;
