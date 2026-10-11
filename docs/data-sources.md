@@ -2,10 +2,10 @@
 
 The app never trusts a single feed. Every decision input — will a player start,
 is there an injury scare, how many points will they score — is a **blend** of
-independent sources, merged by `fantasy_ingest/sources/blend.py`:
+independent sources, merged by `fantasy/leagues/ucl/sources/blend.py`:
 
 ```python
-from fantasy_ingest.sources.blend import Signal, compose
+from fantasy.leagues.ucl.sources.blend import Signal, compose
 
 c = compose([
     Signal("sofascore_form",  0.88, confidence=0.7),
@@ -37,6 +37,7 @@ club says "doubt", that gap **is** the signal a point estimate would hide.
 | NFL | FantasyPros | weekly + rest-of-season expert-consensus ranks | scrape (`var ecrData`) |
 | NFL | ESPN public scoreboard | pro schedule, opponent, bye weeks | public JSON |
 | NFL | Defensive-matchup table | pass- vs rush-defence strength → position matchup rating | static, self-tunes |
+| **ML (FPL)** | [vaastav/Fantasy-Premier-League](https://github.com/vaastav/Fantasy-Premier-League) | seven seasons of per-fixture player history (training + backtest) | public CSV (code MIT, data © Premier League); downloaded at run time, never committed |
 
 For **injury / team news**, the primary feed already carries an
 official-club-derived signal: FPL's editor `news` field and UEFA's
@@ -47,7 +48,7 @@ per-club scraper (below) would add lead time and detail.
 
 ## Roadmap — free, best-effort, one per row
 
-Add a source by writing a module in `fantasy_ingest/sources/` that returns
+Add a source by writing a module in `fantasy/leagues/ucl/sources/` that returns
 `list[Signal]` keyed by our player id, then registering it in the relevant
 `compose(...)` call. Nothing else changes; a source that fails returns `[]` and
 the blend degrades gracefully.
