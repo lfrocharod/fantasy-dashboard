@@ -4,7 +4,7 @@ idempotent."""
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -562,6 +562,49 @@ class DB:
                    on conflict (key) do update set payload=excluded.payload, updated_at=now()""",
                 (key, json.dumps(payload)),
             )
+
+    # ---- model predictions (graded once the round is played) -----------------------
+
+    def put_predictions(self, sport: str, round_: int, model: str, values: Mapping[str, float]) -> None:
+        """Record or refresh a model's predictions for a round; graded rows are final."""
+        if not values:
+            return
+        with self.conn() as c, c.cursor() as cur:
+            cur.executemany(
+                """insert into model_predictions (sport, round, ext_id, model, predicted, made_at)
+                   values (%s, %s, %s, %s, %s, now())
+                   on conflict (sport, round, ext_id, model) do update
+                     set predicted = excluded.predicted, made_at = now()
+                     where model_predictions.actual is null""",
+                [(sport, round_, ext, model, float(v)) for ext, v in values.items()],
+            )
+
+    def ungraded_rounds(self, sport: str, before: int) -> list[int]:
+        with self.conn() as c:
+            rows = c.execute(
+                """select distinct round from model_predictions
+                   where sport=%s and round < %s and actual is null order by round""",
+                (sport, before),
+            ).fetchall()
+        return [int(r[0]) for r in rows]
+
+    def grade_predictions(self, sport: str, round_: int, actual: Mapping[str, float]) -> int:
+        """Fill in what each player actually scored; returns rows graded."""
+        with self.conn() as c, c.cursor() as cur:
+            cur.executemany(
+                """update model_predictions set actual=%s
+                   where sport=%s and round=%s and ext_id=%s and actual is null""",
+                [(float(v), sport, round_, ext) for ext, v in actual.items()],
+            )
+            # anyone missing from the round's results scored nothing
+            c.execute(
+                "update model_predictions set actual=0 where sport=%s and round=%s and actual is null",
+                (sport, round_),
+            )
+            row = c.execute(
+                "select count(*) from model_predictions where sport=%s and round=%s", (sport, round_)
+            ).fetchone()
+        return int(row[0]) if row else 0
 
     def get_document(self, key: str) -> Any:
         with self.conn() as c:

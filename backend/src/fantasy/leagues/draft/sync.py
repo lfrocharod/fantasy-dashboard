@@ -353,6 +353,13 @@ def build_board(db: DB, sport: str, cfg: dict, env: Env | None = None) -> None:
         rows = build(next_gw, roster, teams, league_id, cookie, role_overrides=overrides)
         db.replace_draft_players(sport, rows)
         db.upsert_league("fpl", current_round=int(next_gw))
+        try:
+            from fantasy.ml import serve
+        except ImportError:  # the ml extra isn't installed here
+            pass
+        else:
+            serve.run(db, data, int(next_gw), {r.ext_id: float(r.proj_points or 0) for r in rows},
+                      say=lambda m: _log(f"ml: {m}"))
         owned = sum(1 for r in rows if not r.available)
         _log(f"wrote {len(rows)} players · {owned} owned in league · "
              f"{len(rows) - owned} free agents")

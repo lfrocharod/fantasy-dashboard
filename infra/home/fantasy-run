@@ -7,6 +7,7 @@
 #   fantasy-run full   daily        — the same plus the recent-form / xG scrape
 #   fantasy-run live   every 5 min  — UCL matchday refresh; exits at once unless
 #                                     a match is in play (no network, no database)
+#   fantasy-run train  weekly       — refit the learned FPL points model
 #
 # Runs from home on purpose: UEFA's and ESPN's edges block datacenter IPs.
 set -euo pipefail
@@ -23,7 +24,7 @@ fi
 
 cd "$repo/backend"
 # Install exactly what the lockfile pins (a no-op when nothing changed).
-uv sync --frozen --quiet --extra jobs --extra sources
+uv sync --frozen --quiet --extra jobs --extra sources --extra ml
 
 case "$mode" in
   live)
@@ -33,6 +34,8 @@ case "$mode" in
   fast|full)
     exec flock --wait 1800 "$lock" \
       uv run --frozen --no-sync fantasy sync all --mode "$mode" ;;
+  train)
+    exec nice -n 15 uv run --frozen --no-sync fantasy ml train ;;
   *)
     echo "unknown mode: $mode" >&2
     exit 2 ;;

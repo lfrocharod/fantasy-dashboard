@@ -124,6 +124,8 @@ function Overview({ o }: { o: Api["FplOverview"] }) {
 
       {o.fixtureRun && <FixtureRun run={o.fixtureRun} />}
 
+      {o.modelCheck.length > 0 && <ModelCheck rows={o.modelCheck} />}
+
       <Legend
         items={[
           ["XI / bench", o.fromApp
@@ -258,6 +260,57 @@ function FixtureRun({ run }: { run: Api["FixtureRun"] }) {
       <p className="text-xs text-[var(--muted)]">
         Difficulty is position-aware (a defender's number weighs clean-sheet risk, an attacker's the opponent's
         defence). Green = easy run, red = wall.
+      </p>
+    </section>
+  );
+}
+
+const REPORT = "https://github.com/lfrocharod/fantasy-dashboard/blob/main/docs/ml/fpl-backtest.md";
+
+/** How each model's pre-deadline projection compared with what happened. */
+function ModelCheck({ rows }: { rows: Api["ModelCheckRow"][] }) {
+  const cell = (v: number | null, best: number) => (
+    <td className="num" style={v != null && v === best ? { color: "var(--good)", fontWeight: 600 } : undefined}>
+      {fmt(v, 2)}
+    </td>
+  );
+  return (
+    <section className="space-y-2">
+      <SubHeading>Model check — error per gameweek</SubHeading>
+      <div className="card table-wrap">
+        <table className="dtable">
+          <thead>
+            <tr>
+              <th>GW</th>
+              <th className="num">Players</th>
+              <th className="num" title="gradient-boosted trees on public FPL history">ML</th>
+              <th className="num" title="the minutes × fixture model behind xPts">Structural</th>
+              <th className="num" title="FPL's own expected points (ep_next)">FPL</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const best = Math.min(...[r.ml, r.structural, r.fplEp].filter((v): v is number => v != null));
+              return (
+                <tr key={r.round}>
+                  <td>GW{r.round}</td>
+                  <td className="num text-[var(--muted)]">{r.n}</td>
+                  {cell(r.ml, best)}
+                  {cell(r.structural, best)}
+                  {cell(r.fplEp, best)}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-[var(--muted)]">
+        Mean absolute error in points over the players any model projected for 2+, from predictions stored before each
+        deadline; lowest is green. How the ML model was built and backtested:{" "}
+        <a href={REPORT} className="text-[var(--accent)]" target="_blank" rel="noreferrer">
+          backtest report
+        </a>
+        .
       </p>
     </section>
   );

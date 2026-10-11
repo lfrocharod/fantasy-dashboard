@@ -1248,6 +1248,8 @@ export interface components {
             /** Lineupsource */
             lineupSource: string | null;
             live: components["schemas"]["FplLiveView"] | null;
+            /** Modelcheck */
+            modelCheck: components["schemas"]["ModelCheckRow"][];
             /** Myrank */
             myRank: number | null;
             /** Nextgw */
@@ -1289,6 +1291,8 @@ export interface components {
             inf90: number;
             /** Minutes */
             minutes: number;
+            /** Ml */
+            ml: number | null;
             /** Name */
             name: string;
             /** News */
@@ -2053,6 +2057,23 @@ export interface components {
              * @default []
              */
             players: components["schemas"]["TimingRow"][];
+        };
+        /**
+         * ModelCheckRow
+         * @description How each model did on one played gameweek: mean absolute error over the
+         *     players anyone projected for 2+ points.
+         */
+        ModelCheckRow: {
+            /** Fplep */
+            fplEp: number | null;
+            /** Ml */
+            ml: number | null;
+            /** N */
+            n: number;
+            /** Round */
+            round: number;
+            /** Structural */
+            structural: number | null;
         };
         /** NflClubDossier */
         NflClubDossier: {

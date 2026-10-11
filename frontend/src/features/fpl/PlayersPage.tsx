@@ -7,8 +7,9 @@ import { Flags, startPct, type Player } from "./common";
 const POS = ["ALL", "GKP", "DEF", "MID", "FWD"] as const;
 type Pos = (typeof POS)[number];
 const SORTS = {
-  horizon: "next 6 GW", proj: "next GW", vbd: "value over replacement", csProb: "clean-sheet %", form: "form",
-  totalPoints: "total points", xgi90: "xGI/90", ict90: "ICT/90", thr90: "Threat/90", cre90: "Creativity/90",
+  horizon: "next 6 GW", proj: "next GW", ml: "next GW (ML)", vbd: "value over replacement", csProb: "clean-sheet %",
+  form: "form", totalPoints: "total points", xgi90: "xGI/90", ict90: "ICT/90", thr90: "Threat/90",
+  cre90: "Creativity/90",
 } as const;
 type Sort = keyof typeof SORTS;
 
@@ -33,7 +34,7 @@ function Players({ d }: { d: Api["BoardResponse"] }) {
     const s = search.trim().toLowerCase();
     return d.players
       .filter((p) => (pos === "ALL" || p.pos === pos) && (!availableOnly || p.available) && (!s || p.name.toLowerCase().includes(s)))
-      .sort((a: Player, b: Player) => b[sort] - a[sort] || b.horizon - a.horizon)
+      .sort((a: Player, b: Player) => (b[sort] ?? -1) - (a[sort] ?? -1) || b.horizon - a.horizon)
       .slice(0, 250);
   }, [d.players, pos, availableOnly, search, sort]);
 
@@ -64,6 +65,7 @@ function Players({ d }: { d: Api["BoardResponse"] }) {
               <th className="hide-sm">Team</th>
               <th>Opp</th>
               <th className="num">xPts</th>
+              <th className="num" title="the learned model's expected points next gameweek (see the backtest report)">ML</th>
               <th className="num hide-sm">Range</th>
               <th className="num" title={`sum of projected points over the next ${d.gws.length} gameweeks`}>xPts·{d.gws.length}</th>
               <th className="num hide-sm">Start%</th>
@@ -88,6 +90,7 @@ function Players({ d }: { d: Api["BoardResponse"] }) {
                 <td className="hide-sm">{p.team}</td>
                 <td className="text-xs text-[var(--muted)]">{p.nextOpp}</td>
                 <td className="num">{fmt(p.proj)}</td>
+                <td className="num text-[var(--muted)]">{fmt(p.ml)}</td>
                 <td className="num hide-sm">
                   <Range lo={p.gws[0]?.lo ?? 0} hi={p.gws[0]?.hi ?? 0} mean={p.proj} digits={1} />
                 </td>
@@ -119,6 +122,7 @@ function Players({ d }: { d: Api["BoardResponse"] }) {
       <Legend
         items={[
           ["xPts / xPts·N", "projected draft points — next gameweek, then the sum over the next N shown"],
+          ["ML", "a second opinion: gradient-boosted trees trained on seven seasons of public FPL data, backtested walk-forward (graded weekly on the Overview)"],
           ["Range", "~15th–85th percentile next-GW outcome (blank · mean · haul) — wider for boom/bust attackers, tighter for a nailed defender's appearance + DEFCON floor"],
           ["Start%", "modelled chance of starting the next match"],
           ["CS%", "clean-sheet probability (opponent attack vs your team's defence). GKP/DEF worth 4, MID 1"],

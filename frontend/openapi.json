@@ -1884,6 +1884,13 @@
               }
             ]
           },
+          "modelCheck": {
+            "items": {
+              "$ref": "#/components/schemas/ModelCheckRow"
+            },
+            "title": "Modelcheck",
+            "type": "array"
+          },
           "myRank": {
             "anyOf": [
               {
@@ -1942,7 +1949,8 @@
           "swaps",
           "checklist",
           "squad",
-          "fixtureRun"
+          "fixtureRun",
+          "modelCheck"
         ],
         "title": "FplOverview",
         "type": "object"
@@ -1999,6 +2007,17 @@
           "minutes": {
             "title": "Minutes",
             "type": "number"
+          },
+          "ml": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ml"
           },
           "name": {
             "title": "Name",
@@ -2149,6 +2168,7 @@
           "ppg",
           "totalPoints",
           "gws",
+          "ml",
           "oppTag"
         ],
         "title": "FplPlayer",
@@ -4004,6 +4024,61 @@
           "liveOptions"
         ],
         "title": "MatchdayTiming",
+        "type": "object"
+      },
+      "ModelCheckRow": {
+        "description": "How each model did on one played gameweek: mean absolute error over the\nplayers anyone projected for 2+ points.",
+        "properties": {
+          "fplEp": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fplep"
+          },
+          "ml": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ml"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "round": {
+            "title": "Round",
+            "type": "integer"
+          },
+          "structural": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structural"
+          }
+        },
+        "required": [
+          "round",
+          "n",
+          "ml",
+          "structural",
+          "fplEp"
+        ],
+        "title": "ModelCheckRow",
         "type": "object"
       },
       "NflClubDossier": {

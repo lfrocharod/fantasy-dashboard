@@ -7,6 +7,7 @@ the Cloud Run job image.
     fantasy draft-board --sport nfl --sync --loop 15       # draft-night pick tracker
     fantasy calibrate [--matchday N] [--played-only]       # grade the UCL model
     fantasy db upgrade | current | stamp REV               # Alembic migrations
+    fantasy ml backtest | train                            # the learned FPL points model
     fantasy serve [--port 8000] [--reload]                 # the API (+ built SPA)
 
 Configuration comes from the environment, falling back to $FANTASY_ENV_FILE or
@@ -165,6 +166,12 @@ def cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ml(args: argparse.Namespace) -> int:
+    from fantasy.ml import cli as ml_cli  # pandas / scikit-learn only when asked for
+
+    return ml_cli.run(args)
+
+
 def cmd_openapi(args: argparse.Namespace) -> int:
     """Print the API's OpenAPI schema (the frontend generates its client from it)."""
     import json
@@ -238,6 +245,17 @@ def build_parser() -> argparse.ArgumentParser:
                     help="record: refresh the public snapshots; seed: build the demo database "
                     "(WIPES league data in $DATABASE_URL)")
     dm.set_defaults(func=cmd_demo)
+
+    ml = sub.add_parser("ml", help="the learned FPL points model (needs the ml extra)")
+    msub = ml.add_subparsers(dest="ml_cmd", required=True)
+    mb = msub.add_parser("backtest", help="walk-forward backtest → docs/ml/fpl-backtest.md")
+    mb.add_argument("--block", type=int, default=4, help="retrain every N gameweeks")
+    mb.add_argument("--out", default=None, help="report path (default: docs/ml/fpl-backtest.md)")
+    mb.add_argument("--report-only", action="store_true",
+                    help="rewrite the report from the last run's cached predictions")
+    mb.set_defaults(func=cmd_ml)
+    mt = msub.add_parser("train", help="fit on all history and save the model")
+    mt.set_defaults(func=cmd_ml)
 
     o = sub.add_parser("openapi", help="print the OpenAPI schema (no server needed)")
     o.set_defaults(func=cmd_openapi)

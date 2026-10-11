@@ -86,6 +86,7 @@ class FplPlayer:
     total_points: float
     gws: list[GwCell] = field(default_factory=list)
     components: dict[str, float] = field(default_factory=dict)
+    ml: float | None = None  # the learned model's next-GW expected points, when trained
 
     def gw_xpts(self, i: int) -> float:
         return self.gws[i].xpts if i < len(self.gws) else 0.0

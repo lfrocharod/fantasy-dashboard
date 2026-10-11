@@ -63,6 +63,7 @@ class FplPlayer(Schema):
     ppg: float
     total_points: float
     gws: list[GwCell]
+    ml: float | None = None  # the learned model's next-GW expected points
     # derived
     opp_tag: str = ""  # "value" | "output-led" | ""
 
@@ -132,6 +133,17 @@ class FixtureRun(Schema):
     rows: list[FixtureRunRow]
 
 
+class ModelCheckRow(Schema):
+    """How each model did on one played gameweek: mean absolute error over the
+    players anyone projected for 2+ points."""
+
+    round: int
+    n: int
+    ml: float | None
+    structural: float | None
+    fpl_ep: float | None
+
+
 class FplOverview(Schema):
     teams: int
     gws: list[int]
@@ -149,6 +161,7 @@ class FplOverview(Schema):
     checklist: list[CheckItem]
     squad: list[FplSquadRow]
     fixture_run: FixtureRun | None
+    model_check: list[ModelCheckRow]
 
 
 # ---- clubs ---------------------------------------------------------------------------
