@@ -189,7 +189,7 @@ def optimal_lineup(
     return Lineup(starters=starters, bench=bench, total=total)
 
 
-def start_sit_call(p: NflPlayer, my_starters: set[str]) -> str:
+def start_sit_call(p: NflPlayer, my_starters: set[str]) -> Literal["START", "SIT", "FLEX?"]:
     if p.injury in OUT_STATUS or p.on_bye:
         return "SIT"
     if p.ext_id in my_starters:
@@ -450,11 +450,16 @@ def sim_playoffs(
     # each team's projected weekly score (best lineup for that week index)
     weeks = list(range(current_week, reg_weeks + 1))
     week_score = np.full((n_all, max(1, len(weeks))), 90.0)
+    def scorer(wi: int, wl: int) -> Callable[[NflPlayer], float]:
+        def score(pl: NflPlayer) -> float:
+            return week_points(pl, wi, wl)
+
+        return score
+
     for m in managers:
         for wi, w in enumerate(weeks):
-            wl = reg_weeks - w + 1
             week_score[idx[m.team_id], wi] = optimal_lineup(
-                m.players, slots, wi, lambda pl, wi=wi, wl=wl: week_points(pl, wi, wl)
+                m.players, slots, wi, scorer(wi, reg_weeks - w + 1)
             ).total
 
     games = [g for g in schedule if current_week <= g.week <= reg_weeks]

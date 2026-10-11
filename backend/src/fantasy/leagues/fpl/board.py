@@ -483,6 +483,18 @@ def _blend_gw(el, pos, sc, own_code, oc, ish, ps, pa, ppg, frm, wm, games=6):
 def build(next_gw: int, roster: dict[str, int], teams: int, league_id: str | None,
           cookie: str | None, horizon: int = HORIZON,
           role_overrides: dict | None = None) -> list[DraftRow]:  # pragma: no cover - network
+    """Build the whole board. The season's results temporarily re-tune club
+    strengths (`_BLENDED_STRENGTH`); that is cleared afterwards so a build has
+    no lasting side effects on anything else in the process."""
+    try:
+        return _build(next_gw, roster, teams, league_id, cookie, horizon, role_overrides)
+    finally:
+        _BLENDED_STRENGTH.clear()
+
+
+def _build(next_gw: int, roster: dict[str, int], teams: int, league_id: str | None,
+           cookie: str | None, horizon: int = HORIZON,
+           role_overrides: dict | None = None) -> list[DraftRow]:  # pragma: no cover - network
     role_overrides = role_overrides or {}
     with _client() as c:
         data = bootstrap(c)

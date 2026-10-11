@@ -4,8 +4,10 @@ idempotent."""
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from typing import Any
 
 import psycopg
 
@@ -51,7 +53,7 @@ class DB:
         return self._conn
 
     @contextmanager
-    def conn(self):
+    def conn(self) -> Iterator[psycopg.Connection]:
         yield self._connect()
 
     def _many(self, sql: str, rows: list[tuple], *, atomic_delete: str | None = None,
@@ -320,9 +322,10 @@ class DB:
 
     def has_projections(self, matchday: int) -> bool:
         with self.conn() as c:
-            n = c.execute(
+            row = c.execute(
                 "select count(*) from projections where matchday=%s", (matchday,)
-            ).fetchone()[0]
+            ).fetchone()
+            n = row[0] if row else 0
         return bool(n)
 
     def load_projections(self, matchday: int) -> list[Projection]:
@@ -455,7 +458,7 @@ class DB:
         "playoff_rounds", "playoff_teams", "seeding_rule", "roster", "lineup_slots",
     )
 
-    def upsert_league(self, sport: str, **fields) -> None:
+    def upsert_league(self, sport: str, **fields: Any) -> None:
         """Create the league row if needed and update only the fields given."""
         unknown = set(fields) - set(self._LEAGUE_COLS)
         if unknown:
@@ -546,9 +549,9 @@ class DB:
         with self.conn() as c:
             cur = c.execute("select * from leagues where sport=%s", (sport,))
             row = cur.fetchone()
-            return dict(zip([d.name for d in cur.description], row, strict=True)) if row else None
+            return dict(zip([d.name for d in cur.description or []], row, strict=True)) if row else None
 
-    def put_document(self, key: str, payload) -> None:
+    def put_document(self, key: str, payload: Any) -> None:
         """Store a computed output (or remove it when payload is falsy)."""
         with self.conn() as c:
             if not payload:
@@ -560,7 +563,7 @@ class DB:
                 (key, json.dumps(payload)),
             )
 
-    def get_document(self, key: str):
+    def get_document(self, key: str) -> Any:
         with self.conn() as c:
             row = c.execute("select payload from documents where key=%s", (key,)).fetchone()
         return row[0] if row else None
@@ -573,17 +576,19 @@ class DB:
                    from league_entries where sport=%s order by rank nulls last, name""",
                 (sport,),
             )
-            cols = [d.name for d in cur.description]
+            cols = [d.name for d in cur.description or []]
             return [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
 
     # ---- run bookkeeping ----------------------------------------------------
 
     def start_run(self, stage: str = "start") -> int:
         with self.conn() as c:
-            rid = c.execute(
+            row = c.execute(
                 "insert into ingest_runs (started_at, stage) values (now(), %s) returning id",
                 (stage,),
-            ).fetchone()[0]
+            ).fetchone()
+            assert row is not None
+            rid = int(row[0])
             c.commit()
         return rid
 
@@ -636,7 +641,7 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _draft_raw(r) -> dict:
+def _draft_raw(r: Any) -> dict[str, Any]:
     """Merge sport-specific extras (FPL Draft) into the raw JSON blob so no
     schema change is needed."""
     raw = dict(r.raw or {})

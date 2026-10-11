@@ -83,7 +83,7 @@ class Env:
             source_leagues=env(
                 "SOURCE_LEAGUES",
                 "ENG-Premier League,ESP-La Liga,GER-Bundesliga,ITA-Serie A,FRA-Ligue 1",
-            ),
+            ) or "",
             fbref_season=env("FBREF_SEASON", _season),
             skip_sources=(env("SKIP_SOURCES") or "").lower() in ("1", "true", "yes"),
             # Recent form is the last-N matches OVERALL (CL + domestic + cups),

@@ -17,6 +17,7 @@ run; the exit code is non-zero if anything failed.
 from __future__ import annotations
 
 import argparse
+import functools
 import os
 import sys
 import time
@@ -87,9 +88,9 @@ def cmd_sync(args: argparse.Namespace) -> int:
         failed: list[str] = []
         for lg in (x for x in LEAGUES if x in wanted):
             if lg == "ucl":
-                ok = _run_isolated("Champions League", lambda: _sync_ucl(args))
+                ok = _run_isolated("Champions League", functools.partial(_sync_ucl, args))
             else:
-                ok = _run_isolated(lg.upper(), lambda lg=lg: _sync_draft(lg, args))
+                ok = _run_isolated(lg.upper(), functools.partial(_sync_draft, lg, args))
             if not ok:
                 failed.append(lg)
         if failed:
@@ -151,6 +152,19 @@ def cmd_db(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_demo(args: argparse.Namespace) -> int:
+    if args.action == "record":
+        from fantasy.demo.record import record
+
+        print(record())
+    else:
+        from fantasy.demo.seed import seed
+
+        seed()
+        _log("demo data seeded")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -208,6 +222,12 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("action", choices=("upgrade", "current", "stamp"))
     m.add_argument("revision", nargs="?", default=None)
     m.set_defaults(func=cmd_db)
+
+    dm = sub.add_parser("demo", help="the public demo dataset")
+    dm.add_argument("action", choices=("record", "seed"),
+                    help="record: refresh the public snapshots; seed: build the demo database "
+                    "(WIPES league data in $DATABASE_URL)")
+    dm.set_defaults(func=cmd_demo)
 
     v = sub.add_parser("serve", help="run the API")
     v.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
