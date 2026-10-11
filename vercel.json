@@ -1,0 +1,38 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["cle1"],
+  "services": {
+    "web": {
+      "root": "frontend/",
+      "framework": "vite",
+      "headers": [
+        {
+          "source": "/assets/(.*)",
+          "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+        },
+        {
+          "source": "/(.*)",
+          "headers": [
+            { "key": "X-Content-Type-Options", "value": "nosniff" },
+            { "key": "X-Frame-Options", "value": "DENY" },
+            { "key": "Referrer-Policy", "value": "same-origin" }
+          ]
+        }
+      ],
+      "rewrites": [{ "source": "/((?!assets/).*)", "destination": "/index.html" }]
+    },
+    "api": {
+      "root": "backend/",
+      "framework": "fastapi",
+      "entrypoint": "asgi:app",
+      "buildCommand": "test \"$VERCEL_ENV\" != production || fantasy db upgrade",
+      "functions": {
+        "asgi.py": { "excludeFiles": "{src/**,tests/**,samples/**}" }
+      }
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": { "service": "api" } },
+    { "source": "/(.*)", "destination": { "service": "web" } }
+  ]
+}
