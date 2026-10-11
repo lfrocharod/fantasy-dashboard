@@ -10,7 +10,10 @@ class Keys:
     LEAGUE_ID = "ucl.league_id"
     LEAGUE_CODE = "ucl.league_code"
     ENTRY_ID = "ucl.entry_id"
-    CURRENT_MATCHDAY = "ucl.current_matchday"
+    CURRENT_MATCHDAY = "ucl.current_matchday"  # written by every run (output)
+    # Manual pin from Settings; blank = follow the game. Kept separate from
+    # CURRENT_MATCHDAY so a run never reads its own previous answer back.
+    MATCHDAY_OVERRIDE = "ucl.matchday_override"
     DEADLINE = "ucl.deadline_iso"
     UEFA_TOKEN = "ucl.uefa_token_enc"
     UEFA_TOKEN_SAVED_AT = "ucl.uefa_token_saved_at"

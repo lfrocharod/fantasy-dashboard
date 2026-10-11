@@ -292,7 +292,9 @@ def parse_fixtures(
             MatchdayInfo(
                 matchday=md_id,
                 deadline=_dt(_pick(md, "deadline")),
-                is_current=bool(_i(_pick(md, "mdIsCurrent", "gdIsCurrent"))),
+                # tri-state: 2 = already played, 1 = the open matchday, 0 = future.
+                # Only 1 is "current" — truthiness would flag every finished MD too.
+                is_current=_i(_pick(md, "mdIsCurrent", "gdIsCurrent")) == 1,
                 subs_allowed=_i(_pick(md, "subsAllowed", "subAllowed"), 3) or 3,
                 subs_carry=_i(_pick(md, "maxSubsCf", "subsCf", "subCarryFwd"), 0),
             )

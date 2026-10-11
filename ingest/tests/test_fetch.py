@@ -133,3 +133,15 @@ def test_parse_league_standings():
 
 def test_unwrap_list_backcompat():
     assert fetch.unwrap_list(PLAYERS, ("value", "playerList")) == PLAYERS["data"]["value"]["playerList"]
+
+
+def test_md_is_current_is_tri_state():
+    # UEFA: 2 = played, 1 = the open matchday, 0 = future. Only 1 is current.
+    feed = {"data": {"value": [
+        {"mdId": 1, "mdIsCurrent": 2, "deadline": "09/10/26 06:45:00 PM", "match": []},
+        {"mdId": 2, "mdIsCurrent": 1, "deadline": "10/13/26 06:45:00 PM", "match": []},
+        {"mdId": 3, "mdIsCurrent": 0, "deadline": "10/20/26 06:45:00 PM", "match": []},
+    ]}}
+    _, _, md_info = fetch.parse_fixtures(feed)
+    assert [m.is_current for m in md_info] == [False, True, False]
+    assert fetch.current_matchday(md_info) == 2

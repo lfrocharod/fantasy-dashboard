@@ -83,7 +83,7 @@ def run(args: argparse.Namespace) -> int:
 
     try:
         cfg = db.get_settings(
-            [Keys.MODEL_PARAMS, Keys.CURRENT_MATCHDAY, Keys.LEAGUE_ID,
+            [Keys.MODEL_PARAMS, Keys.MATCHDAY_OVERRIDE, Keys.LEAGUE_ID,
              Keys.LEAGUE_CODE, Keys.ENTRY_ID]
         )
         params = ModelParams.load(cfg.get(Keys.MODEL_PARAMS))
@@ -597,7 +597,7 @@ def _maybe_alert(db, live: dict) -> None:
 def _resolve_md(cfg: dict, md_info, cli_md: int | None) -> int:
     if cli_md:
         return cli_md
-    s = cfg.get(Keys.CURRENT_MATCHDAY, "")
+    s = (cfg.get(Keys.MATCHDAY_OVERRIDE) or "").strip()
     if s.isdigit():
         return int(s)
     return fetch.current_matchday(md_info)
