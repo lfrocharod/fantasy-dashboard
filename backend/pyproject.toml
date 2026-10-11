@@ -1,0 +1,97 @@
+[project]
+name = "fantasy"
+version = "1.0.0"
+description = "Decision engine + API for UCL Fantasy, FPL Draft and ESPN NFL leagues"
+readme = "README.md"
+requires-python = ">=3.13"
+# The base install is exactly what the API container needs — kept slim so a
+# Cloud Run cold start stays fast. Scraping, the ILP optimizer and the ML stack
+# live in extras that only the jobs image / home runner install.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0.30",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.8",
+    "pyjwt>=2.9",
+    "bcrypt>=4.2",
+    "cryptography>=43",
+    "httpx>=0.27",
+    "numpy>=2.0",
+]
+
+[project.optional-dependencies]
+jobs = [
+    # 4.x rewrote the core in Rust with a new variable API (no `cat=` on
+    # LpVariable); the optimizer targets the 3.x API.
+    "pulp>=3.3,<4",
+    "rapidfuzz>=3.9",
+    "python-dateutil>=2.9",
+    "curl_cffi>=0.7",
+]
+ml = [
+    "pandas>=2.2",
+    "scikit-learn>=1.5",
+    "pyarrow>=17",
+    "joblib>=1.4",
+]
+# Optional Understat depth layer for UCL recent form (heavy, rarely needed).
+sources = ["soccerdata>=1.8", "pandas>=2.2"]
+
+[project.scripts]
+fantasy = "fantasy.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fantasy"]
+
+[tool.uv]
+# Supply-chain policy: only resolve releases that have been public for at least
+# two weeks. Bump this date deliberately when upgrading.
+exclude-newer = "2026-09-26T00:00:00Z"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "db: needs a Postgres database (TEST_DATABASE_URL)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "TID252"]
+ignore = [
+    "B008",  # FastAPI's Depends() in argument defaults is the documented idiom
+    "E501",  # line length is the formatter's job, not a lint failure
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+
+[tool.mypy]
+python_version = "3.13"
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true
+
+# The API, core and service layers are type-checked strictly; the older scraper
+# and pipeline modules are checked for errors only.
+[[tool.mypy.overrides]]
+module = ["fantasy.api.*", "fantasy.core.*", "fantasy.services.*", "fantasy.ml.*"]
+disallow_untyped_defs = true
