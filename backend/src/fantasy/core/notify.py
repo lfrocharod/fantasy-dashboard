@@ -1,6 +1,7 @@
 """Opt-in push notifications for time-sensitive matchday events.
 
-Set one of these in the environment (or ingest/.env):
+Set one of these in the environment (the home runner reads
+~/.config/fantasy-dashboard/env):
 
   * ``NTFY_TOPIC``    — an ntfy.sh topic; a POST to https://ntfy.sh/<topic>
                         arrives as a phone push if you've subscribed in the app.

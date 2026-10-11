@@ -5,9 +5,6 @@
 #   infra/home/install.sh                      # env file must already exist
 #   infra/home/install.sh --from-env FILE      # first time: copy DATABASE_URL and
 #                                              # WEB_CRYPTO_KEY out of FILE
-#
-# It also retires the previous scheduler (the ingest/ timers and cron lines),
-# so only one thing ever writes the database.
 set -euo pipefail
 
 here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
@@ -74,18 +71,6 @@ systemctl --user enable --now fantasy-sync-fast.timer fantasy-sync-full.timer fa
   fantasy-ml-train.timer
 # fit the FPL model once now, so predictions start with the next sync
 systemctl --user start --no-block fantasy-sync@train.service
-
-say "retiring the previous scheduler"
-for timer in fantasy-update.timer fantasy-update-full.timer; do
-  if systemctl --user is-enabled --quiet "$timer" 2>/dev/null; then
-    systemctl --user disable --now "$timer"
-    echo "   disabled $timer"
-  fi
-done
-if crontab -l 2>/dev/null | grep -q 'fantasy-dashboard/ingest'; then
-  crontab -l | grep -v 'fantasy-dashboard/ingest' | crontab -
-  echo "   removed the old cron lines"
-fi
 
 # Timers keep firing when you're logged out (they still need the machine awake).
 if ! loginctl show-user "$USER" -p Linger 2>/dev/null | grep -q yes; then

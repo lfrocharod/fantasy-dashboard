@@ -1,6 +1,7 @@
 """The Python FPL analysis must reproduce the original TypeScript (the old web
 app's app/fpl/lib.ts) on the same inputs. Goldens were recorded from that code
-by tests/parity/record_goldens.ts; inputs by tests/parity/generate_inputs.py."""
+before it was retired (the one-off recorder, tests/parity/record_goldens.ts, is
+in git history); inputs come from tests/parity/generate_inputs.py."""
 
 from __future__ import annotations
 

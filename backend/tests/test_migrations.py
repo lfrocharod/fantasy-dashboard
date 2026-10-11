@@ -1,5 +1,5 @@
-"""Schema migrations: the chain applies cleanly, matches the models, and the
-0002 data copy moves today's settings blobs into the new tables."""
+"""Schema migrations: the chain applies cleanly, matches the models, the 0002
+data copy moves the settings blobs into the new tables, and 0004 drops them."""
 
 from __future__ import annotations
 
@@ -140,3 +140,19 @@ def test_0002_copies_settings_blobs(empty_db: str) -> None:
         assert c.execute(
             "SELECT 1 FROM pg_constraint WHERE conname = 'draft_players_pkey' AND contype = 'p'"
         ).fetchone()
+
+
+def test_0004_drops_the_copied_keys_and_keeps_config(empty_db: str) -> None:
+    command.upgrade(migrations.config(), "0003_model_predictions")
+    kept = {"ucl.league_id": "25", "draft.nfl.my_team_id": "4", "draft.nfl.teams": "10",
+            "draft.fpl.entry_id": "111", "draft.nba.league_id": "7"}
+    dropped = {"model.optimizer_output": "{}", "draft.nfl.standings": "[]",
+               "ucl.current_matchday": "2", "draft.fpl.my_squad": "[]"}
+    with psycopg.connect(empty_db, autocommit=True) as c:
+        for k, v in {**kept, **dropped}.items():
+            c.execute("INSERT INTO settings (key, value) VALUES (%s, %s)", (k, v))
+    migrations.upgrade("head")
+    with psycopg.connect(empty_db) as c:
+        left = dict(c.execute("SELECT key, value FROM settings").fetchall())
+    assert left == kept
+

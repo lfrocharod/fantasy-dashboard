@@ -74,30 +74,27 @@ the session cookie just works). Migrations must stay backward compatible with
 the version still serving while a build runs (add, backfill, and only drop in a
 later release).
 
-## One-time setup / cutover
+## Setting it up from scratch
 
-1. **Point the existing Vercel project at the new layout.** Settings → Build
-   and Deployment: *Framework Preset* → **Services**, *Root Directory* →
-   empty (the repository root). The environment variables the old site uses —
-   `DATABASE_URL`, `SESSION_SECRET`, `APP_PASSWORD_HASH`, `WEB_CRYPTO_KEY` —
-   are exactly what the new app reads, so nothing else changes. The current
-   deployment stays live until a new one succeeds.
-2. **Deploy `main`** (push, or Redeploy in the dashboard). The build migrates
-   Neon and the new site replaces the old one on the same URL; sessions carry
-   over.
-3. **Switch the syncs** to the new pipeline:
+1. **Database.** A Neon Postgres database (the free plan is plenty). Note its
+   connection string.
+2. **App.** Import the repository into Vercel. Settings → Build and
+   Deployment: *Framework Preset* → **Services**, *Root Directory* → empty.
+   Environment variables: `DATABASE_URL`, `SESSION_SECRET` (any long random
+   string), `APP_PASSWORD_HASH` (a bcrypt hash of your password) and
+   `WEB_CRYPTO_KEY` (32 random bytes, base64). Deploy: the build creates the
+   schema.
+3. **Syncs.** Put `DATABASE_URL` and `WEB_CRYPTO_KEY` in a file and run
    ```bash
-   infra/home/install.sh --from-env ~/fantasy-dashboard/web/.env.local
+   infra/home/install.sh --from-env that-file
    ```
-   Clones the runner, writes `~/.config/fantasy-dashboard/env` (mode 600),
-   migrates (a no-op if the deploy already did), installs and starts the
-   timers, trains the FPL model once, and retires the old `ingest/` timers and
-   cron lines.
-4. **Basketball:** NBA → Setup → paste your ESPN team page URL (it fills the
-   league, team and season) → Save. The next sync pulls the league.
-5. **Retire the old app** — delete `web/` and `db/`, and ship the migration
-   that drops the legacy `settings` keys (kept until now so the old site keeps
-   working mid-cutover).
+   It clones the runner, writes `~/.config/fantasy-dashboard/env` (mode 600),
+   migrates, installs and starts the timers, and trains the FPL model once.
+   Add `NTFY_TOPIC=…` to that env file for phone alerts.
+4. **Leagues.** Sign in and connect each one: the UEFA login in Settings, the
+   FPL Draft league and entry on the FPL overview, the ESPN league and cookies
+   in NFL → Draft board → Setup, and basketball in NBA → Setup (paste your
+   ESPN team page URL; it reuses the NFL cookies). The next sync pulls them.
 
 **Optional public demo.** A second Vercel project from the same repository,
 with `DEMO_MODE=1` (read-only, no login) and a `DATABASE_URL` for its own
