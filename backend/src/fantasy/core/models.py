@@ -504,6 +504,22 @@ class LineupSlot(Base):
     source: Mapped[str] = _text_empty()
 
 
+class ModelPrediction(Base):
+    """What each model predicted for a player's next round, kept so it can be
+    graded once the round is played — the learned model, the structural one
+    and the game's own estimate, side by side on the same players."""
+
+    __tablename__ = "model_predictions"
+
+    sport: Mapped[str] = mapped_column(Text, primary_key=True)
+    round: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ext_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    model: Mapped[str] = mapped_column(Text, primary_key=True)  # ml | structural | fpl_ep
+    predicted: Mapped[float] = mapped_column(REAL, nullable=False)
+    actual: Mapped[float | None] = mapped_column(REAL)  # filled in once the round is played
+    made_at: Mapped[datetime] = _updated_at()
+
+
 class Document(Base):
     """A computed output the UI always reads whole — the optimizer's advice,
     the live-matchday state, a calibration report. JSON, keyed by name."""

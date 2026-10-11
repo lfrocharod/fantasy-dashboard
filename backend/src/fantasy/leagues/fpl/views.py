@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from fantasy.api.schemas import fpl as S
@@ -78,12 +78,23 @@ def load_board(session: Session) -> Board:
         .where(M.LeagueEntry.sport == "fpl")
         .order_by(M.LeagueEntry.rank.nulls_last(), M.LeagueEntry.entry_id)
     ).all()
+    league = session.get(M.League, "fpl")
+    if league and league.current_round:
+        ml = dict(session.execute(
+            select(M.ModelPrediction.ext_id, M.ModelPrediction.predicted).where(
+                M.ModelPrediction.sport == "fpl",
+                M.ModelPrediction.round == league.current_round,
+                M.ModelPrediction.model == "ml",
+            )
+        ).tuples().all())
+        for p in players:
+            p.ml = ml.get(p.ext_id)
     return Board(
         players=players,
         by_id={p.ext_id: p for p in players},
         my_entry_id=get_setting(session, "draft.fpl.entry_id") or None,
         lineup=list(lineup),
-        league=session.get(M.League, "fpl"),
+        league=league,
         entries=list(entries),
     )
 
@@ -264,6 +275,34 @@ def _fixture_run(squad: Sequence[FplPlayer], n: int = 6) -> S.FixtureRun | None:
                         overall=sum(rated) / (len(rated) or 1), rows=rows)
 
 
+_MODEL_CHECK = text("""
+    with pool as (  -- the players anyone thought worth starting
+        select round, ext_id from model_predictions
+        where sport = 'fpl' and actual is not null and model in ('ml', 'structural') and predicted >= 2
+        group by round, ext_id
+    )
+    select p.round, p.model, count(*) as n, avg(abs(p.predicted - p.actual)) as mae
+    from model_predictions p join pool using (round, ext_id)
+    where p.sport = 'fpl' and p.actual is not null
+    group by p.round, p.model
+    order by p.round desc
+""")
+
+
+def model_check(session: Session, rounds: int = 6) -> list[S.ModelCheckRow]:
+    """Graded gameweeks, newest first: each model's MAE on the same players."""
+    by_round: dict[int, dict[str, Any]] = {}
+    for rnd, model, n, mae in session.execute(_MODEL_CHECK):
+        row = by_round.setdefault(int(rnd), {"round": int(rnd), "n": 0})
+        row[model] = round(float(mae), 2)
+        row["n"] = max(row["n"], int(n))
+    return [
+        S.ModelCheckRow(round=r["round"], n=r["n"], ml=r.get("ml"), structural=r.get("structural"),
+                        fpl_ep=r.get("fpl_ep"))
+        for r in list(by_round.values())[:rounds]
+    ]
+
+
 def overview(session: Session) -> S.FplOverview:
     b = load_board(session)
     squad = b.my_squad
@@ -324,6 +363,7 @@ def overview(session: Session) -> S.FplOverview:
         checklist=_checklist(xi, bench, next_gw, src if from_app else None),
         squad=[S.FplSquadRow(player=out(p), starting=p.ext_id in starting) for p in ordered],
         fixture_run=_fixture_run(squad),
+        model_check=model_check(session),
     )
 
 

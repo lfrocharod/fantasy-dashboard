@@ -1,0 +1,11 @@
+[Unit]
+Description=Refit the learned FPL points model — weekly
+
+[Timer]
+OnCalendar=Mon *-*-* 04:30
+Persistent=true
+RandomizedDelaySec=600
+Unit=fantasy-sync@train.service
+
+[Install]
+WantedBy=timers.target

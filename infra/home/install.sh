@@ -59,13 +59,16 @@ if ! grep -q '^DATABASE_URL=.' "$ENV_FILE"; then
 fi
 
 say "dependencies (from the lockfile)"
-(cd "$RUNNER/backend" && uv sync --frozen --quiet --extra jobs --extra sources)
+(cd "$RUNNER/backend" && uv sync --frozen --quiet --extra jobs --extra sources --extra ml)
 
 say "systemd user units"
 mkdir -p "$UNIT_DIR"
 install -m 644 "$RUNNER"/infra/home/systemd/* "$UNIT_DIR"/
 systemctl --user daemon-reload
-systemctl --user enable --now fantasy-sync-fast.timer fantasy-sync-full.timer fantasy-sync-live.timer
+systemctl --user enable --now fantasy-sync-fast.timer fantasy-sync-full.timer fantasy-sync-live.timer \
+  fantasy-ml-train.timer
+# fit the FPL model once now, so predictions start with the next sync
+systemctl --user start --no-block fantasy-sync@train.service
 
 say "retiring the previous scheduler"
 for timer in fantasy-update.timer fantasy-update-full.timer; do

@@ -191,3 +191,39 @@ def test_openapi_names_are_clean() -> None:
 
     names = create_app().openapi()["components"]["schemas"]
     assert not [n for n in names if "__" in n or "-" in n]
+
+
+
+def test_model_predictions_are_graded_and_reported(client, demo_db: str) -> None:  # type: ignore[no-untyped-def]
+    from fantasy.core.db import DB
+
+    _login(client)
+    board = client.get("/api/fpl/board").json()
+    ids = [p["extId"] for p in board["players"][:30]]
+    db = DB(demo_db)
+    try:
+        # two played rounds: the learned model is closer to what happened
+        for rnd in (3, 4):
+            db.put_predictions("fpl", rnd, "ml", {e: 3.0 for e in ids})
+            db.put_predictions("fpl", rnd, "structural", {e: 5.0 for e in ids})
+            db.put_predictions("fpl", rnd, "fpl_ep", {e: 1.0 for e in ids})
+        assert db.ungraded_rounds("fpl", 5) == [3, 4]
+        assert db.grade_predictions("fpl", 3, {e: 2.0 for e in ids}) == 90
+        db.grade_predictions("fpl", 4, {e: 4.0 for e in ids[:10]})  # the rest scored nothing
+        assert db.ungraded_rounds("fpl", 5) == []
+        # a graded round never changes again
+        db.put_predictions("fpl", 3, "ml", {e: 9.0 for e in ids})
+
+        check = client.get("/api/fpl/overview").json()["modelCheck"]
+        assert [r["round"] for r in check] == [4, 3]
+        gw3 = check[1]
+        assert gw3 == {"round": 3, "n": 30, "ml": 1.0, "structural": 3.0, "fplEp": 1.0}
+
+        current = client.get("/api/fpl/overview").json()["nextGw"]
+        db.put_predictions("fpl", current, "ml", {ids[0]: 7.5})
+        players = {p["extId"]: p for p in client.get("/api/fpl/board").json()["players"]}
+        assert players[ids[0]]["ml"] == 7.5 and players[ids[1]]["ml"] is None
+    finally:
+        with db.conn() as c:
+            c.execute("delete from model_predictions")
+        db.close()
