@@ -1,0 +1,15 @@
+[Unit]
+Description=Fantasy dashboard sync (%i)
+Documentation=https://github.com/lfrocharod/fantasy-dashboard/blob/main/docs/operations.md
+After=network-online.target
+Wants=network-online.target
+OnFailure=fantasy-alert@%i.service
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=%h/.config/fantasy-dashboard/env
+ExecStart=%h/.local/share/fantasy-dashboard/runner/infra/home/fantasy-run %i
+TimeoutStartSec=45min
+Nice=10
+IOSchedulingClass=idle

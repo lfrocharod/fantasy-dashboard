@@ -1,0 +1,13 @@
+[Unit]
+Description=Fantasy live matchday refresh — every 5 minutes through the European evening
+
+[Timer]
+# 09:00–18:55 local covers every European evening kickoff (Mexico City is 7–8 h
+# behind). Each run exits immediately unless a UCL match is in play (it checks a
+# local kickoff cache), so the tight schedule costs nothing on other days.
+OnCalendar=*-*-* 09..18:00/5
+AccuracySec=30s
+Unit=fantasy-sync@live.service
+
+[Install]
+WantedBy=timers.target

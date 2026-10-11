@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# One scheduled sync, run by the systemd units in ./systemd from the runner
+# checkout — a clean clone of main that fast-forwards itself before each fast /
+# full run, so merging to main is all it takes to ship a new pipeline.
+#
+#   fantasy-run fast   every 30 min — feeds, prices, lineups, projections, all leagues
+#   fantasy-run full   daily        — the same plus the recent-form / xG scrape
+#   fantasy-run live   every 5 min  — UCL matchday refresh; exits at once unless
+#                                     a match is in play (no network, no database)
+#
+# Runs from home on purpose: UEFA's and ESPN's edges block datacenter IPs.
+set -euo pipefail
+
+mode=${1:?usage: fantasy-run fast|full|live}
+repo=$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)
+lock="${XDG_RUNTIME_DIR:-/tmp}/fantasy-sync.lock"
+
+if [ "$mode" != live ]; then
+  # (git replaces files rather than rewriting them, so this script keeps running
+  # the version it started with; the new code is picked up from here on.)
+  git -C "$repo" pull --ff-only --quiet || echo "[fantasy-run] couldn't update — running the current code" >&2
+fi
+
+cd "$repo/backend"
+# Install exactly what the lockfile pins (a no-op when nothing changed).
+uv sync --frozen --quiet --extra jobs --extra sources
+
+case "$mode" in
+  live)
+    # Never queue behind a long run: if one is going, skip this tick quietly.
+    exec flock --nonblock --conflict-exit-code 0 "$lock" \
+      uv run --frozen --no-sync fantasy sync ucl --mode live --if-live ;;
+  fast|full)
+    exec flock --wait 1800 "$lock" \
+      uv run --frozen --no-sync fantasy sync all --mode "$mode" ;;
+  *)
+    echo "unknown mode: $mode" >&2
+    exit 2 ;;
+esac

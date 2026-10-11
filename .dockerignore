@@ -1,0 +1,16 @@
+# Only backend/ and frontend/ go into the image.
+*
+!backend/
+!frontend/
+backend/.venv
+backend/tests
+backend/deploy
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+frontend/node_modules
+frontend/dist
+**/.env
+**/.env.*

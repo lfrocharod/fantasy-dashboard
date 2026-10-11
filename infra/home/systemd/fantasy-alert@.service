@@ -1,0 +1,13 @@
+[Unit]
+Description=Push a notification that the fantasy %i sync failed
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/fantasy-dashboard/env
+# NTFY_TOPIC (and optionally NTFY_URL) in the env file turn this on; without
+# them it is a no-op and failures are only in `journalctl --user -u 'fantasy-*'`.
+# ($$ passes a literal $ through to the shell.)
+ExecStart=/bin/sh -c 'test -n "$${NTFY_TOPIC:-}" || exit 0; \
+  curl -fsS -m 10 -H "Title: Fantasy sync failed" -H "Tags: warning" \
+    -d "The %i sync failed on %H. journalctl --user -u fantasy-sync@%i" \
+    "$${NTFY_URL:-https://ntfy.sh}/$${NTFY_TOPIC}" >/dev/null'
