@@ -5,6 +5,21 @@ import { RouterProvider } from "react-router";
 import { router } from "./routes";
 import "./index.css";
 
+// After a deploy, a tab still running the previous build asks for chunks that
+// no longer exist. Reload once to pick up the new build; if that just happened,
+// let the error show instead of looping.
+window.addEventListener("vite:preloadError", (event) => {
+  const key = "fantasy:chunk-reload";
+  try {
+    if (Date.now() - Number(sessionStorage.getItem(key) ?? 0) < 10_000) return;
+    sessionStorage.setItem(key, String(Date.now()));
+  } catch {
+    return; // no storage, no loop guard: don't reload
+  }
+  event.preventDefault();
+  window.location.reload();
+});
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

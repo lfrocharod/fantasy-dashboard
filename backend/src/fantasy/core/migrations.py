@@ -1,5 +1,5 @@
 """Run Alembic from code (`fantasy db upgrade`) — works from the installed
-package, no alembic.ini needed (the Cloud Run migrate job uses this).
+package, no alembic.ini needed (the Vercel production build runs this).
 
 Production predates Alembic: its tables were created by drizzle-kit. The
 baseline revision reproduces that schema exactly, so for a database that has

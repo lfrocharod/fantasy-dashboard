@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1.7
 #
 # One image definition, two targets:
-#   api   — FastAPI + the built SPA; what Cloud Run serves. Base deps only, so
-#           cold starts stay fast.
+#   api   — FastAPI + the built SPA in one self-contained image: the local
+#           stack, CI's smoke test, or any container host. Base deps only.
 #   jobs  — the same code plus the optimizer / scraping / ML extras; runs the
-#           migrations and the scheduled syncs as Cloud Run Jobs (and locally
-#           via compose).
+#           migrations and the demo seed in compose (the home runner runs the
+#           same commands from a clone).
 #
 # Build:  docker build --target api  -t fantasy-api  .
 #         docker build --target jobs -t fantasy-jobs .

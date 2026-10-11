@@ -1,5 +1,5 @@
-"""`fantasy` — one entry point for every job, locally, on the home runner and in
-the Cloud Run job image.
+"""`fantasy` — one entry point for every job: locally, on the home runner, in the
+Vercel build (migrations) and in the compose stack.
 
     fantasy sync ucl [--mode fast|full|live] [--if-live]   # Champions League
     fantasy sync fpl | nfl                                 # board + league sync

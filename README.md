@@ -44,26 +44,26 @@ flowchart LR
   subgraph home["Home machine — systemd timers"]
     R["fantasy sync<br/>fast · full · live<br/>fantasy ml train"]
   end
-  subgraph gcp["Google Cloud"]
-    CR["Cloud Run<br/>FastAPI + React SPA"]
-    J["Cloud Run job<br/>migrations"]
-    AR[("Artifact Registry")]
+  subgraph vercel["Vercel — free Hobby plan"]
+    W["web<br/>React SPA on the CDN"]
+    A["api<br/>FastAPI, Python function"]
   end
   DB[("Neon Postgres")]
-  GH["GitHub Actions<br/>CI · deploy (WIF)"]
+  GH["GitHub<br/>CI on every push"]
   SRC["UEFA · FPL · ESPN<br/>nflverse · Sofascore"]
 
   SRC --> R --> DB
-  CR <--> DB
-  J --> DB
-  GH --> AR --> CR
-  GH --> J
-  B(("browser")) <--> CR
+  A <--> DB
+  GH -- "main: build, migrate, deploy" --> vercel
+  B(("browser")) --> W
+  B -- "/api" --> A
 ```
 
 * **Collect at home, serve from the cloud.** UEFA's and ESPN's edges block
   datacenter IPs, so the syncs run as systemd timers on a home machine (from a
-  clone that tracks `main`); the app runs on Cloud Run and scales to zero.
+  clone that tracks `main`). The app runs on Vercel's free tier: the SPA on the
+  CDN, FastAPI as a Python function next to the database. No card on file
+  anywhere.
   ([ADR 2](docs/adr/0002-collect-at-home-serve-from-the-cloud.md))
 * **Python owns the numbers.** Every projection, verdict and checklist comes
   from FastAPI; React renders. The TypeScript client is generated from the
@@ -77,7 +77,7 @@ flowchart LR
 | Frontend | React 19, TypeScript (strict), Vite, Tailwind, TanStack Query, React Router — typed client generated from OpenAPI |
 | Backend | FastAPI, Pydantic, SQLAlchemy 2, Alembic, PostgreSQL (psycopg 3) |
 | Models | NumPy / pandas / scikit-learn, PuLP (CBC) integer programming, Monte Carlo simulation |
-| Delivery | Docker (multi-stage, two targets), GitHub Actions, Cloud Run, Artifact Registry, Secret Manager, Workload Identity Federation |
+| Delivery | Vercel (Services: Vite on the CDN, FastAPI as a Python function), GitHub Actions CI, Docker (multi-stage, two targets) for the local stack and an image smoke test, systemd timers |
 | Quality | pytest against real Postgres, vitest + Testing Library, ruff, mypy, ESLint; every dependency and action pinned |
 
 ## The FPL model
@@ -139,17 +139,19 @@ Tests: `TEST_DATABASE_URL=postgresql://… uv run pytest` and `npm test`.
 
 ## Deploying and keeping it fresh
 
-Merging to `main` deploys: CI → images → migrations (a Cloud Run job) →
-Cloud Run. The data side needs nothing run by hand — timers sync every league
-every 30 minutes, fully once a day, every 5 minutes during Champions League
-matches, and retrain the model weekly; failures push to a phone.
-[docs/operations.md](docs/operations.md) is the runbook (one-time GCP setup,
-the home runner, secrets, cost); [docs/data-sources.md](docs/data-sources.md)
-lists every source.
+Merging to `main` deploys: Vercel builds both services, and the production
+build migrates the database before the new version takes traffic. The data side
+needs nothing run by hand: timers sync every league every 30 minutes, fully
+once a day, every 5 minutes during Champions League matches, and retrain the
+model weekly; failures push to a phone. All of it runs on free tiers.
+[docs/operations.md](docs/operations.md) is the runbook (deploys, the home
+runner, secrets, cost); [docs/data-sources.md](docs/data-sources.md) lists
+every source.
 
 ```
 backend/    the fantasy package: api/, leagues/{ucl,fpl,nfl}/, ml/, migrations/, cli.py
 frontend/   the SPA: features/{ucl,fpl,nfl,home,settings}/, shared/, generated api/
-infra/      gcp/bootstrap.sh (one-time cloud setup), home/ (systemd runner)
+infra/      home/ (the systemd runner: install.sh, fantasy-run, timers)
+vercel.json the two Vercel services and their routing
 docs/       operations, ADRs, the model report, data sources
 ```

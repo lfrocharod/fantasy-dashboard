@@ -4,9 +4,9 @@ version = "1.0.0"
 description = "Decision engine + API for UCL Fantasy, FPL Draft and ESPN NFL leagues"
 readme = "README.md"
 requires-python = ">=3.13"
-# The base install is exactly what the API container needs — kept slim so a
-# Cloud Run cold start stays fast. Scraping, the ILP optimizer and the ML stack
-# live in extras that only the jobs image / home runner install.
+# The base install is exactly what the API needs — kept slim so the Vercel
+# function bundle and its cold start stay small. Scraping, the ILP optimizer and
+# the ML stack live in extras that only the jobs image / home runner install.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",

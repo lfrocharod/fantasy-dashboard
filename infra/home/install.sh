@@ -33,7 +33,7 @@ say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 
 say "runner checkout: $RUNNER"
 if [ -d "$RUNNER/.git" ]; then
-  git -C "$RUNNER" pull --ff-only --quiet
+  git -C "$RUNNER" fetch --quiet origin main && git -C "$RUNNER" reset --quiet --hard FETCH_HEAD
 else
   mkdir -p "$(dirname "$RUNNER")"
   git clone --quiet --branch main "$REPO_URL" "$RUNNER"
@@ -60,6 +60,11 @@ fi
 
 say "dependencies (from the lockfile)"
 (cd "$RUNNER/backend" && uv sync --frozen --quiet --extra jobs --extra sources --extra ml)
+
+# Production builds on Vercel migrate too; doing it here as well means the first
+# sync never meets an old schema, whichever side goes first. Idempotent.
+say "database schema"
+(cd "$RUNNER/backend" && uv run --frozen --no-sync fantasy --env-file "$ENV_FILE" db upgrade)
 
 say "systemd user units"
 mkdir -p "$UNIT_DIR"
