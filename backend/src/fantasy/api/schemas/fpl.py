@@ -114,7 +114,7 @@ class Swap(Schema):
     gain: float
 
 
-class SquadRow(Schema):
+class FplSquadRow(Schema):
     player: FplPlayer
     starting: bool
 
@@ -147,7 +147,7 @@ class FplOverview(Schema):
     live: FplLiveView | None
     swaps: list[Swap]
     checklist: list[CheckItem]
-    squad: list[SquadRow]
+    squad: list[FplSquadRow]
     fixture_run: FixtureRun | None
 
 
@@ -180,12 +180,12 @@ class ClubDossier(Schema):
     key_players: list[FplPlayer]
 
 
-class FixturesResponse(Schema):
+class FplFixturesResponse(Schema):
     gws: list[int]
     clubs: list[ClubFix]
 
 
-class TeamsResponse(Schema):
+class FplTeamsResponse(Schema):
     clubs: list[ClubDossier]
 
 
@@ -199,7 +199,7 @@ class Upgrade(Schema):
     out_value: float  # the dropped player's value over the window
 
 
-class OptimizerResponse(Schema):
+class FplOptimizerResponse(Schema):
     horizon: Horizon
     gws: list[int]
     squad: list[FplPlayer]  # by position, then 6-GW total
@@ -238,18 +238,18 @@ class ClaimPrediction(Schema):
     gain: int
 
 
-class EffectiveOwnership(Schema):
+class FplEffectiveOwnership(Schema):
     player: FplPlayer
     owners: int
     pct: int
     mine: bool
 
 
-class RivalsResponse(Schema):
+class FplRivalsResponse(Schema):
     my_proj: float
     rivals: list[RivalProjection]
     claims: list[ClaimPrediction]
-    effective_ownership: list[EffectiveOwnership]
+    effective_ownership: list[FplEffectiveOwnership]
     managers: list[Manager]
     league_size: int
 
@@ -257,7 +257,7 @@ class RivalsResponse(Schema):
 # ---- standings ------------------------------------------------------------------------
 
 
-class StandingRow(Schema):
+class FplStandingRow(Schema):
     entry_id: str
     name: str
     rank: int
@@ -295,11 +295,11 @@ class H2hFixture(Schema):
     lean: str
 
 
-class StandingsResponse(Schema):
+class FplStandingsResponse(Schema):
     is_h2h: bool
     gws_left: int
     simulated: bool
-    rows: list[StandingRow]
+    rows: list[FplStandingRow]
     path: Path | None
     schedule: list[H2hFixture]
 
@@ -307,7 +307,7 @@ class StandingsResponse(Schema):
 # ---- trades -----------------------------------------------------------------------------
 
 
-class TradeIdea(Schema):
+class FplTradeIdea(Schema):
     rival_name: str
     give: list[FplPlayer]
     get: list[FplPlayer]
@@ -315,19 +315,19 @@ class TradeIdea(Schema):
     their_gain: float
 
 
-class TradeLab(Schema):
+class FplTradeLab(Schema):
     horizon: Horizon
     me: Manager | None
     rivals: list[Manager]
-    suggestions: list[TradeIdea]
+    suggestions: list[FplTradeIdea]
 
 
-class TradeRequest(Schema):
+class FplTradeRequest(Schema):
     give: list[str]
     get: list[str]
 
 
-class TradeEvaluation(Schema):
+class FplTradeEvaluation(Schema):
     balanced: bool
     pos_give: str
     pos_get: str

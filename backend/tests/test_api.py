@@ -182,3 +182,12 @@ def test_draft_pick_tracker(client) -> None:  # type: ignore[no-untyped-def]
     assert client.get("/api/draft/board?sport=nfl").json()["picks"][0]["isMine"] is True
     assert client.delete("/api/draft/pick?sport=nfl").json()["ok"] is True
     assert client.get("/api/draft/board?sport=nfl").json()["picks"] == []
+
+
+def test_openapi_names_are_clean() -> None:
+    """Every response model gets a plain, unique component name — a clash
+    would surface in the generated client as `fantasy__api__schemas__…`."""
+    from fantasy.api.main import create_app
+
+    names = create_app().openapi()["components"]["schemas"]
+    assert not [n for n in names if "__" in n or "-" in n]

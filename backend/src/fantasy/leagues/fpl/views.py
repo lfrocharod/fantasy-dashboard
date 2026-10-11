@@ -322,7 +322,7 @@ def overview(session: Session) -> S.FplOverview:
         live=live,
         swaps=swaps,
         checklist=_checklist(xi, bench, next_gw, src if from_app else None),
-        squad=[S.SquadRow(player=out(p), starting=p.ext_id in starting) for p in ordered],
+        squad=[S.FplSquadRow(player=out(p), starting=p.ext_id in starting) for p in ordered],
         fixture_run=_fixture_run(squad),
     )
 
@@ -330,16 +330,16 @@ def overview(session: Session) -> S.FplOverview:
 # ---- clubs / fixtures ----------------------------------------------------------------------
 
 
-def fixtures_page(session: Session) -> S.FixturesResponse:
+def fixtures_page(session: Session) -> S.FplFixturesResponse:
     b = load_board(session)
-    return S.FixturesResponse(
+    return S.FplFixturesResponse(
         gws=b.gws, clubs=[S.ClubFix.model_validate(c) for c in A.club_fixtures(b.players)]
     )
 
 
-def teams_page(session: Session) -> S.TeamsResponse:
+def teams_page(session: Session) -> S.FplTeamsResponse:
     b = load_board(session)
-    return S.TeamsResponse(clubs=[
+    return S.FplTeamsResponse(clubs=[
         S.ClubDossier(
             team=d.team, fixtures=[S.ClubCell.model_validate(c) for c in d.fixtures],
             avg_fdr=d.avg_fdr, probable_xi=outs(d.probable_xi), bench=outs(d.bench),
@@ -353,7 +353,7 @@ def teams_page(session: Session) -> S.TeamsResponse:
 # ---- optimizer ------------------------------------------------------------------------------
 
 
-def optimizer_page(session: Session, horizon: str) -> S.OptimizerResponse:
+def optimizer_page(session: Session, horizon: str) -> S.FplOptimizerResponse:
     b = load_board(session)
     squad = b.my_squad
     mine = {p.ext_id for p in squad}
@@ -369,7 +369,7 @@ def optimizer_page(session: Session, horizon: str) -> S.OptimizerResponse:
     for pos in ("ALL", *POS_ORDER):
         pool = [p for p in free if pos == "ALL" or p.pos == pos]
         targets[pos] = outs(A.sort_players(pool, "horizon")[:30])
-    return S.OptimizerResponse(
+    return S.FplOptimizerResponse(
         horizon=horizon,  # type: ignore[arg-type]
         gws=gws,
         squad=outs(sorted(squad, key=lambda p: (POS_ORDER.index(p.pos) if p.pos in POS_ORDER else 9,
@@ -401,13 +401,13 @@ def _next_gw_points(p: FplPlayer) -> float:
     return p.gws[0].xpts if p.gws else p.proj
 
 
-def rivals_page(session: Session) -> S.RivalsResponse:
+def rivals_page(session: Session) -> S.FplRivalsResponse:
     b = load_board(session)
     managers = b.managers()
     me = next((m for m in managers if m.is_mine), None)
     mine = {p.ext_id for p in me.players} if me else set()
 
-    eff: list[S.EffectiveOwnership] = []
+    eff: list[S.FplEffectiveOwnership] = []
     if len(managers) >= 2:
         count: dict[str, tuple[FplPlayer, int]] = {}
         for mg in managers:
@@ -416,7 +416,7 @@ def rivals_page(session: Session) -> S.RivalsResponse:
                 count[p.ext_id] = (p, (prev[1] if prev else 0) + 1)
         ranked = sorted(count.values(), key=lambda t: -t[0].ros)[:30]
         eff = [
-            S.EffectiveOwnership(player=out(p), owners=n, pct=js_round(100 * n / len(managers)),
+            S.FplEffectiveOwnership(player=out(p), owners=n, pct=js_round(100 * n / len(managers)),
                                  mine=p.ext_id in mine)
             for p, n in ranked
         ]
@@ -437,7 +437,7 @@ def rivals_page(session: Session) -> S.RivalsResponse:
         key=lambda r: -r.proj,
     ) if me else []
     claims = A.predict_claims(managers, b.players, b.my_entry_id)
-    return S.RivalsResponse(
+    return S.FplRivalsResponse(
         my_proj=proj(me) if me else 0.0,
         rivals=rivals,
         claims=[
@@ -486,7 +486,7 @@ def simulate_season(
     }
 
 
-def standings_page(session: Session) -> S.StandingsResponse:
+def standings_page(session: Session) -> S.FplStandingsResponse:
     b = load_board(session)
     managers = b.managers()
     by_entry = {m.entry_id: m for m in managers}
@@ -506,7 +506,7 @@ def standings_page(session: Session) -> S.StandingsResponse:
         [(e.entry_id, float(e.total or 0), ros) for e, ros, _ in base], gws_left
     )
     rows = [
-        S.StandingRow(
+        S.FplStandingRow(
             entry_id=e.entry_id, name=e.name, rank=e.rank or 0, total=e.total or 0,
             wins=e.wins, draws=e.draws, losses=e.losses, ros=ros, final_pts=final,
             proj_rank=proj_rank[e.entry_id], gap=leader_final - final, mine=e.is_mine,
@@ -563,7 +563,7 @@ def standings_page(session: Session) -> S.StandingsResponse:
                 gw=m.round, home=m.home_name, away=m.away_name, home_proj=hp, away_proj=ap,
                 mine=bool((hm and hm.is_mine) or (am and am.is_mine)), lean=lean,
             ))
-    return S.StandingsResponse(
+    return S.FplStandingsResponse(
         is_h2h=is_h2h, gws_left=gws_left, simulated=odds is not None, rows=rows, path=path,
         schedule=schedule,
     )
@@ -572,26 +572,26 @@ def standings_page(session: Session) -> S.StandingsResponse:
 # ---- trades ------------------------------------------------------------------------------------
 
 
-def trade_lab(session: Session, horizon: str) -> S.TradeLab:
+def trade_lab(session: Session, horizon: str) -> S.FplTradeLab:
     b = load_board(session)
     managers = b.managers()
     me = next((m for m in managers if m.is_mine), None)
     rivals = [m for m in managers if not m.is_mine]
     owners = {m.entry_id: (m.name, {p.ext_id for p in m.players}) for m in rivals}
     ideas = A.trade_ideas(me.players, b.players, owners, 4, horizon) if me else []
-    return S.TradeLab(
+    return S.FplTradeLab(
         horizon=horizon,  # type: ignore[arg-type]
         me=_manager_out(me) if me else None,
         rivals=[_manager_out(m) for m in rivals],
         suggestions=[
-            S.TradeIdea(rival_name=t.rival_name, give=outs(t.give), get=outs(t.get),
+            S.FplTradeIdea(rival_name=t.rival_name, give=outs(t.give), get=outs(t.get),
                         my_gain=t.my_gain, their_gain=t.their_gain)
             for t in ideas
         ],
     )
 
 
-def evaluate_trade(session: Session, give: Sequence[str], get: Sequence[str]) -> S.TradeEvaluation:
+def evaluate_trade(session: Session, give: Sequence[str], get: Sequence[str]) -> S.FplTradeEvaluation:
     b = load_board(session)
     me = next((m for m in b.managers() if m.is_mine), None)
     ev = A.evaluate_trade(
@@ -599,4 +599,4 @@ def evaluate_trade(session: Session, give: Sequence[str], get: Sequence[str]) ->
         [b.by_id[x] for x in get if x in b.by_id],
         me.players if me else [],
     )
-    return S.TradeEvaluation.model_validate(ev)
+    return S.FplTradeEvaluation.model_validate(ev)

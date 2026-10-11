@@ -16,6 +16,9 @@ class Schema(BaseModel):
         populate_by_name=True,
         from_attributes=True,
         serialize_by_alias=True,
+        # a response always carries its defaulted fields — say so in the
+        # OpenAPI schema, so the generated client types them as present
+        json_schema_serialization_defaults_required=True,
     )
 
 

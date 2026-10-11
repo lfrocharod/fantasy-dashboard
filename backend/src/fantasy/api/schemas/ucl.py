@@ -70,7 +70,7 @@ class PlayerRow(Schema):
     recent_goal_involvements: float | None = None
 
 
-class SquadRow(PlayerRow):
+class UclSquadRow(PlayerRow):
     is_starter: bool
     is_captain: bool
     is_vice: bool
@@ -78,7 +78,7 @@ class SquadRow(PlayerRow):
     purchase_price: float
 
 
-class PlayersResponse(Schema):
+class UclPlayersResponse(Schema):
     matchday: int
     owned_ids: list[int]
     players: list[PlayerRow]
@@ -99,7 +99,7 @@ class Opponent(Schema):
     fdr: FixtureDifficulty  # position-aware, for this player's position
 
 
-class SquadTableRow(SquadRow):
+class SquadTableRow(UclSquadRow):
     opponent: Opponent | None = None
     recommended_captain: bool = False
 
@@ -136,7 +136,7 @@ class TickerRow(Schema):
     avg_difficulty: float
 
 
-class FixturesResponse(Schema):
+class UclFixturesResponse(Schema):
     matchdays: list[int]
     rows: list[TickerRow]
 
@@ -158,7 +158,7 @@ class TeamDossier(Schema):
     top_picks: list[PlayerRow]
 
 
-class TeamsResponse(Schema):
+class UclTeamsResponse(Schema):
     matchday: int
     teams: list[TeamDossier]
 
@@ -483,7 +483,7 @@ class OptimizerOutput(Schema):
     keep_from_current: int | None = None
 
 
-class OptimizerResponse(Schema):
+class UclOptimizerResponse(Schema):
     available: bool
     output: OptimizerOutput | None = None
 
@@ -520,7 +520,7 @@ class OwnedPlayer(Schema):
     owned_by_rivals: int
 
 
-class EffectiveOwnership(Schema):
+class UclEffectiveOwnership(Schema):
     player_id: int
     name: str
     team: str
@@ -543,7 +543,7 @@ class RivalReport(Schema):
     rivals: list[RivalRow]
     template_risk: list[OwnedPlayer]
     common_threats: list[OwnedPlayer]
-    effective_ownership: list[EffectiveOwnership]
+    effective_ownership: list[UclEffectiveOwnership]
     captain_picks: list[CaptainCount]
     strategy: LeagueStrategy | None
     rival_count: int
@@ -552,13 +552,13 @@ class RivalReport(Schema):
     stale: bool
 
 
-class RivalsResponse(Schema):
+class UclRivalsResponse(Schema):
     matchday: int
     report: RivalReport
     live: LiveRivals | None
 
 
-class StandingRow(Schema):
+class UclStandingRow(Schema):
     entry_id: str
     manager_name: str
     team_name: str
@@ -619,7 +619,7 @@ class Calibration(Schema):
 class LeagueResponse(Schema):
     matchday: int
     league_id: str | None
-    standings: list[StandingRow]
+    standings: list[UclStandingRow]
     leader_points: int
     power_ranking: list[EntryAggregate]
     mds_left: int

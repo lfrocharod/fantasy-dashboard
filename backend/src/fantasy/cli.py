@@ -165,6 +165,16 @@ def cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_openapi(args: argparse.Namespace) -> int:
+    """Print the API's OpenAPI schema (the frontend generates its client from it)."""
+    import json
+
+    from fantasy.api.main import create_app
+
+    print(json.dumps(create_app().openapi(), indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -228,6 +238,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="record: refresh the public snapshots; seed: build the demo database "
                     "(WIPES league data in $DATABASE_URL)")
     dm.set_defaults(func=cmd_demo)
+
+    o = sub.add_parser("openapi", help="print the OpenAPI schema (no server needed)")
+    o.set_defaults(func=cmd_openapi)
 
     v = sub.add_parser("serve", help="run the API")
     v.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))

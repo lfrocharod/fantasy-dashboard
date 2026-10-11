@@ -18,34 +18,34 @@ def overview(session: DB) -> S.UclOverview:
     return V.overview(session)
 
 
-@router.get("/players", response_model=S.PlayersResponse)
+@router.get("/players", response_model=S.UclPlayersResponse)
 def players(
     session: DB,
     position: Annotated[str | None, Query(pattern="^(GK|DEF|MID|FWD)$")] = None,
     max_price: Annotated[float | None, Query(alias="maxPrice", ge=0)] = None,
     search: Annotated[str | None, Query(max_length=60)] = None,
     limit: Annotated[int, Query(ge=1, le=400)] = 250,
-) -> S.PlayersResponse:
+) -> S.UclPlayersResponse:
     return V.players_page(session, position=position, max_price=max_price, search=search, limit=limit)
 
 
-@router.get("/teams", response_model=S.TeamsResponse)
-def teams(session: DB) -> S.TeamsResponse:
+@router.get("/teams", response_model=S.UclTeamsResponse)
+def teams(session: DB) -> S.UclTeamsResponse:
     return V.teams_page(session)
 
 
-@router.get("/fixtures", response_model=S.FixturesResponse)
-def fixtures(session: DB) -> S.FixturesResponse:
+@router.get("/fixtures", response_model=S.UclFixturesResponse)
+def fixtures(session: DB) -> S.UclFixturesResponse:
     return V.fixtures_page(session)
 
 
-@router.get("/optimizer", response_model=S.OptimizerResponse)
-def optimizer(session: DB) -> S.OptimizerResponse:
+@router.get("/optimizer", response_model=S.UclOptimizerResponse)
+def optimizer(session: DB) -> S.UclOptimizerResponse:
     return V.optimizer_page(session)
 
 
-@router.get("/rivals", response_model=S.RivalsResponse)
-def rivals(session: DB) -> S.RivalsResponse:
+@router.get("/rivals", response_model=S.UclRivalsResponse)
+def rivals(session: DB) -> S.UclRivalsResponse:
     return V.rivals_page(session)
 
 

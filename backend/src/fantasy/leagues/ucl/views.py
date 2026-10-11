@@ -175,7 +175,7 @@ def all_players(session: Session, matchday: int) -> list[S.PlayerRow]:
     return [_player_row(S.PlayerRow, r) for r in session.execute(_player_select(matchday))]
 
 
-def my_squad(session: Session, matchday: int) -> list[S.SquadRow]:
+def my_squad(session: Session, matchday: int) -> list[S.UclSquadRow]:
     q = (
         _player_select(matchday)
         .add_columns(M.MySquad)
@@ -187,7 +187,7 @@ def my_squad(session: Session, matchday: int) -> list[S.SquadRow]:
         sq: M.MySquad = r.MySquad
         out.append(
             _player_row(
-                S.SquadRow, r, is_starter=sq.is_starter, is_captain=sq.is_captain,
+                S.UclSquadRow, r, is_starter=sq.is_starter, is_captain=sq.is_captain,
                 is_vice=sq.is_vice, bench_order=sq.bench_order, purchase_price=sq.purchase_price,
             )
         )
@@ -201,13 +201,13 @@ def players_page(
     max_price: float | None,
     search: str | None,
     limit: int,
-) -> S.PlayersResponse:
+) -> S.UclPlayersResponse:
     md = current_matchday(session)
     rows = projected_players(
         session, md, position=position, max_price=max_price, search=search, limit=limit
     )
     owned = [r.player_id for r in my_squad(session, md)]
-    return S.PlayersResponse(matchday=md, owned_ids=owned, players=rows)
+    return S.UclPlayersResponse(matchday=md, owned_ids=owned, players=rows)
 
 
 # ---- fixtures ---------------------------------------------------------------------------
@@ -271,10 +271,10 @@ def fixture_ticker(session: Session, from_md: int, ahead: int = 5) -> list[S.Tic
     return sorted(out, key=lambda r: (r.avg_difficulty, r.team.casefold()))
 
 
-def fixtures_page(session: Session, ahead: int = 5) -> S.FixturesResponse:
+def fixtures_page(session: Session, ahead: int = 5) -> S.UclFixturesResponse:
     md = current_matchday(session)
     mds = [m for m in range(md, md + ahead) if m <= LAST_LEAGUE_MD] or [md]
-    return S.FixturesResponse(matchdays=mds, rows=fixture_ticker(session, md, ahead))
+    return S.UclFixturesResponse(matchdays=mds, rows=fixture_ticker(session, md, ahead))
 
 
 # ---- team watch ------------------------------------------------------------------------
@@ -304,7 +304,7 @@ def _tier(atk: float, dfn: float) -> str:
     return "minnow"
 
 
-def teams_page(session: Session) -> S.TeamsResponse:
+def teams_page(session: Session) -> S.UclTeamsResponse:
     md = current_matchday(session)
     ticker = {r.team_id: r for r in fixture_ticker(session, md, 5)}
     by_team: dict[int, list[S.PlayerRow]] = {}
@@ -350,7 +350,7 @@ def teams_page(session: Session) -> S.TeamsResponse:
             )
         )
     out.sort(key=lambda d: (d.avg_difficulty, d.team.casefold()))
-    return S.TeamsResponse(matchday=md, teams=out)
+    return S.UclTeamsResponse(matchday=md, teams=out)
 
 
 # ---- league table + strategy -----------------------------------------------------------
@@ -429,7 +429,7 @@ def league_phase_strategy(
 # ---- captaincy + checklist ----------------------------------------------------------------
 
 
-def best_xi_plus_captain(rows: Sequence[S.SquadRow]) -> float:
+def best_xi_plus_captain(rows: Sequence[S.UclSquadRow]) -> float:
     """Best 11 by xPts plus the captain doubled (the flagged captain if he made
     the XI, else the top scorer) — matches the live model's pre-match total."""
     xi = sorted(rows, key=lambda r: -(r.xpts or 0))[:11]
@@ -485,7 +485,7 @@ def captaincy_verdict(
     )
 
 
-def _as_candidate(r: S.SquadRow | None) -> S.CaptainCandidate | None:
+def _as_candidate(r: S.UclSquadRow | None) -> S.CaptainCandidate | None:
     if r is None:
         return None
     x = r.xpts or 0.0
@@ -496,7 +496,7 @@ def _as_candidate(r: S.SquadRow | None) -> S.CaptainCandidate | None:
     )
 
 
-def pre_deadline_checklist(squad: Sequence[S.SquadRow], opt: S.OptimizerOutput | None) -> list[CheckItem]:
+def pre_deadline_checklist(squad: Sequence[S.UclSquadRow], opt: S.OptimizerOutput | None) -> list[CheckItem]:
     checks: list[CheckItem] = []
     ids = {r.player_id for r in squad}
     cap = next((r for r in squad if r.is_captain), None)
@@ -514,7 +514,7 @@ def pre_deadline_checklist(squad: Sequence[S.SquadRow], opt: S.OptimizerOutput |
     checks.append(CheckItem(ok=cap is not None and (not safe or cap.player_id == safe.player_id), text=text))
     starters = [r for r in squad if r.is_starter]
 
-    def flagged(r: S.SquadRow) -> bool:
+    def flagged(r: S.UclSquadRow) -> bool:
         if r.confirmed == "start":
             return False
         if r.confirmed == "bench":
@@ -665,9 +665,9 @@ def overview(session: Session) -> S.UclOverview:
     )
 
 
-def optimizer_page(session: Session) -> S.OptimizerResponse:
+def optimizer_page(session: Session) -> S.UclOptimizerResponse:
     opt = optimizer_output(session)
-    return S.OptimizerResponse(available=opt is not None, output=opt)
+    return S.UclOptimizerResponse(available=opt is not None, output=opt)
 
 
 # ---- rivals --------------------------------------------------------------------------------
@@ -816,7 +816,7 @@ def rival_report(session: Session, matchday: int) -> S.RivalReport:
             own_all[i] = own_all.get(i, 0) + 1
     eff = sorted(
         (
-            S.EffectiveOwnership(
+            S.UclEffectiveOwnership(
                 player_id=i, name=meta[i][0] if i in meta else str(i),
                 team=meta[i][2] if i in meta else "", xpts=meta[i][3] if i in meta else 0.0,
                 owned_pct=js_round(100 * own_all.get(i, 0) / size), mine=i in my_ids,
@@ -848,10 +848,10 @@ def rival_report(session: Session, matchday: int) -> S.RivalReport:
     )
 
 
-def rivals_page(session: Session) -> S.RivalsResponse:
+def rivals_page(session: Session) -> S.UclRivalsResponse:
     md = current_matchday(session)
     live = live_rivals(session)
-    return S.RivalsResponse(
+    return S.UclRivalsResponse(
         matchday=md, report=rival_report(session, md), live=live if live and live.rows else None
     )
 
@@ -927,7 +927,7 @@ def league_page(session: Session) -> S.LeagueResponse:
         matchday=md,
         league_id=league_id,
         standings=[
-            S.StandingRow(
+            S.UclStandingRow(
                 entry_id=r.entry_id, manager_name=r.manager_name, team_name=r.team_name,
                 rank=r.rank, prev_rank=r.prev_rank, points=r.points, total_points=r.total_points,
                 mine=r.entry_id == me,
