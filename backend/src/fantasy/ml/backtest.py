@@ -288,9 +288,14 @@ comparing against it, or feeding it to a model, leaks the result (doing so
 use only information available before the deadline.
 
 The same test on the market features the model leans on (standardised
-weights, 2024-25) — they follow the past, not the gameweek being predicted:
+weights, 2024-25):
 
 {_md(market)}
+
+Net transfers and price changes follow the *previous* week's points. Ownership
+is a slow quality signal — it relates to week *g* no more than to week *g+1*,
+which it cannot have seen. None of them carries the result of the gameweek
+being predicted.
 
 ## Limitations
 
