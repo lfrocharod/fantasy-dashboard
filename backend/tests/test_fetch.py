@@ -145,3 +145,54 @@ def test_md_is_current_is_tri_state():
     _, _, md_info = fetch.parse_fixtures(feed)
     assert [m.is_current for m in md_info] == [False, True, False]
     assert fetch.current_matchday(md_info) == 2
+
+
+LEADERBOARD = {"data": {"value": {
+    "totalMembers": 3,
+    "initial": [
+        {"guid": "me", "fullName": "You", "teamName": "Demo XI", "rank": 2, "trend": 2,
+         "currentGamedayPoints": 51, "overallPoints": 120},
+    ],
+    "rest": [
+        {"guid": "me", "fullName": "You", "teamName": "Demo XI", "rank": 2, "trend": 2,
+         "currentGamedayPoints": 51, "overallPoints": 120},
+        {"guid": "r1", "fullName": "Rival One", "teamName": "FC Rival", "rank": 1, "trend": 1,
+         "currentGamedayPoints": 44, "overallPoints": 131},
+        {"guid": "r2", "fullName": "Rival Two", "teamName": "Two Utd", "rank": 3, "trend": 3,
+         "currentGamedayPoints": 38, "overallPoints": 102},
+    ],
+}}, "meta": {"success": True}}
+
+
+def test_league_rows_merge_initial_and_rest():
+    rows, total = fetch.league_rows(LEADERBOARD)
+    assert [r["guid"] for r in rows] == ["me", "r1", "r2"] and total == 3
+    entries = fetch.parse_league_standings(rows, matchday=2)
+    me = next(e for e in entries if e.entry_id == "me")
+    assert (me.points, me.total_points, me.rank) == (51, 120, 2)
+
+
+def test_league_rows_still_read_a_plain_list():
+    rows, total = fetch.league_rows(STANDINGS)
+    assert len(rows) == len(fetch.parse_league_standings(STANDINGS, matchday=3)) and total is None
+
+
+def test_league_standings_request_matches_the_site():
+    """The overall table: matchday 0 and phase 0, as UEFA's own site asks."""
+    import httpx
+
+    from fantasy.leagues.ucl.client import UefaClient
+
+    seen: list[httpx.URL] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return httpx.Response(200, json=LEADERBOARD)
+
+    with UefaClient(token="a=b") as c:
+        assert c._client is not None
+        c._client._transport = httpx.MockTransport(handler)
+        c.get_league_standings("123")
+    q = dict(seen[0].params)
+    assert seen[0].path.endswith("/Leagues/123/leagueleaderboard")
+    assert (q["matchdayId"], q["phaseId"], q["optType"], q["leagueID"]) == ("0", "0", "1", "123")

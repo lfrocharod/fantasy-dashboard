@@ -26,7 +26,7 @@ from fantasy.leagues.ucl.model import club_strength, team_strength
 from fantasy.leagues.ucl.model.optimizer import OptPlayer, optimise
 from fantasy.leagues.ucl.model.params import ModelParams
 from fantasy.leagues.ucl.model.projections import blank_projection, project_player
-from fantasy.leagues.ucl.types import Fixture, Team
+from fantasy.leagues.ucl.types import Fixture, LeagueEntry, Team
 
 
 def _log(m: str) -> None:
@@ -652,35 +652,62 @@ def _private_live(db, client: UefaClient, guid, matchday, league_id, league_code
         _log(notes[-1])
 
     if not league_id and league_code:
-        try:
-            leagues = fetch.parse_private_leagues(client.get_private_leagues(guid))
-            match = next((L for L in leagues if L["code"] == league_code.upper()), None)
-            if match:
-                league_id = match["id"]
-                db.set_setting(Keys.LEAGUE_ID, league_id)
-                _log(f"resolved league {league_code} -> id {league_id}")
-            else:
-                notes.append(f"league code {league_code} not found among {[L['code'] for L in leagues]}")
-        except (UefaAuthError, KeyError, ValueError) as e:
-            notes.append(f"private leagues lookup failed: {e}")
+        league_id = _resolve_league_id(client, guid, league_code, notes)
+        if league_id:
+            db.set_setting(Keys.LEAGUE_ID, league_id)
 
     if league_id:
-        try:
-            entries = fetch.parse_league_standings(
-                client.get_league_standings(league_id, matchday=matchday), matchday
-            )
+        entries, problem = _league_table(client, league_id, matchday)
+        if problem == "refused" and league_code:
+            # The session just read our squad, so a refusal means the stored id
+            # is wrong (it was once copied out of a URL by hand): look the
+            # league up by its code and try again.
+            found = _resolve_league_id(client, guid, league_code, notes)
+            if found and found != league_id:
+                _log(f"league {league_id} refused; code {league_code} is league {found}")
+                db.set_setting(Keys.LEAGUE_ID, found)
+                league_id = found
+                entries, problem = _league_table(client, league_id, matchday)
+        if entries:
             _log(f"league {league_id}: {len(entries)} entries")
-            if entries:
-                _enrich_rival_squads(client, entries, matchday, my_guid=guid, notes=notes)
-                db.upsert_league_standings(league_id, entries)
-        except UefaAuthError as e:
-            # -70/-40 here means the league has no completed matchday yet, not
-            # that our session is bad (squad above already proved auth works).
-            _log(f"league standings not available yet ({e}) — populates after MD1")
-        except (KeyError, ValueError) as e:
-            notes.append(f"league standings parse failed: {e}")
+            _enrich_rival_squads(client, entries, matchday, my_guid=guid, notes=notes)
+            db.upsert_league_standings(league_id, entries)
+        elif problem:
+            notes.append(f"league {league_id} table: {problem}")
             _log(notes[-1])
     return picks
+
+
+def _resolve_league_id(client: UefaClient, guid: str, code: str, notes: list[str]) -> str | None:
+    """The private league's id for its invite code, from the leagues we're in."""
+    try:
+        leagues = fetch.parse_private_leagues(client.get_private_leagues(guid))
+    except (UefaAuthError, KeyError, ValueError) as e:
+        notes.append(f"private leagues lookup failed: {e}")
+        return None
+    match = next((L for L in leagues if L["code"] == code.upper()), None)
+    if match is None:
+        notes.append(f"league code {code} not found among your {len(leagues)} private leagues")
+        return None
+    _log(f"league code {code} -> id {match['id']}")
+    return str(match["id"])
+
+
+def _league_table(client: UefaClient, league_id: str, matchday: int) -> tuple[list[LeagueEntry], str]:
+    """Every page of a private league's overall table: (entries, problem),
+    problem "" when it loaded, "refused" when UEFA said no."""
+    rows: list[dict] = []
+    try:
+        for page in range(1, 11):
+            got, total = fetch.league_rows(client.get_league_standings(league_id, page=page))
+            rows += got
+            if not got or total is None or len(rows) >= total:
+                break
+    except UefaAuthError:
+        return [], "refused"
+    except (KeyError, ValueError) as e:
+        return [], f"unreadable ({e})"
+    return fetch.parse_league_standings(rows, matchday), ""
 
 
 def _enrich_rival_squads(client: UefaClient, entries, matchday, *, my_guid, notes) -> None:
