@@ -205,3 +205,9 @@ infra/      home/ (the systemd runner: install.sh, fantasy-run, timers)
 vercel.json the two Vercel services and their routing
 docs/       operations, ADRs, the model report, data sources
 ```
+
+## License
+
+[MIT](LICENSE) covers the code. It doesn't cover the game data: the feed
+recordings in `backend/samples/`, kept for the tests and the demo, come from
+UEFA, FPL and ESPN and stay under their terms.

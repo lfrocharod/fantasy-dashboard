@@ -8,6 +8,7 @@ patch, a feature the minor. Each version is a tag and a GitHub release.
 ### Added
 - A public, read-only [live demo](https://fantasy-dashboard-demo.vercel.app)
   of the anonymised dataset. It runs from its own database and database role.
+- An [MIT license](LICENSE) for the code.
 
 ## [2.1.3] — 2026-10-11
 
