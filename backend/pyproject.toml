@@ -3,6 +3,7 @@ name = "fantasy"
 version = "1.0.0"
 description = "Decision engine + API for UCL Fantasy, FPL Draft and ESPN NFL leagues"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.13"
 # The base install is exactly what the API needs — kept slim so the Vercel
 # function bundle and its cold start stay small. Scraping, the ILP optimizer and
