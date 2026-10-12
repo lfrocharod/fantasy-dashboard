@@ -1,0 +1,16 @@
+# Keeps the SHA-pinned GitHub Actions current. Python and npm dependencies are
+# bumped deliberately instead: uv's `exclude-newer` and npm's `before` only
+# resolve releases at least two weeks old, which Dependabot can't move.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
