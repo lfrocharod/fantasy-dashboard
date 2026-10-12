@@ -67,6 +67,9 @@ class UefaClient:
     # players / fixtures JSON stale for minutes otherwise, so live points and
     # scores wouldn't move between `--live` runs).
     bust_cache: bool = False
+    # Tests pass an httpx.MockTransport. An explicit transport also stops httpx
+    # from routing through proxies in the environment, so a fake stays offline.
+    transport: httpx.BaseTransport | None = None
 
     guid: str | None = None
     auth_state: str = "unknown"  # authed | public_only
@@ -77,7 +80,8 @@ class UefaClient:
         if self.token:
             headers["Cookie"] = self.token.strip()
         self._client = httpx.Client(
-            headers=headers, timeout=self.timeout, follow_redirects=True
+            headers=headers, timeout=self.timeout, follow_redirects=True,
+            transport=self.transport,
         )
         return self
 

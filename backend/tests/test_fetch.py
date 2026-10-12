@@ -189,9 +189,7 @@ def test_league_standings_request_matches_the_site():
         seen.append(request.url)
         return httpx.Response(200, json=LEADERBOARD)
 
-    with UefaClient(token="a=b") as c:
-        assert c._client is not None
-        c._client._transport = httpx.MockTransport(handler)
+    with UefaClient(token="a=b", transport=httpx.MockTransport(handler)) as c:
         c.get_league_standings("123")
     q = dict(seen[0].params)
     assert seen[0].path.endswith("/Leagues/123/leagueleaderboard")
