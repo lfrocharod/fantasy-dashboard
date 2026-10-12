@@ -1,6 +1,8 @@
 # Fantasy Dashboard
 
 [![CI](https://github.com/lfrocharod/fantasy-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/lfrocharod/fantasy-dashboard/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/lfrocharod/fantasy-dashboard)](https://github.com/lfrocharod/fantasy-dashboard/releases)
+[![Live demo](https://img.shields.io/badge/demo-live-2ea44f)](https://fantasy-dashboard-demo.vercel.app)
 
 A decision engine for the four fantasy leagues I play — **UEFA Champions
 League Fantasy**, **FPL Draft**, **ESPN fantasy football** and **ESPN fantasy
@@ -8,6 +10,9 @@ basketball** — in one web app. It pulls each game's data on a schedule,
 projects every player's points, and turns that into decisions: who to captain,
 start, sign, stream, trade or bench, with the reasoning shown next to the
 number.
+
+**[Open the live demo →](https://fantasy-dashboard-demo.vercel.app)** It's the
+real app on an anonymised dataset, read-only, with no sign-in.
 
 <p align="center">
   <img src="docs/screenshots/ucl-overview.png" width="49%" alt="Champions League overview: captaincy verdict, pre-deadline checklist, squad with fixture difficulty">
@@ -22,8 +27,9 @@ number.
   <img src="docs/screenshots/nba-lineup.png" width="49%" alt="NBA daily lineups: the best legal lineup for each day of the matchup">
 </p>
 
-_Screenshots are from the demo dataset: real public player data, made-up
-managers and teams. `docker compose --profile demo up` runs it locally._
+_Screenshots are from the demo dataset the live demo serves: real public player
+data, made-up managers and teams. `docker compose --profile demo up` runs it
+locally._
 
 ## What it does
 
@@ -91,6 +97,34 @@ flowchart LR
 | Delivery | Vercel (Services: Vite on the CDN, FastAPI as a Python function), GitHub Actions CI, Docker (multi-stage, two targets) for the local stack and an image smoke test, systemd timers |
 | Quality | pytest against real Postgres, vitest + Testing Library, ruff, mypy, ESLint; every dependency and action pinned |
 
+## A short tour of the code
+
+* **NBA lineups as an assignment problem.**
+  [`leagues/nba/analysis.py`](backend/src/fantasy/leagues/nba/analysis.py)
+  picks each day's best legal lineup exactly. The slots a roster can fill form
+  a transversal matroid, so greedy selection with augmenting paths is optimal.
+  Streaming, trade evaluation and a Monte Carlo of the playoff race build on
+  it.
+* **Integer programming.**
+  [`leagues/ucl/model/optimizer.py`](backend/src/fantasy/leagues/ucl/model/optimizer.py)
+  holds the PuLP models for the best XI under formation limits and for a full
+  squad under budget, position-quota and per-club limits.
+* **An ML pipeline that can't peek.**
+  [`ml/`](backend/src/fantasy/ml) builds features only from earlier gameweeks.
+  [A test](backend/tests/test_ml.py) rewrites the future and checks that no
+  earlier feature moves. The model is judged by a walk-forward backtest, then
+  graded live.
+* **A port proven, not assumed.** About 35 decision functions moved from
+  TypeScript to Python. [Parity tests](backend/tests/test_parity_fpl.py) check
+  them output-for-output against goldens recorded from the original code.
+* **One contract between the halves.** The frontend's
+  [API client](frontend/src/api) is generated from FastAPI's OpenAPI schema,
+  and CI fails if the two drift apart.
+* **Migrations under test.**
+  [Alembic](backend/src/fantasy/migrations/versions) starts from a baseline that
+  reproduced the old schema exactly. Expand/contract data moves are
+  [tested](backend/tests/test_migrations.py) on throwaway Postgres databases.
+
 ## The FPL model
 
 Built to answer one question honestly: does a learned model beat the simple
@@ -154,12 +188,15 @@ Merging to `main` deploys: Vercel builds both services, and the production
 build migrates the database before the new version takes traffic. The data side
 needs nothing run by hand: timers sync every league every 30 minutes, fully
 once a day, every 5 minutes during Champions League matches, and retrain the
-model weekly; failures push to a phone. All of it runs on free tiers.
+model weekly; failures push to a phone. The live demo is a second Vercel
+project built from the same commits. It reads its own database through a role
+that can't reach production. All of it runs on free tiers.
 [docs/operations.md](docs/operations.md) is the runbook (deploys, the home
-runner, secrets, cost); [docs/data-sources.md](docs/data-sources.md) lists
-every source. Changes go through pull requests with Conventional Commit
-titles and tagged releases — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[changelog](CHANGELOG.md).
+runner, the demo, secrets, cost); [docs/data-sources.md](docs/data-sources.md)
+lists every source. `main` is protected, and every change reaches it through a
+pull request with green checks. Each change becomes one signed commit with a
+Conventional Commit subject, and versions are tagged as releases. See
+[CONTRIBUTING.md](CONTRIBUTING.md) and the [changelog](CHANGELOG.md).
 
 ```
 backend/    the fantasy package: api/, leagues/{ucl,fpl,nfl,nba}/, ml/, migrations/, cli.py

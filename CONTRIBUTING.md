@@ -7,15 +7,21 @@ request, CI and a preview deploy before it reaches `main`, which deploys.
 
 1. **Branch** from `main`: `feat/…`, `fix/…`, `docs/…`, `ci/…`.
 2. **Commit** with [Conventional Commits](https://www.conventionalcommits.org/)
-   subjects — `type(scope): summary`, lower case, no trailing full stop. The
-   body says what changed and why.
+   subjects: `type(scope): summary`, lower case, no trailing full stop, at
+   most 72 characters. The body says what changed and why, wrapped at 72
+   columns. Sign commits (`git config commit.gpgsign true`).
 3. **Open a pull request.** CI lints, type-checks and tests both halves, checks
    the generated API client and the commit subjects, and builds the images;
    Vercel deploys a preview of the branch.
-4. **Squash-merge.** The pull request title becomes the commit subject on
-   `main`, so it follows the same convention. One commit per change.
-5. **Release.** Each version is a tag and a GitHub release, recorded in
+4. **Squash-merge** once the checks pass. The pull request title, followed by
+   its number, becomes the commit subject on `main`, so it follows the same
+   convention. One commit per change.
+5. **Release.** Each version is a signed tag and a GitHub release, recorded in
    [CHANGELOG.md](CHANGELOG.md): a fix bumps the patch, a feature the minor.
+
+`main` is protected. Changes arrive only as pull requests whose checks are
+green, merged by squash, so the history stays linear. Commits must be signed.
+Force pushes and deletion are blocked.
 
 ## Types and scopes
 
