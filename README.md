@@ -157,7 +157,9 @@ once a day, every 5 minutes during Champions League matches, and retrain the
 model weekly; failures push to a phone. All of it runs on free tiers.
 [docs/operations.md](docs/operations.md) is the runbook (deploys, the home
 runner, secrets, cost); [docs/data-sources.md](docs/data-sources.md) lists
-every source.
+every source. Changes go through pull requests with Conventional Commit
+titles and tagged releases — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[changelog](CHANGELOG.md).
 
 ```
 backend/    the fantasy package: api/, leagues/{ucl,fpl,nfl,nba}/, ml/, migrations/, cli.py
