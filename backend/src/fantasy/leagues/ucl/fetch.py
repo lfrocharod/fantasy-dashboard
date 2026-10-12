@@ -384,9 +384,28 @@ def parse_private_leagues(payload: Any) -> list[dict]:
     return out
 
 
+def league_rows(payload: Any) -> tuple[list[dict], int | None]:
+    """(rows, total members) from a leaderboard page. The site's payload
+    splits rows into `initial` and `rest`; older shapes are a plain list."""
+    v = payload.get("data", payload) if isinstance(payload, dict) else payload
+    if isinstance(v, dict):
+        v = v.get("value", v)
+    if isinstance(v, dict) and ("rest" in v or "initial" in v):
+        rows, seen = [], set()
+        for r in [*(v.get("initial") or []), *(v.get("rest") or [])]:
+            key = str(_pick(r, "guid", "userGuid", "socialId", default=id(r)))
+            if isinstance(r, dict) and key not in seen:
+                seen.add(key)
+                rows.append(r)
+        total = v.get("totalMembers") or v.get("totUserNew")
+        return rows, int(total) if str(total or "").isdigit() else None
+    return _rows(payload), None
+
+
 def parse_league_standings(payload: Any, matchday: int) -> list[LeagueEntry]:
     entries: list[LeagueEntry] = []
-    for r in _rows(payload):
+    rows = payload if isinstance(payload, list) else league_rows(payload)[0]
+    for r in rows:
         entry_id = str(
             _pick(r, "guid", "userGuid", "entryId", "userId", "gameEntryId", "socialId", default="")
         )
@@ -400,7 +419,8 @@ def parse_league_standings(payload: Any, matchday: int) -> list[LeagueEntry]:
                 ),
                 team_name=str(_pick(r, "teamName", "tName", "userTeamName", default="")),
                 matchday=matchday,
-                points=_i(_pick(r, "gdPoints", "matchdayPoints", "points", "mdPoints")),
+                points=_i(_pick(r, "currentGamedayPoints", "gdPoints", "gamedayPoints",
+                                "matchdayPoints", "points", "mdPoints")),
                 total_points=_i(_pick(r, "overallPoints", "totPoints", "totalPoints", "ovPoints")),
                 rank=_i(_pick(r, "rank", "overallRank", "ovRank", "position")),
                 prev_rank=_i(_pick(r, "previousRank", "prevRank", "lastRank")),

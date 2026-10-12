@@ -11,7 +11,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from fantasy.api.schemas import home as S
+from fantasy.config import Keys
 from fantasy.core import models as M
+from fantasy.core.store import get_settings
 from fantasy.football.jsmath import js_round
 from fantasy.leagues.fpl import analysis as FA
 from fantasy.leagues.fpl import views as fpl_views
@@ -77,6 +79,13 @@ def _ucl(session: Session, alerts: list[S.Alert]) -> S.UclHome:
         alerts.append(S.Alert(
             league="UCL", tone="accent", href="/ucl/optimizer",
             text=f"Bench your late-day options ({opts}) — you can sub them in after the early games.",
+        ))
+    auth = get_settings(session, [Keys.UEFA_TOKEN, Keys.UEFA_AUTH_STATE])
+    if auth.get(Keys.UEFA_TOKEN) and auth.get(Keys.UEFA_AUTH_STATE) == "public_only":
+        alerts.append(S.Alert(
+            league="UCL", tone="bad", href="/settings",
+            text="Your UEFA login has expired — paste a fresh cookie in Settings. Your squad, "
+            "rivals and the mini-league table stop updating until then.",
         ))
     return out
 

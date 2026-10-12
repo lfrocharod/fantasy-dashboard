@@ -167,13 +167,15 @@ class UefaClient:
     def get_private_leagues(self, guid: str) -> Any:
         return self._api(f"Leagues/user/{guid}/private")
 
-    def get_league_standings(self, league_id: str, matchday: int = 0, phase: int = 0, page: int = 1) -> Any:
-        # Confirmed live endpoint. Returns retVal -70 before the league has any
-        # completed matchday — caller treats that as "no data yet", not an auth
-        # failure.
+    def get_league_standings(self, league_id: str, *, matchday: int = 0, phase: int = 0,
+                             page: int = 1, chunk: int = 50) -> Any:
+        """A private league's table. UEFA's own site asks for the overall table —
+        matchday 0, phase 0 — and the current matchday's points come back on
+        each row (`currentGamedayPoints`). A matchday that hasn't been scored
+        is refused with the same "Not Authorized" as a bad session."""
         return self._api(
             f"Leagues/{league_id}/leagueleaderboard?optType=1&phaseId={phase}"
-            f"&matchdayId={matchday}&vPageChunk=50&vPageNo={page}&vPageOneChunk=50"
+            f"&matchdayId={matchday}&vPageChunk={chunk}&vPageNo={page}&vPageOneChunk={chunk}"
             f"&leagueID={league_id}"
         )
 
