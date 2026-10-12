@@ -207,6 +207,8 @@ def _nba(session: Session, alerts: list[S.Alert]) -> S.NbaHome:
     streams = BA.streams(roster, nba_views._free(lg), left, lg.games, lg.slots,
                          nba_views._ros(lg), lg.limits)
     top = next((s for s in streams if s.ros_delta >= -50 and s.gain >= 10), None)
+    if nba_views._moves(lg).left == 0:
+        top = None  # no pickups left this matchup
     live = None
     if score and (score.my_points or score.opp_points):
         live = S.NflLiveHome(mine=score.my_points, opp=score.opp_points, final=False)

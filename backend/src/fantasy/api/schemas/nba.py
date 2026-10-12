@@ -88,8 +88,9 @@ class NbaStream(Schema):
 
 
 class NbaMoves(Schema):
-    limit: int | None
-    per_day: bool
+    limit: int | None  # pickups allowed this matchup (None = unlimited)
+    per_day: bool  # the league's limit is per NBA game day, so the cap varies
+    game_days: int  # NBA game days in this matchup
     used: int
     left: int | None
     waiver_note: str

@@ -103,6 +103,11 @@ class League:
             self._days["po"] = [d for mp in self.playoff_periods for d in self.period_days(mp)]
         return self._days["po"]
 
+    def game_days(self, mp: int) -> int:
+        """Days in matchup `mp` with at least one NBA game."""
+        days = self.period_days(mp, from_today=False)
+        return sum(1 for d in days if any(d in g for g in self.games.values()))
+
     def date(self, day: int) -> date | None:
         return self.day_dates.get(day)
 
@@ -244,15 +249,16 @@ def _score(lg: League, mp: int, days: list[int], plan: A.WeekPlan) -> S.NbaScore
 
 def _moves(lg: League) -> S.NbaMoves:
     acq = lg.acquisitions
-    limit = acq.get("limit")
     used = int((acq.get("used") or {}).get(str(lg.period), 0))
     per_day = bool(acq.get("perDay"))
+    game_days = lg.game_days(lg.period)
+    raw = acq.get("limit")
+    cap = A.pickup_cap(int(raw) if raw is not None else None, per_day, game_days)
     days = ", ".join(d.title() for d in acq.get("waiverDays") or [])
     note = (f"Dropped players sit on waivers {acq.get('waiverHours')}h"
             + (f"; claims process {days}" if days else "")) if acq.get("waiverHours") else ""
-    return S.NbaMoves(limit=limit, per_day=per_day, used=used,
-                      left=None if limit is None or per_day else max(0, int(limit) - used),
-                      waiver_note=note)
+    return S.NbaMoves(limit=cap, per_day=per_day, game_days=game_days, used=used,
+                      left=None if cap is None else max(0, cap - used), waiver_note=note)
 
 
 def _today_moves(lg: League, roster: list[NbaPlayer]) -> tuple[list[NbaPlayer], list[NbaPlayer]]:
@@ -316,7 +322,7 @@ def _checklist(lg: League, roster: list[NbaPlayer], plan: A.WeekPlan,
                 text=f"{plan.lost} games lost to your bench this matchup — a 2-for-1 trade or a "
                 "drop opens room for games on lighter days"))
         keeper = next((s for s in streams if s.ros_delta >= -50), None)
-        if keeper is not None and keeper.gain >= 10:
+        if keeper is not None and keeper.gain >= 10 and moves.left != 0:
             s = keeper
             items.append(CheckItem(
                 ok=False, href="/nba/players", link_text="see streams →",

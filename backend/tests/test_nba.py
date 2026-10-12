@@ -197,3 +197,14 @@ def test_sim_playoffs_shares_add_up() -> None:
     assert sum(o.top_seed_pct for o in odds) == pytest.approx(100, abs=1)
     by = {o.team_id: o for o in odds}
     assert by[6].playoff_pct > by[1].playoff_pct  # the stronger team, more often
+
+
+def test_pickup_cap_scales_with_game_days() -> None:
+    """A per-game-day limit gives seven pickups in an ordinary week, more in the
+    long opening matchup, fewer around the All-Star break; a per-matchup limit
+    is flat."""
+    assert A.pickup_cap(1, True, 7) == 7
+    assert A.pickup_cap(1, True, 13) == 13
+    assert A.pickup_cap(1, True, 4) == 4
+    assert A.pickup_cap(7, False, 4) == 7
+    assert A.pickup_cap(None, True, 7) is None
