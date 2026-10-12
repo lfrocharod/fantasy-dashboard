@@ -530,7 +530,7 @@ def _nba_settings() -> dict[str, Any]:
         },
         "scheduleSettings": {"matchupPeriodCount": NBA_PERIODS, "matchupPeriods": units,
                              "playoffTeamCount": 4, "playoffSeedingRule": "H2H_RECORD"},
-        "acquisitionSettings": {"matchupAcquisitionLimit": 7, "matchupLimitPerScoringPeriod": False,
+        "acquisitionSettings": {"matchupAcquisitionLimit": 1, "matchupLimitPerScoringPeriod": True,
                                 "waiverHours": 24, "waiverProcessDays": ["SUNDAY"]},
         "tradeSettings": {"deadlineDate": int(datetime(2027, 2, 26, 17, tzinfo=UTC).timestamp() * 1000)},
     }

@@ -4438,6 +4438,10 @@
       },
       "NbaMoves": {
         "properties": {
+          "gameDays": {
+            "title": "Gamedays",
+            "type": "integer"
+          },
           "left": {
             "anyOf": [
               {
@@ -4476,6 +4480,7 @@
         "required": [
           "limit",
           "perDay",
+          "gameDays",
           "used",
           "left",
           "waiverNote"

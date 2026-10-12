@@ -108,9 +108,8 @@ function Overview({ o }: { o: Api["NbaOverview"] }) {
             Pickups:{" "}
             {o.moves.limit == null
               ? "no limit"
-              : o.moves.perDay
-                ? `${o.moves.limit} a day`
-                : `${o.moves.left ?? "?"} of ${o.moves.limit} left this matchup`}
+              : `${o.moves.left ?? "?"} of ${o.moves.limit} left this matchup` +
+                (o.moves.perDay ? ` (one per NBA game day — ${o.moves.gameDays} this matchup)` : "")}
             {o.moves.waiverNote && ` · ${o.moves.waiverNote}`}
           </p>
           {o.warnings.length > 0 && (

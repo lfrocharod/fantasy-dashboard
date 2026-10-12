@@ -232,6 +232,16 @@ def ros_value(p: NbaPlayer, days: Sequence[int], games: Games) -> float:
 # ---- streaming ----------------------------------------------------------------------------
 
 
+def pickup_cap(limit: int | None, per_game_day: bool, game_days: int) -> int | None:
+    """Pickups allowed in a matchup. ESPN's limit is either per matchup or,
+    with its per-scoring-period switch on, per NBA game day in the matchup:
+    seven in an ordinary week, more in the long opening one, fewer when the
+    schedule thins out (the All-Star break, NBA Cup nights)."""
+    if limit is None:
+        return None
+    return limit * game_days if per_game_day else limit
+
+
 @dataclass(slots=True)
 class Stream:
     add: NbaPlayer

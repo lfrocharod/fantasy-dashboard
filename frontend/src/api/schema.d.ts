@@ -2358,6 +2358,8 @@ export interface components {
         };
         /** NbaMoves */
         NbaMoves: {
+            /** Gamedays */
+            gameDays: number;
             /** Left */
             left: number | null;
             /** Limit */

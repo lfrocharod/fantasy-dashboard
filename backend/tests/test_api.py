@@ -180,6 +180,9 @@ def test_nba_catches_the_lineup_mistake(client) -> None:  # type: ignore[no-unty
     assert lineup["days"][0]["date"] == o["todayDate"]
     ir = [r for r in o["roster"] if r["today"] == "IR"]
     assert len(ir) == 1 and ir[0]["player"]["slot"] == "IR"
+    # one pickup per NBA game day: matchup 4 has seven, two already used
+    m = o["moves"]
+    assert (m["perDay"], m["gameDays"], m["limit"], m["used"], m["left"]) == (True, 7, 7, 2, 5)
 
 
 def test_nba_trade_two_for_one_frees_a_spot(client) -> None:  # type: ignore[no-untyped-def]

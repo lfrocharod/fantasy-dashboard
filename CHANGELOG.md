@@ -3,6 +3,14 @@
 Notable changes, newest first. The app is versioned as a whole: a fix bumps the
 patch, a feature the minor. Each version is a tag and a GitHub release.
 
+## [2.1.3] — 2026-10-12
+
+### Fixed
+- **NBA:** the pickup limit is per matchup, scaled by the matchup's NBA game
+  days when the league counts it per day — seven in an ordinary week, thirteen
+  in the opening one, four around the All-Star break — instead of "one a day".
+  The overview shows what's left; streams aren't suggested once it's used up.
+
 ## [2.1.2] — 2026-10-11
 
 ### Fixed
@@ -72,6 +80,7 @@ The original Next.js app over Postgres, fed by a Python ingest job.
   streaming, trades and playoff odds.
 - A cross-league home page with deadline checklists and alerts.
 
+[2.1.3]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.0.0...v2.1.0
