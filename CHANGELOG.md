@@ -6,11 +6,12 @@ patch, a feature the minor. Each version is a tag and a GitHub release.
 ## [2.1.2] — 2026-10-11
 
 ### Fixed
-- **UCL:** the mini-league table and rival tracking load again. The sync asked
-  UEFA for the table of a matchday not yet played, which UEFA refuses with the
-  same "Not Authorized" as a bad login; it now asks for the overall table the
-  way UEFA's own site does, pages through it, and re-resolves a stale league
-  id from the league code.
+- **UCL:** the mini-league table and rival tracking work. Matchday points were
+  read from field names UEFA doesn't send (every rival scored 0); the table is
+  now requested the way UEFA's own site asks for it, paged, and re-resolved
+  from the league code if the stored id is refused. The other half of the
+  outage was a saved UEFA session that could read the squad but not leagues —
+  a fresh login fixed it.
 - **FPL:** the best XI can field two midfielders (5-2-3), as FPL Draft allows.
 
 ### Added
