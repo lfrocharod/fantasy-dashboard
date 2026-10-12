@@ -96,10 +96,31 @@ later release).
    in NFL → Draft board → Setup, and basketball in NBA → Setup (paste your
    ESPN team page URL; it reuses the NFL cookies). The next sync pulls them.
 
-**Optional public demo.** A second Vercel project from the same repository,
-with `DEMO_MODE=1` (read-only, no login) and a `DATABASE_URL` for its own
-empty Neon database; seed that database once with
-`DATABASE_URL=… uv run fantasy demo seed`.
+## Public demo
+
+<https://fantasy-dashboard-demo.vercel.app> is a second Vercel project built
+from the same repository and commits. It serves the anonymised demo dataset
+with `DEMO_MODE=1`: no sign-in, and every endpoint that writes answers 403.
+
+* **Database.** The demo has its own database, `fantasy_demo`, on the same Neon
+  server. It belongs to its own login role, so the public deployment holds no
+  credential that can reach production:
+  ```sql
+  create role fantasy_demo login password '…';
+  grant fantasy_demo to current_user;  -- needed to create a database it owns
+  create database fantasy_demo owner fantasy_demo;
+  ```
+  With that role's connection string, migrate it and load the dataset:
+  `uv run fantasy db upgrade && uv run fantasy demo seed`. The seed wipes
+  league data first, and the role keeps it away from the real database.
+* **Vercel.** Import the repository a second time: *Framework Preset* →
+  **Services**, *Root Directory* → empty. Set two variables, `DATABASE_URL`
+  (the demo role's) and `DEMO_MODE=1`. Then set Settings → Git → *Ignored Build
+  Step* → **Only build production**, so a pull request gets one preview, not
+  two.
+* **Upkeep.** Production builds of the demo migrate its database, as they do
+  the real one. Re-run `fantasy demo seed` when what the demo shows changes.
+  `fantasy demo record` refreshes the recorded public data first.
 
 ## Secrets
 
@@ -107,6 +128,7 @@ empty Neon database; seed that database once with
 |---|---|---|
 | `DATABASE_URL`, `SESSION_SECRET`, `APP_PASSWORD_HASH`, `WEB_CRYPTO_KEY` | Vercel environment variables (app) and `~/.config/fantasy-dashboard/env` (runner: the first and last) | change them in Vercel → Settings → Environment Variables and redeploy; edit the runner's file |
 | League cookies / tokens | the database, AES-GCM encrypted with `WEB_CRYPTO_KEY` | re-paste in the app |
+| The demo's `DATABASE_URL` (role `fantasy_demo`) | the demo project's Vercel variables and `~/.config/fantasy-dashboard/demo.env` | `alter role fantasy_demo password '…'`, then update both |
 
 Nothing secret lives in GitHub — CI needs none, and Vercel deploys through its
 own GitHub app.
@@ -114,6 +136,6 @@ own GitHub app.
 ## Cost
 
 Nothing, and no card on file anywhere: Vercel's Hobby plan (free, for
-non-commercial use) serves the app, Neon's free plan holds the database,
-GitHub Actions is free for a public repository, and the syncs run at home.
-A personal dashboard stays far inside every free allowance.
+non-commercial use) serves the app and the demo, Neon's free plan holds both
+databases, GitHub Actions is free for a public repository, and the syncs run
+at home. A personal dashboard stays far inside every free allowance.

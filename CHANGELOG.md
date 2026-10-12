@@ -3,7 +3,13 @@
 Notable changes, newest first. The app is versioned as a whole: a fix bumps the
 patch, a feature the minor. Each version is a tag and a GitHub release.
 
-## [2.1.3] — 2026-10-12
+## [Unreleased]
+
+### Added
+- A public, read-only [live demo](https://fantasy-dashboard-demo.vercel.app)
+  of the anonymised dataset. It runs from its own database and database role.
+
+## [2.1.3] — 2026-10-11
 
 ### Fixed
 - **NBA:** the pickup limit is per matchup, scaled by the matchup's NBA game
@@ -80,6 +86,7 @@ The original Next.js app over Postgres, fed by a Python ingest job.
   streaming, trades and playoff odds.
 - A cross-league home page with deadline checklists and alerts.
 
+[Unreleased]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.3...HEAD
 [2.1.3]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.0...v2.1.1
