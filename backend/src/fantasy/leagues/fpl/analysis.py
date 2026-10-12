@@ -25,7 +25,9 @@ HORIZON_LABEL: dict[str, str] = {
 }
 POSITIONS = ("GKP", "DEF", "MID", "FWD")
 
-XI_MIN = {"GKP": 1, "DEF": 3, "MID": 3, "FWD": 1}
+# FPL Draft's own limits (bootstrap-static settings.squad min_play_* / max_play_*):
+# 5-2-3 is a legal shape, so midfield can drop to two.
+XI_MIN = {"GKP": 1, "DEF": 3, "MID": 2, "FWD": 1}
 XI_MAX = {"GKP": 1, "DEF": 5, "MID": 5, "FWD": 3}
 
 Score = Callable[[FplPlayer], float]

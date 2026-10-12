@@ -200,3 +200,24 @@ def test_split_auth_extracts_bearer_and_cookie():
     # a plain cookie string is not auth
     assert split_auth("a=b; c=d") == ("a=b; c=d", None)
     assert not has_auth("a=b; c=d")
+
+
+def test_best_xi_can_field_two_midfielders():
+    """FPL Draft's minimum is two midfielders (5-2-3 is legal): with five strong
+    defenders, three strong forwards and weak midfielders, that's the best XI."""
+    from types import SimpleNamespace
+
+    from fantasy.leagues.fpl.analysis import best_xi
+    from fantasy.leagues.fpl.players import FplPlayer
+
+    def player(i: int, pos: str, pts: float) -> FplPlayer:
+        return FplPlayer.from_row(SimpleNamespace(
+            ext_id=str(i), name=f"P{i}", team="AAA", primary_pos=pos, proj_points=pts,
+            provider_rank=None, vbd=0.0, injury_status="", outlook="", raw={}))
+
+    squad = ([player(1, "GKP", 4), player(2, "GKP", 3)]
+             + [player(10 + i, "DEF", 6) for i in range(5)]
+             + [player(20 + i, "MID", 2) for i in range(5)]
+             + [player(30 + i, "FWD", 7) for i in range(3)])
+    xi = best_xi(squad)
+    assert xi.formation == "5-2-3" and len(xi.xi) == 11

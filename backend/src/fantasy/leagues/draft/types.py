@@ -49,7 +49,6 @@ DEFAULT_ROSTER = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1, "K": 1, "DST": 
 FPL_POS = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
 # FPL Draft standard squad: 2/5/5/3, 11 starters (1 GK, 3-5 DEF, 2-5 MID, 1-3 FWD).
 FPL_ROSTER = {"GKP": 2, "DEF": 5, "MID": 5, "FWD": 3}
-FPL_XI = {"GKP": 1, "DEF": 3, "MID": 3, "FWD": 1}  # minimum starters per slot
 
 # Rough PL club attack / defence multipliers (mean ~1.0). attack >1 scores more,
 # defence >1 concedes more. Eyeballed from recent seasons; the board tunes itself
