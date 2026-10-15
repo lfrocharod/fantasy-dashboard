@@ -63,6 +63,9 @@ class NflPlayer:
     matchups: list[WeekOpp] = field(default_factory=list)
     # ESPN's own projection by week (matchup-aware; 0 on a bye)
     week_projs: dict[int, float] = field(default_factory=dict)
+    # this week's NFL game: "pre" / "in" / "post", and the share still to play
+    game_state: str = "pre"
+    game_left: float = 1.0
 
     @classmethod
     def from_row(cls, row: Any) -> NflPlayer:
@@ -113,4 +116,6 @@ class NflPlayer:
             week_projs={
                 int(w): _num(v) for w, v in (raw.get("weekProjs") or {}).items() if str(w).isdigit()
             },
+            game_state=str((raw.get("game") or {}).get("state") or "pre"),
+            game_left=_num((raw.get("game") or {}).get("left"), 1.0),
         )

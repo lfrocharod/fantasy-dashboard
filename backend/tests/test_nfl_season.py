@@ -116,3 +116,42 @@ def test_vor_replacement_by_position():
     ]
     _vor(rows, {"RB": 2, "FLEX": 1}, teams=10)
     assert rows[0].vbd > 0 and rows[-1].vbd < rows[0].vbd
+
+
+def test_game_state_from_the_scoreboard():
+    from fantasy.leagues.nfl.season import game_state
+
+    assert game_state({"date": "2026-10-18T17:00Z", "status": {"type": {"state": "pre"}}})["left"] == 1.0
+    mid = game_state({"status": {"type": {"state": "in"}, "period": 3, "clock": 450.0}})
+    assert mid["state"] == "in" and mid["left"] == 0.375  # the 4th quarter + half the 3rd
+    assert game_state({"status": {"type": {"state": "post"}}})["left"] == 0.0
+
+
+def test_a_matchup_side_reads_espns_running_total():
+    from fantasy.leagues.nfl.season import _side_points
+
+    assert _side_points({"totalPoints": 0, "totalPointsLive": 87.46}) == 87.5
+    assert _side_points({"totalPoints": 112.3}) == 112.3
+
+
+def _starter(pid: str, proj: float, state: str, left: float) -> NflPlayer:
+    raw = {"weekProj": proj, "slot": "WR", "matchups": [{"week": 6, "opp": "SF", "fdr": 3}],
+           "weekProjs": {"6": proj}, "game": {"state": state, "left": left}}
+    return NflPlayer.from_row(SimpleNamespace(
+        ext_id=pid, name=pid, team="X", primary_pos="WR", proj_points=proj, vbd=0,
+        ecr_rank=None, ecr_tier=None, raw=raw))
+
+
+def test_the_win_chance_mid_week_counts_points_already_scored():
+    """Up 100-80 with every one of your starters done and one of theirs (25
+    projected) still to play: behind on the projection, but not by much."""
+    mine = [_starter("a", 20, "post", 0.0), _starter("b", 20, "post", 0.0)]
+    theirs = [_starter("c", 20, "post", 0.0), _starter("d", 25, "pre", 1.0)]
+    chance = A.live_win_prob(100, 80, mine, theirs)
+    assert 0 < chance < 50
+    # with that starter halfway through his game, half his projection is left
+    theirs[1].game_state, theirs[1].game_left = "in", 0.5
+    assert A.live_win_prob(100, 80, mine, theirs) > 50
+    # nothing left to play: the score decides it
+    theirs[1].game_state = "post"
+    assert A.live_win_prob(100, 80, mine, theirs) == 100

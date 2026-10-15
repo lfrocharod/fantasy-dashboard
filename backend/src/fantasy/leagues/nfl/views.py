@@ -97,6 +97,31 @@ def _opponent(lg: League) -> tuple[A.NflManager | None, M.Matchup | None]:
     return team, match
 
 
+def _live_score(lg: League, match: M.Matchup | None) -> S.LiveScore | None:
+    """This week's score so far, once either side has points."""
+    if match is None:
+        return None
+    i_am_home = match.home_entry == str(lg.my_team_id)
+    mine = (match.home_points if i_am_home else match.away_points) or 0.0
+    opp = (match.away_points if i_am_home else match.home_points) or 0.0
+    if not (mine > 0 or opp > 0):
+        return None
+    return S.LiveScore(mine=mine, opp=opp, final=match.winner in ("HOME", "AWAY", "TIE"))
+
+
+def _win_pct(my_proj: float, opp_proj: float | None, live: S.LiveScore | None,
+             roster: Sequence[NflPlayer], opp: A.NflManager | None) -> int | None:
+    """The chance to win this week: from the projections before kickoff, from
+    the score and what each set lineup still has to play once games are on."""
+    if opp_proj is None or opp is None:
+        return None
+    if live is None:
+        return A.win_prob_from_margin(my_proj - opp_proj)
+    if live.final:
+        return 100 if live.mine > live.opp else 0 if live.mine < live.opp else 50
+    return A.live_win_prob(live.mine, live.opp, A.started(roster), A.started(opp.players))
+
+
 def _seed_by_points(lg: League) -> bool:
     return lg.seeding_rule == "TOTAL_POINTS_SCORED"
 
@@ -110,19 +135,12 @@ def overview(session: Session) -> S.NflOverview:
     opp, match = _opponent(lg)
     mine = A.optimal_lineup(roster, lg.slots, 0)
     theirs = A.optimal_lineup(opp.players, lg.slots, 0) if opp else None
-    win_pct = A.win_prob_from_margin(mine.total - theirs.total) if theirs else 50
+    live = _live_score(lg, match)
+    chance = _win_pct(mine.total, theirs.total if theirs else None, live, roster, opp)
+    win_pct = 50 if chance is None else chance
     seed_by_points = _seed_by_points(lg)
     mode = A.lineup_mode(win_pct, seed_by_points)
     opt_ids = {s.player.ext_id for s in mine.starters if s.player}
-
-    live = None
-    if match is not None:
-        i_am_home = match.home_entry == str(lg.my_team_id)
-        mine_pts = (match.home_points if i_am_home else match.away_points) or 0.0
-        opp_pts = (match.away_points if i_am_home else match.home_points) or 0.0
-        if mine_pts > 0 or opp_pts > 0:
-            live = S.LiveScore(mine=mine_pts, opp=opp_pts,
-                               final=match.winner in ("HOME", "AWAY", "TIE"))
 
     changes = sum(
         1 for s in mine.starters if s.player and s.player.slot in ("BE", "IR", "")
