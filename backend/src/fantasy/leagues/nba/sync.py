@@ -109,7 +109,8 @@ def store(db: DB, lg: dict[str, Any], pool: list[dict[str, Any]], schedule: dict
         "dayDates": {str(k): v.isoformat() for k, v in cal.day_dates.items()},
         "proTeams": {
             str(t.id): {"abbrev": t.abbrev, "name": t.name,
-                        "games": {str(d): [o, h] for d, (o, h) in sorted(t.games.items())}}
+                        "games": {str(d): [o, h] for d, (o, h) in sorted(t.games.items())},
+                        "tips": {str(d): ms for d, ms in sorted(t.tips.items())}}
             for t in pro.values()
         },
         "acquisitions": {
