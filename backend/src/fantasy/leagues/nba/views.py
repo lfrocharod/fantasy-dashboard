@@ -104,15 +104,20 @@ class League:
             self._days["po"] = [d for mp in self.playoff_periods for d in self.period_days(mp)]
         return self._days["po"]
 
+    def tipped(self, now: datetime | None = None) -> set[int]:
+        """NBA teams whose game today has tipped off (none in the demo, whose
+        "today" is a fixed day rather than a clock)."""
+        if self.pinned:
+            return set()
+        now_ms = (now or datetime.now(UTC)).timestamp() * 1000
+        return {team for team, days in self.tips.items() if days.get(self.today, now_ms + 1) <= now_ms}
+
     def unplayed(self, now: datetime | None = None) -> dict[int, dict[int, tuple[int, bool]]]:
         """`games` less today's games that have tipped off. ESPN's live matchup
         total already counts those, so what's still to come mustn't again."""
-        if self.pinned:  # the demo's "today" is a fixed day, not a clock
-            return self.games
-        now_ms = (now or datetime.now(UTC)).timestamp() * 1000
+        gone = self.tipped(now)
         return {
-            team: {d: g for d, g in days.items()
-                   if not (d == self.today and self.tips.get(team, {}).get(d, now_ms + 1) <= now_ms)}
+            team: {d: g for d, g in days.items() if not (d == self.today and team in gone)}
             for team, days in self.games.items()
         }
 
@@ -279,15 +284,27 @@ def _moves(lg: League) -> S.NbaMoves:
                       left=None if cap is None else max(0, cap - used), waiver_note=note)
 
 
-def _today_moves(lg: League, roster: list[NbaPlayer]) -> tuple[list[NbaPlayer], list[NbaPlayer]]:
-    """(start these tonight, bench these) against the lineup ESPN has set."""
+def _today_moves(lg: League, roster: list[NbaPlayer],
+                 now: datetime | None = None) -> tuple[list[NbaPlayer], list[NbaPlayer]]:
+    """(start these tonight, bench these) against the lineup ESPN has set.
+    ESPN locks a player's slot when his game tips off: he stays where he is,
+    and the rest are arranged in the slots left."""
     if lg.today not in lg.days_left:
         return [], []
-    playing = [p for p in roster if p.slot != "IR" and A.plays(p, lg.today, lg.games)]
-    seats, _ = A.best_lineup(playing, A.game_value, lg.slots)
+    tipped = lg.tipped(now)
+    locked = {p.ext_id for p in roster
+              if p.pro_team_id in tipped and A.plays(p, lg.today, lg.games)}
+    slots = list(lg.slots)
+    for p in roster:
+        if p.ext_id in locked and p.slot in slots:
+            slots.remove(p.slot)
+    playing = [p for p in roster
+               if p.slot != "IR" and p.ext_id not in locked and A.plays(p, lg.today, lg.games)]
+    seats, _ = A.best_lineup(playing, A.game_value, slots)
     best = {s.player.ext_id for s in seats if s.player}
-    start = [p for p in roster if p.ext_id in best and p.slot in ("BE", "")]
-    bench = [p for p in roster if p.slot not in ("BE", "IR", "") and p.ext_id not in best]
+    start = [p for p in playing if p.ext_id in best and p.slot in ("BE", "")]
+    bench = [p for p in roster
+             if p.ext_id not in locked and p.slot not in ("BE", "IR", "") and p.ext_id not in best]
     return start, (bench if start else [])
 
 
