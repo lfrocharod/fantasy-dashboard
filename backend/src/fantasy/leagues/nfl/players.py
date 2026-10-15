@@ -61,6 +61,8 @@ class NflPlayer:
     fp_oe: float  # fantasy points over/under expected per game
     exp_games: int
     matchups: list[WeekOpp] = field(default_factory=list)
+    # ESPN's own projection by week (matchup-aware; 0 on a bye)
+    week_projs: dict[int, float] = field(default_factory=dict)
 
     @classmethod
     def from_row(cls, row: Any) -> NflPlayer:
@@ -108,4 +110,7 @@ class NflPlayer:
                 for m in (raw.get("matchups") or [])
                 if isinstance(m, dict)
             ],
+            week_projs={
+                int(w): _num(v) for w, v in (raw.get("weekProjs") or {}).items() if str(w).isdigit()
+            },
         )

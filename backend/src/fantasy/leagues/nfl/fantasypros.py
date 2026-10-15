@@ -32,9 +32,19 @@ def fetch(scoring: str = "ppr") -> list[dict]:  # pragma: no cover - network
 
 
 def fetch_weekly(scoring: str, week: int) -> list[dict]:  # pragma: no cover - network
-    """This week's flex expert-consensus ranks (QB/RB/WR/TE/FLEX in one list)."""
+    """This week's expert-consensus ranks for every position: the flex page
+    covers RB/WR/TE only, so the QB, K and DST pages are read too. A page that
+    fails just leaves its position without the experts' view."""
     slug = _SCORE_SLUG.get(scoring, "ppr")
-    return _scrape(f"https://www.fantasypros.com/nfl/rankings/{slug}-flex.php?week={week}")
+    rows: list[dict] = []
+    for page in (f"{slug}-flex", "qb", "k", "dst"):
+        try:
+            rows += _scrape(f"https://www.fantasypros.com/nfl/rankings/{page}.php?week={week}")
+        except (httpx.HTTPError, RuntimeError, ValueError):
+            continue
+    if not rows:
+        raise RuntimeError(f"FantasyPros: no weekly rankings for week {week}")
+    return rows
 
 
 def fetch_ros(scoring: str) -> list[dict]:  # pragma: no cover - network

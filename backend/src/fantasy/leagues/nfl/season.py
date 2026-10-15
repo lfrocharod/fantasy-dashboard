@@ -10,6 +10,7 @@ standings / my roster / current week.
 from __future__ import annotations
 
 import os
+import re
 
 import httpx
 
@@ -23,7 +24,9 @@ _BASE = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons"
 
 # NFL team id -> (pass-defence, rush-defence) generosity multipliers, mean ~1.0.
 # >1 = gives up more fantasy points than average (good to attack). Eyeballed
-# pre-season; refined by live results as the season goes (see blend_dvp).
+# pre-season and never refit: it colours the fixture grids, and adjusts a
+# week's points only when ESPN hasn't projected that week (its own
+# projections already price the opponent in).
 NFL_DEF: dict[int, tuple[float, float]] = {
     1: (1.05, 1.10), 2: (0.95, 0.92), 3: (0.90, 0.95), 4: (1.02, 1.08), 5: (1.10, 1.05),
     6: (0.98, 1.00), 7: (1.05, 1.02), 8: (1.00, 0.95), 9: (0.92, 0.90), 10: (1.08, 1.10),
@@ -137,11 +140,17 @@ def parse_standings(data: dict, seeding_rule: str = "H2H_RECORD") -> list[dict]:
     return sorted(out, key=lambda r: (-r["wins"], -r["pf"]))
 
 
-def _weekly_proj(player: dict, week: int) -> float:
+def _weekly_projs(player: dict, year: int) -> dict[int, float]:
+    """ESPN's own projection for every week of `year` it has published (0 on
+    a bye). Its stats list holds earlier seasons too, under the same week
+    numbers: without the season check, last year's week 6 stood in for this
+    year's."""
+    out: dict[int, float] = {}
     for s in player.get("stats", []) or []:
-        if s.get("scoringPeriodId") == week and s.get("statSourceId") == 1:
-            return round(_num(s.get("appliedTotal")), 1)
-    return 0.0
+        if (s.get("seasonId") == year and s.get("statSourceId") == 1
+                and s.get("statSplitTypeId") == 1 and s.get("scoringPeriodId")):
+            out[int(s["scoringPeriodId"])] = round(_num(s.get("appliedTotal")), 1)
+    return out
 
 
 def _pro_schedule(year: int, weeks: list[int]) -> dict[int, dict[str, tuple[str, bool]]]:  # pragma: no cover - network
@@ -247,38 +256,56 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
         print(f"[draft] ffopportunity expected pts skipped: {e}", flush=True)
 
     weeks_left = max(1, L["reg_weeks"] - week + 1)
-    rows: list[DraftRow] = []
+    left = range(week, L["reg_weeks"] + 1)
+    pool: list[tuple[dict, dict, str, str, float, dict[int, float], float, float]] = []
     for pe in raw_players:
         p = pe.get("player", pe)
-        pid = p.get("id")
         pos = ESPN_POS.get(p.get("defaultPositionId"), "")
-        if not pid or pos not in ("QB", "RB", "WR", "TE", "K", "DST"):
+        if not p.get("id") or pos not in ("QB", "RB", "WR", "TE", "K", "DST"):
             continue
-        name = p.get("fullName", "")
-        pro_team = p.get("proTeamId")
-        team_abbr = _PRO_ABBR.get(pro_team, "")
+        team_abbr = _PRO_ABBR.get(p.get("proTeamId"), "")
         # not on an NFL roster (proTeamId 0 / unknown) -> not a real fantasy
         # option; drop entirely. DSTs always have a team.
         if not team_abbr and pos != "DST":
             continue
-        own = p.get("ownership", {}) or {}
         season_proj = espn_nfl._season_proj(p.get("stats", []), year)
-        espn_wk = _weekly_proj(p, week)
-        wk_proj = espn_wk or round(season_proj / 17.0, 1)
-        rec_w = fp_week.get(normalise(name))
-        rec_r = fp_ros.get(normalise(name))
-        if rec_w and _num(rec_w.get("rank_ecr")):
-            wk_proj = round(0.6 * wk_proj + 0.4 * _rank_to_pts(int(_num(rec_w["rank_ecr"])), pos), 1)
-        # ROS: reconcile ESPN's season projection with the (FP-blended) weekly
-        # rate — ESPN's two numbers often disagree, and the weekly one carries
-        # the expert-consensus signal.
-        ros_from_season = season_proj * weeks_left / 17.0 if season_proj else 0.0
-        ros_from_week = wk_proj * weeks_left * 0.95  # slight taper for byes/injuries
-        ros_proj = round(max(ros_from_season, ros_from_week) if ros_from_season else ros_from_week, 1)
-        if rec_r and _num(rec_r.get("rank_ecr")):
-            ros_proj = round(
-                0.55 * ros_proj + 0.45 * _rank_to_pts(int(_num(rec_r["rank_ecr"])), pos) * weeks_left, 1
-            )
+        projs = _weekly_projs(p, year)
+        # ESPN's own projection already prices in the opponent; its season
+        # total spread over 17 games only stands in when there's none
+        espn_wk = projs[week] if week in projs else round(season_proj / 17.0, 1)
+        if all(w in projs for w in left):
+            espn_ros = sum(projs[w] for w in left)
+        else:
+            ros_from_season = season_proj * weeks_left / 17.0 if season_proj else 0.0
+            ros_from_week = espn_wk * weeks_left * 0.95  # slight taper for byes/injuries
+            espn_ros = max(ros_from_season, ros_from_week) if ros_from_season else ros_from_week
+        pool.append((pe, p, pos, team_abbr, season_proj, projs, espn_wk, round(espn_ros, 1)))
+
+    # each position's projections, best first: what the experts' ranks are worth
+    wk_by_pos: dict[str, list[float]] = {}
+    ros_by_pos: dict[str, list[float]] = {}
+    for _pe, _p, pos, _t, _s, _projs, espn_wk, espn_ros in pool:
+        wk_by_pos.setdefault(pos, []).append(espn_wk)
+        ros_by_pos.setdefault(pos, []).append(espn_ros)
+    for d in (wk_by_pos, ros_by_pos):
+        for vals in d.values():
+            vals.sort(reverse=True)
+
+    rows: list[DraftRow] = []
+    for pe, p, pos, team_abbr, season_proj, projs, espn_wk, espn_ros in pool:
+        pid = p["id"]
+        name = p.get("fullName", "")
+        pro_team = p.get("proTeamId")
+        own = p.get("ownership", {}) or {}
+        key = _fp_key(name, pos, team_abbr)
+        rec_w, rec_r = fp_week.get(key), fp_ros.get(key)
+        wk_proj, ros_proj = espn_wk, espn_ros
+        expert_wk = _rank_points(wk_by_pos, pos, _pos_rank(rec_w))
+        if expert_wk is not None:
+            wk_proj = round(0.6 * espn_wk + 0.4 * expert_wk, 1)
+        expert_ros = _rank_points(ros_by_pos, pos, _pos_rank(rec_r))
+        if expert_ros is not None:
+            ros_proj = round(0.55 * espn_ros + 0.45 * expert_ros, 1)
 
         bye = bye_by_abbr.get(team_abbr) or p.get("byeWeek") or _bye_for(pro_team)
         inj = _norm_inj(p.get("injuryStatus"))
@@ -316,6 +343,8 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
             minutes=0,
             raw={
                 "weekProj": wk_proj, "rosProj": ros_proj, "seasonProj": season_proj,
+                # ESPN's matchup-aware projections for the weeks the matchups cover
+                "weekProjs": {str(w): projs[w] for w in range(week, week + 4) if w in projs},
                 "bye": bye, "pctOwned": round(own.get("percentOwned", 0.0), 1),
                 "pctStarted": round(own.get("percentStarted", 0.0), 1),
                 "injury": inj,
@@ -347,27 +376,41 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
     return rows, meta
 
 
+_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv", "v"})
+# FantasyPros' team codes where ESPN's differ
+_FP_TEAM = {"JAC": "JAX", "WAS": "WSH"}
+
+
+def _fp_key(name: str, pos: str, team: str) -> str:
+    """How a player is matched across ESPN and FantasyPros: the name without a
+    suffix (FantasyPros' "Patrick Mahomes II" is ESPN's "Patrick Mahomes"), a
+    defence by its team ("Kansas City Chiefs" is "Chiefs D/ST")."""
+    if pos == "DST":
+        return f"dst:{_FP_TEAM.get(team, team)}"
+    return " ".join(t for t in normalise(name).split() if t not in _SUFFIXES)
+
+
 def _fp_index(rows: list[dict]) -> dict[str, dict]:
-    return {normalise(r.get("player_name", "")): r for r in rows}
+    return {
+        _fp_key(r.get("player_name", ""), r.get("player_position_id", ""),
+                r.get("player_team_id", "")): r
+        for r in rows
+    }
 
 
-def _rank_to_pts(rank: int, pos: str) -> float:
-    """Very rough weekly PPR points implied by an overall/flex ECR rank."""
-    if rank <= 3:
-        base = 22
-    elif rank <= 10:
-        base = 18
-    elif rank <= 24:
-        base = 15
-    elif rank <= 40:
-        base = 12
-    elif rank <= 60:
-        base = 9
-    elif rank <= 100:
-        base = 6.5
-    else:
-        base = 4
-    return base * ({"QB": 1.15, "TE": 0.85, "K": 0.5, "DST": 0.5}.get(pos, 1.0))
+def _pos_rank(rec: dict | None) -> int | None:
+    """FantasyPros' rank within the position: "QB2" -> 2."""
+    m = re.fullmatch(r"[A-Z]+(\d+)", str((rec or {}).get("pos_rank") or ""))
+    return int(m.group(1)) if m else None
+
+
+def _rank_points(by_pos: dict[str, list[float]], pos: str, rank: int | None) -> float | None:
+    """An expert rank in points: the k-th ranked player at a position is worth
+    the k-th best projection there (`by_pos`: each position's, best first).
+    Ranks within a position, not overall, where a QB's rank says more about
+    draft scarcity than about points."""
+    vals = by_pos.get(pos) or []
+    return vals[rank - 1] if rank and rank <= len(vals) else None
 
 
 def _vor(rows: list[DraftRow], slots: dict[str, int], teams: int) -> None:

@@ -1,8 +1,16 @@
+from types import SimpleNamespace
+
 from fantasy.leagues.draft.types import DraftRow
+from fantasy.leagues.nfl import analysis as A
+from fantasy.leagues.nfl.players import NflPlayer
 from fantasy.leagues.nfl.season import (
+    _fp_index,
+    _fp_key,
     _matchup_rating,
-    _rank_to_pts,
+    _pos_rank,
+    _rank_points,
     _vor,
+    _weekly_projs,
     parse_league,
     parse_standings,
 )
@@ -52,9 +60,52 @@ def test_matchup_rating_easy_vs_generous_defence():
     assert 1 <= fdr_easy <= fdr_hard <= 5
 
 
-def test_rank_to_pts_monotonic_and_qb_bonus():
-    assert _rank_to_pts(1, "RB") > _rank_to_pts(50, "RB") > _rank_to_pts(150, "RB")
-    assert _rank_to_pts(5, "QB") > _rank_to_pts(5, "RB")
+def test_weekly_projections_are_this_seasons():
+    """ESPN lists last season's weeks under the same numbers: a QB who sat out
+    last year's week 6 still has this year's projection for it."""
+    stats = [
+        {"seasonId": 2025, "statSourceId": 1, "statSplitTypeId": 1, "scoringPeriodId": 6, "appliedTotal": 0},
+        {"seasonId": 2026, "statSourceId": 1, "statSplitTypeId": 1, "scoringPeriodId": 6, "appliedTotal": 21.4},
+        {"seasonId": 2026, "statSourceId": 0, "statSplitTypeId": 1, "scoringPeriodId": 5, "appliedTotal": 16.2},
+        {"seasonId": 2026, "statSourceId": 1, "statSplitTypeId": 0, "scoringPeriodId": 0, "appliedTotal": 241.7},
+    ]
+    assert _weekly_projs({"stats": stats}, 2026) == {6: 21.4}
+
+
+def test_fantasypros_names_match_espns():
+    rows = [
+        {"player_name": "Patrick Mahomes II", "player_position_id": "QB", "player_team_id": "KC"},
+        {"player_name": "Washington Commanders", "player_position_id": "DST", "player_team_id": "WAS"},
+    ]
+    idx = _fp_index(rows)
+    assert _fp_key("Patrick Mahomes", "QB", "KC") in idx
+    assert _fp_key("Commanders D/ST", "DST", "WSH") in idx
+
+
+def test_expert_ranks_are_priced_within_the_position():
+    by_pos = {"QB": [25.1, 22.6, 21.4, 19.9]}
+    assert _pos_rank({"pos_rank": "QB2"}) == 2 and _pos_rank({"pos_rank": ""}) is None
+    assert _rank_points(by_pos, "QB", 2) == 22.6
+    assert _rank_points(by_pos, "QB", 9) is None and _rank_points(by_pos, "RB", 1) is None
+
+
+def _qb(week_projs: dict[str, float] | None) -> NflPlayer:
+    raw = {"weekProj": 21.4, "rosProj": 180.0, "matchups": [
+        {"week": 6, "opp": "WSH", "home": True, "fdr": 5},
+        {"week": 7, "opp": "LAR", "home": False, "fdr": 1},
+    ]}
+    if week_projs is not None:
+        raw["weekProjs"] = week_projs
+    return NflPlayer.from_row(SimpleNamespace(
+        ext_id="1", name="QB", team="SF", primary_pos="QB", proj_points=21.4, vbd=0,
+        ecr_rank=None, ecr_tier=None, raw=raw))
+
+
+def test_espns_weekly_projection_is_not_nudged_again_for_the_matchup():
+    qb = _qb({"6": 21.4, "7": 19.6})
+    assert A.week_points(qb, 0) == 21.4 and A.week_points(qb, 1) == 19.6
+    # without ESPN's weekly numbers the static matchup table still adjusts
+    assert A.week_points(_qb(None), 0) == 21.4 * (1 + (3 - 5) * 0.05)
 
 
 def test_vor_replacement_by_position():
