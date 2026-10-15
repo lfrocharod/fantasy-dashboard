@@ -1970,6 +1970,8 @@ export interface components {
              * @default 0
              */
             benchOrder: number;
+            /** Confirmed */
+            confirmed: ("start" | "bench") | null;
             /**
              * Dnp
              * @default false

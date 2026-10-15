@@ -1,136 +1,86 @@
-"""Confirmed starting XIs for the upcoming matchday, from Sofascore.
+"""Confirmed starting XIs for the matchday, from UEFA's own match centre.
 
-Sofascore publishes a predicted lineup days out and flips it to
-`confirmed: true` ~an hour before kick-off. Once confirmed it's ground truth —
-the projection model should defer to it completely (a nailed 95%-start player
-who's on the bench is a 0, not a 0.95).
+uefa.com publishes each side's starting XI and bench about an hour before
+kick-off, under the same match and player ids UEFA Fantasy uses, so nothing
+has to be matched by name. Once a lineup is out it's ground truth: the
+projection model defers to it completely (a nailed 95%-start player who's on
+the bench is a 0, not a 0.95).
 
 `fetch_confirmed_xi` returns `{uefa_player_id: "start" | "bench"}` for every
-player named in a *confirmed* lineup for the given fixtures. Players in matches
-without a confirmed lineup yet are simply absent (the model keeps its own
-number for them).
+player named in a published lineup. Players in matches whose lineups aren't
+out yet are simply absent (the model keeps its own number for them).
+
+(This used Sofascore, matched by name, until Sofascore started refusing the
+app outright.)
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
+from typing import Any
 
-from fantasy.leagues.ucl.model.club_strength import SS_TEAM_ID
-from fantasy.leagues.ucl.sources.recent_form import normalise
-from fantasy.leagues.ucl.sources.sofascore import SofaClient, SofaError
+import httpx
 
-_UCL_UT_ID = 7  # Sofascore uniqueTournament id for the Champions League
+MATCH_API = "https://match.uefa.com/v5/matches"
+_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0 Safari/537.36"
+# `lineupStatus` before a team sheet is out; anything else names the real XI
+_NOT_OUT = frozenset({"", "NOT_AVAILABLE"})
 
 
-def _pick_event(events: list[dict], opp_ss_id: int, kickoff: datetime | None) -> dict | None:
-    """The Sofascore event that is this fixture: same opponent, near the same
-    date, Champions League where the field is present."""
-    ko_ts = kickoff.timestamp() if kickoff else None
-    for e in events:
-        ht = (e.get("homeTeam") or {}).get("id")
-        at = (e.get("awayTeam") or {}).get("id")
-        if opp_ss_id not in (ht, at):
+def parse_lineups(data: dict[str, Any]) -> dict[int, str]:
+    """{player id: "start" | "bench"} from one match's lineups payload, or {}
+    while the team sheets aren't out. A side without a full XI is skipped."""
+    if str(data.get("lineupStatus") or "") in _NOT_OUT:
+        return {}
+    out: dict[int, str] = {}
+    for side in ("homeTeam", "awayTeam"):
+        team = data.get(side) or {}
+        field = team.get("field") or []
+        if len(field) < 11:
             continue
-        ut = ((e.get("tournament") or {}).get("uniqueTournament") or {}).get("id")
-        if ut and ut != _UCL_UT_ID:
-            continue
-        if ko_ts is not None:
-            ts = e.get("startTimestamp") or 0
-            if abs(ts - ko_ts) > 3 * 86400:
-                continue
-        return e
-    return None
-
-
-def _index_players(players, team_id: int) -> dict:
-    exact: dict[str, object] = {}
-    sur: dict[str, list] = {}
-    for p in players:
-        if p.team_id != team_id:
-            continue
-        nn = normalise(p.name)
-        exact[nn] = p
-        toks = nn.split()
-        if toks:
-            sur.setdefault(toks[-1], []).append(p)
-    return {"exact": exact, "sur": sur}
-
-
-def _resolve(idx: dict, ss_name: str):
-    nn = normalise(ss_name)
-    if not nn:
-        return None
-    hit = idx["exact"].get(nn)
-    if hit is not None:
-        return hit
-    toks = nn.split()
-    cands = idx["sur"].get(toks[-1] if toks else nn, [])
-    if len(cands) == 1:
-        return cands[0]
-    # surname shared: try to disambiguate on a first-initial / first-name token
-    if toks and len(cands) > 1:
-        for c in cands:
-            ct = normalise(c.name).split()
-            if ct and toks[0] and (ct[0] == toks[0] or ct[0][0] == toks[0][0]):
-                return c
-    return None
+        for rows, role in ((field, "start"), (team.get("bench") or [], "bench")):
+            for row in rows:
+                pid = str((row.get("player") or {}).get("id") or "")
+                if pid.isdigit():
+                    out[int(pid)] = role
+    return out
 
 
 def fetch_confirmed_xi(
-    fixtures,
-    players,
-    team_names: dict[int, str],
+    fixtures: Iterable[Any],
     *,
-    only_confirmed: bool = True,
-    delay: float = 0.4,
-    log=print,
-) -> dict[int, str]:  # pragma: no cover - network
-    """`fixtures`: the upcoming matchday's Fixture rows. Returns
-    {uefa_player_id: "start"|"bench"} for players in confirmed lineups."""
-    client = SofaClient(delay=delay, ttl_hours=2.0)
-    idx_by_team: dict[int, dict] = {}
-
+    client: httpx.Client | None = None,
+    log: Callable[[str], None] = print,
+) -> dict[int, str]:
+    """`fixtures`: the matchday's Fixture rows still to finish (their
+    `uefa_match_id` is uefa.com's match id)."""
+    c = client or httpx.Client(headers={"User-Agent": _UA}, timeout=20, follow_redirects=True)
     out: dict[int, str] = {}
-    n_conf = 0
-    for fx in fixtures:
-        h_ss = SS_TEAM_ID.get(fx.home_team_id)
-        a_ss = SS_TEAM_ID.get(fx.away_team_id)
-        if not h_ss or not a_ss:
-            continue
-        try:
-            events = client.team_events_next(h_ss) + client.team_events_last(h_ss)
-        except SofaError as e:
-            log(f"  confirmed XI: events for {team_names.get(fx.home_team_id, h_ss)} failed ({e})")
-            continue
-        ev = _pick_event(events, a_ss, fx.kickoff)
-        if not ev or not ev.get("id"):
-            continue
-        try:
-            lu = client.event_lineups(int(ev["id"]), fresh=True)
-        except SofaError as e:
-            log(f"  confirmed XI: lineups {ev['id']} failed ({e})")
-            continue
-        if not lu:
-            continue
-        if only_confirmed and not lu.get("confirmed"):
-            continue
-        n_conf += 1
-        for side, tid in (("home", fx.home_team_id), ("away", fx.away_team_id)):
-            idx = idx_by_team.get(tid) or idx_by_team.setdefault(tid, _index_players(players, tid))
-            for row in (lu.get(side) or {}).get("players", []):
-                p = _resolve(idx, (row.get("player") or {}).get("name") or "")
-                if p is None:
-                    continue
-                out[p.uefa_player_id] = "bench" if row.get("substitute") else "start"
-
+    published = 0
+    try:
+        for f in fixtures:
+            try:
+                r = c.get(f"{MATCH_API}/{f.uefa_match_id}/lineups")
+                r.raise_for_status()
+                got = parse_lineups(r.json())
+            except (httpx.HTTPError, ValueError) as e:
+                log(f"  confirmed XI: match {f.uefa_match_id} unavailable ({type(e).__name__})")
+                continue
+            if got:
+                published += 1
+                out.update(got)
+    finally:
+        if client is None:
+            c.close()
     starters = sum(1 for v in out.values() if v == "start")
-    log(f"  confirmed XI: {n_conf} confirmed lineup(s) — {starters} starters, "
-        f"{len(out) - starters} benched")
+    log(f"  confirmed XI: {published} lineup(s) out — {starters} starters, "
+        f"{len(out) - starters} on the bench")
     return out
 
 
 def within_matchday_window(fixtures, *, hours_before: float = 26.0, hours_after: float = 3.5) -> bool:
-    """Only worth the ~40 Sofascore calls when a fixture is imminent or live."""
+    """Only worth asking while a fixture is imminent or live."""
     now = datetime.now(UTC)
     for f in fixtures:
         ko = f.kickoff

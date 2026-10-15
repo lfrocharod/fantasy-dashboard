@@ -254,6 +254,13 @@ export function LiveMatchday({
                     )}{" "}
                     {r.effRole === "auto-in" && <Pill tone="good">auto-sub in</Pill>}
                     {r.effRole === "auto-out" && <Pill tone="bad">auto-sub out</Pill>}
+                    {r.confirmed && r.matchState !== "live" && r.matchState !== "finished" && (
+                      <span title="from the club's published team sheet">
+                        <Pill tone={r.confirmed === "start" ? "good" : "bad"}>
+                          {r.confirmed === "start" ? "in the XI" : "benched"}
+                        </Pill>
+                      </span>
+                    )}
                     <span className="ml-1 text-xs text-[var(--muted)]">{r.opp ? `${r.home ? "v" : "@"} ${r.opp}` : ""}</span>
                   </td>
                   <td>

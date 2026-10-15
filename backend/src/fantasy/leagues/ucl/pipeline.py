@@ -176,10 +176,12 @@ def run(args: argparse.Namespace) -> int:
                 try:
                     # Sofascore per-league season xG — covers EVERY CL player,
                     # not just the big-5 that Understat sees. Overwrites the
-                    # `combined` player_stats rows _sources wrote.
-                    ss_stats = _season_xg_source(db, env, players, teams, args.dry_run)
-                    if ss_stats:
-                        stats = {**stats, **ss_stats}
+                    # `combined` player_stats rows _sources wrote. Opt-in: it
+                    # refuses this app's requests (2026-10).
+                    if _sofascore_on(env):
+                        ss_stats = _season_xg_source(db, env, players, teams, args.dry_run)
+                        if ss_stats:
+                            stats = {**stats, **ss_stats}
                 except Exception as e:  # noqa: BLE001
                     notes.append(f"season xG source failed: {e}")
                     _log(notes[-1])
@@ -196,13 +198,13 @@ def run(args: argparse.Namespace) -> int:
                 form_by_id = db.load_player_form()
 
             # ---- 3b. confirmed XIs (matchday only) ------------
-            # Once Sofascore marks a lineup `confirmed` (~1h pre-KO) it's ground
-            # truth and overrides the model. Cheap (~40 calls) and only fires in
-            # the matchday window, so it's safe to run even on --fast.
+            # UEFA publishes the team sheets ~1h before each kickoff; they're
+            # ground truth and override the model. One call per match, only in
+            # the matchday window, so even the 5-minute --live run asks.
             confirmed_xi: dict[int, str] = {}
-            if not args.dry_run and not getattr(args, "live", False):
+            if not args.dry_run:
                 try:
-                    confirmed_xi = _confirmed_xi(players, teams, fixtures, matchday)
+                    confirmed_xi = _confirmed_xi(fixtures, matchday)
                 except Exception as e:  # noqa: BLE001
                     notes.append(f"confirmed XI unavailable ({type(e).__name__})")
                     _log(notes[-1])
@@ -259,12 +261,15 @@ def run(args: argparse.Namespace) -> int:
                 f.status in ("live", "finished") for f in fixtures if f.matchday == matchday
             )
             proj_by_md: dict[int, list] = {}
+            reprojected: list = []  # this run's, for a frozen matchday's later team sheets
             for md in plan_mds:
                 pr = _build_projections(
                     players, teams, fixtures, stats, md, params, form_by_id,
                     confirmed_xi if md == matchday else None,
                 )
                 proj_by_md[md] = pr
+                if md == matchday:
+                    reprojected = pr
                 if args.dry_run:
                     continue
                 if md == matchday and md_live_now and db.has_projections(md):
@@ -306,6 +311,7 @@ def run(args: argparse.Namespace) -> int:
                     db, args, client, players, teams, fixtures,
                     proj_by_md.get(matchday, []), picks, matchday,
                     cfg.get(Keys.LEAGUE_ID), cfg.get(Keys.ENTRY_ID), notes,
+                    confirmed=confirmed_xi, reprojected=reprojected,
                 )
             except Exception as e:  # noqa: BLE001
                 notes.append(f"live stage skipped: {e}")
@@ -466,10 +472,12 @@ def _recent_played_md(fixtures, current_md: int, grace_hours: float = 54.0) -> i
 
 
 def _live_stage(db, args, client, players, teams, fixtures, projections, picks, matchday,
-                league_id, my_entry_id, notes) -> None:
+                league_id, my_entry_id, notes, *, confirmed=None, reprojected=None) -> None:
     """Section 7: archive per-player actuals, build the live-state + live-rival
     blobs, snapshot history, and (opt-in) push an alert. No-op until a matchday
-    game is live/finished; clears the blobs once the matchday is upcoming again."""
+    game is live/finished; clears the blobs once the matchday is upcoming again.
+    `confirmed` / `reprojected`: the current matchday's published team sheets and
+    this run's projections that know them (see build_live_state)."""
     from fantasy.leagues.ucl.model.live import build_live_rivals, build_live_state
 
     dry = args.dry_run
@@ -537,7 +545,10 @@ def _live_stage(db, args, client, players, teams, fixtures, projections, picks, 
         live_picks = db.load_my_squad(matchday) if not dry else []
     else:
         live_picks = picks or (db.load_my_squad(matchday) if not dry else [])
-    live = build_live_state(players, teams, fixtures, projections, live_picks, matchday)
+    live = build_live_state(
+        players, teams, fixtures, projections, live_picks, matchday,
+        confirmed=None if replay else confirmed, reprojected=None if replay else reprojected,
+    )
     if live:
         _log(
             f"live: MD{matchday} {live['state']} — {live['securedPoints']} secured, "
@@ -829,17 +840,16 @@ def _fixture_context(db, teams, matchday: int) -> dict[int, tuple[str, bool, int
     return out
 
 
-def _confirmed_xi(players, teams, fixtures, matchday: int) -> dict[int, str]:
-    """{uefa_player_id: "start"|"bench"} from Sofascore's confirmed lineups for
-    the upcoming matchday. Empty outside the matchday window or if nothing is
-    confirmed yet."""
+def _confirmed_xi(fixtures, matchday: int) -> dict[int, str]:
+    """{uefa_player_id: "start"|"bench"} from UEFA's published team sheets for
+    the matchday's unfinished games. Empty outside the matchday window or
+    before any is out."""
     from fantasy.leagues.ucl.sources.confirmed_xi import fetch_confirmed_xi, within_matchday_window
 
     md_fx = [f for f in fixtures if f.matchday == matchday and f.status != "finished"]
     if not md_fx or not within_matchday_window(md_fx):
         return {}
-    team_names = {tid: t.name for tid, t in teams.items()}
-    got = fetch_confirmed_xi(md_fx, players, team_names, log=_log)
+    got = fetch_confirmed_xi(md_fx, log=_log)
     if got:
         _log(f"confirmed XI: applied to {len(got)} players for MD{matchday}")
     return got
@@ -874,18 +884,21 @@ def _build_projections(players, teams, fixtures, stats, matchday, params, form_b
     return out
 
 
-def _form_source(db, env: Env, players, teams, dry):
-    """Recent-form for every CL player. The *recent window* is the player's last
-    N matches **across all competitions** (Champions League + domestic league +
-    domestic cups + super cups) — so it always reflects what a manager just saw,
-    not a stale domestic-only slice.
+def _sofascore_on(env: Env) -> bool:
+    """Sofascore is opt-in (RECENT_FORM_SOURCE=sofascore|both): since 2026-10
+    it refuses this app's requests, and a full run spent ~13 minutes on them."""
+    return (env.recent_form_source or "").lower() in ("sofascore", "both")
 
-      1. Sofascore — last-N-overall match logs (minutes / xG / xA / goals /
-         rating / role), for *every* CL club, slow-paced with a circuit breaker.
-         This is the authoritative recent-window source.
-      2. Understat — domestic match logs, big-5 only. Optional depth layer
-         (RECENT_FORM_SOURCE=both); Sofascore rows win per player because they
-         carry the cup + CL games Understat can't see.
+
+def _form_source(db, env: Env, players, teams, dry):
+    """Recent form: each player's last N matches.
+
+      1. Understat — domestic match logs (minutes / xG / xA / goals / role) for
+         the big-five leagues. The default (RECENT_FORM_SOURCE=understat).
+      2. Sofascore — last-N across all competitions, for every CL club, with
+         a circuit breaker. Opt-in (RECENT_FORM_SOURCE=sofascore|both); its
+         rows win per player because they carry the cup and CL games
+         Understat can't see.
       3. Whatever is already stored in `player_form` (merged downstream) so a
          time-boxed run only ever *adds* coverage.
 
@@ -896,7 +909,7 @@ def _form_source(db, env: Env, players, teams, dry):
     team_names = {tid: t.name for tid, t in teams.items()}
     n = env.recent_form_lookback
     leagues = [x.strip() for x in env.source_leagues.split(",") if x.strip()]
-    src = (env.recent_form_source or "sofascore").lower()
+    src = (env.recent_form_source or "understat").lower()
     try:
         overrides = json.loads(db.get_settings(["ucl.role_overrides"]).get("ucl.role_overrides") or "{}")
     except (ValueError, TypeError):
@@ -905,19 +918,19 @@ def _form_source(db, env: Env, players, teams, dry):
     us_rows: list = []
     ss_rows: list = []
 
-    # ---- 1. Understat (big-5 domestic) — optional depth layer -------------
+    # ---- 1. Understat (big-5 domestic) — the default ----------------------
     if src in ("both", "understat", "understat_only"):
         try:
             from fantasy.leagues.ucl.sources.understat_form import fetch_form_rows as fetch_us
 
-            _log(f"form: Understat (domestic depth), last {n}, season {env.fbref_season}")
+            _log(f"form: Understat (big-five leagues), last {n}, season {env.fbref_season}")
             us_rows = fetch_us(leagues, env.fbref_season, last_n=n)
             _log(f"  Understat: {len(us_rows)} player logs")
         except Exception as e:  # noqa: BLE001
             _log(f"  Understat unavailable ({type(e).__name__}: {e})")
 
-    # ---- 2. Sofascore — last-N-overall, EVERY CL club --------------------
-    if src != "understat_only":
+    # ---- 2. Sofascore — last-N-overall, EVERY CL club (opt-in) -----------
+    if _sofascore_on(env):
         try:
             from fantasy.leagues.ucl.sources.recent_form import fetch_form_rows as fetch_ss
 

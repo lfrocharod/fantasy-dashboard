@@ -240,3 +240,27 @@ def test_live_rivals_ranks_by_projection_and_uses_my_live_row():
     assert mine["projected"] == 77.0                 # taken from my_live, not recomputed
     assert out["rows"][0]["mine"]                     # sorted desc by projection -> I'm on top
     assert all("liveGapVsMe" in r for r in out["rows"])
+
+
+def test_a_published_team_sheet_revalues_a_player_still_to_play():
+    """Projections freeze at the first kickoff; a later team sheet benching
+    a day-2 starter still reaches the live advice through the re-projection."""
+    players = _squad_players()
+    for p in players:
+        if p.team_id <= 4:
+            p.live_points, p.live_played = 2, True
+    fwd5 = next(p for p in players if p.team_id == 5 and p.position == "FWD")
+    bench_fwd = next(p for p in players if p.team_id == 6 and p.position == "FWD")
+    fresh = _proj(players, xpts=4.0)
+    for pr in fresh:
+        if pr.player_id == fwd5.uefa_player_id:
+            pr.xpts = 0.4  # confirmed on the bench
+    out = build_live_state(players, TEAMS, _fx("finished", "finished", "upcoming"),
+                           _proj(players, xpts=4.0), _picks(players), 1,
+                           confirmed={fwd5.uefa_player_id: "bench",
+                                      bench_fwd.uefa_player_id: "start"},
+                           reprojected=fresh)
+    row = next(r for r in out["squad"] if r["playerId"] == fwd5.uefa_player_id)
+    assert row["confirmed"] == "bench" and row["xpts"] == 0.4
+    assert out["preMatchProjection"] == 11 * 4.0 + 4.0  # still the frozen numbers
+    assert [s["outName"] for s in out["manualSubs"]] == [fwd5.name]

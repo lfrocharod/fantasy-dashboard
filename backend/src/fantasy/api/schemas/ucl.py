@@ -224,6 +224,8 @@ class LiveSquadRow(Schema):
     bench_order: int = 0
     dnp: bool = False
     eff_role: str = "start"  # start | bench | auto-in | auto-out
+    # the club's published team sheet, once it's out: in the XI or on the bench
+    confirmed: Literal["start", "bench"] | None = None
 
 
 class LiveSub(Schema):
