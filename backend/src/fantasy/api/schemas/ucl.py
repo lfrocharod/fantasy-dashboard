@@ -287,6 +287,11 @@ class LiveState(Schema):
     bench_slots: int = 0
     in_play_open: bool = True  # false on a single-slot matchday: no subs, no armband move
     max_manual_subs: int = 0
+    # UEFA's own: subs made in play this matchday, which (as does moving the
+    # armband) switch its automatic subs off; its result once it has scored it
+    in_play_subs: int = 0
+    auto_subs_off: bool = False
+    official: float | None = None
     fixtures: list[LiveFixture] = []
     squad: list[LiveSquadRow] = []
     auto_subs: list[LiveSub] = []
@@ -305,6 +310,7 @@ class LiveRivalRow(Schema):
     projected: float = 0.0
     played: int = 0
     live_gap_vs_me: float | None = None
+    official: bool = False  # UEFA's own points for the settled matchday
 
 
 class LiveRivals(Schema):

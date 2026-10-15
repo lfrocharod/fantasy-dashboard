@@ -95,6 +95,28 @@ class SquadPick:
     purchase_price: float = 0.0
     # live: has this pick featured in the matchday yet (UEFA `isplayed`)
     is_played: bool = False
+    # UEFA's own matchday points for the pick, the captain's already doubled
+    # (`overallpoints`); only final once the team's matchday score is
+    points: float | None = None
+    # in-play changes UEFA records (`autosubflag`): subbed into the XI (1) or
+    # out of it (2) between match days, 0 untouched
+    sub_flag: int = 0
+    # the armband moved this matchday (`capchgflag`): off this pick (1), onto it (2)
+    cap_flag: int = 0
+
+
+@dataclass(slots=True)
+class TeamSheet:
+    """UEFA's own account of a fantasy team's matchday, from the squad payload."""
+
+    points: float | None = None  # `gdPoints`: the official score, once UEFA has scored it
+    in_play_subs: int = 0  # `mdSubstitutions`: subs made between match days (max 4)
+    captain_moved: bool = False  # the armband moved mid-matchday
+
+    @property
+    def changed(self) -> bool:
+        """A manual change this matchday: UEFA then makes no automatic subs."""
+        return self.in_play_subs > 0 or self.captain_moved
 
 
 @dataclass(slots=True)

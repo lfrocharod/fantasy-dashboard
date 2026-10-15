@@ -1,7 +1,15 @@
 from datetime import UTC, datetime
 
 from fantasy.leagues.ucl.model.live import build_live_rivals, build_live_state
-from fantasy.leagues.ucl.types import Fixture, LeagueEntry, Player, Projection, SquadPick, Team
+from fantasy.leagues.ucl.types import (
+    Fixture,
+    LeagueEntry,
+    Player,
+    Projection,
+    SquadPick,
+    Team,
+    TeamSheet,
+)
 
 # 6 clubs: 1&2 play "day 1" (finished), 3&4 "day 1" (finished), 5&6 "day 2" (upcoming)
 TEAMS = {i: Team(uefa_team_id=i, name=f"C{i}", code=f"C{i}") for i in range(1, 7)}
@@ -264,3 +272,93 @@ def test_a_published_team_sheet_revalues_a_player_still_to_play():
     assert row["confirmed"] == "bench" and row["xpts"] == 0.4
     assert out["preMatchProjection"] == 11 * 4.0 + 4.0  # still the frozen numbers
     assert [s["outName"] for s in out["manualSubs"]] == [fwd5.name]
+
+
+# ---- UEFA's in-play rules --------------------------------------------------------------
+
+
+def _day_one_done(dnp_index: int):
+    """Clubs 1-4 have played (2 points each), 5-6 are still to play; one
+    starter at a club that played never featured."""
+    players = _squad_players()
+    for p in players:
+        if p.team_id <= 4:
+            p.live_points, p.live_played = 2, True
+    players[dnp_index].live_points, players[dnp_index].live_played = 0, False
+    return players
+
+
+def test_no_auto_subs_once_the_team_was_changed_in_play():
+    players = _day_one_done(1)  # a club-1 defender
+    fx = _fx("finished", "finished", "upcoming")
+    untouched = build_live_state(players, TEAMS, fx, _proj(players), _picks(players), 1)
+    assert [s["outName"] for s in untouched["autoSubs"]] == [players[1].name]
+    changed = build_live_state(players, TEAMS, fx, _proj(players), _picks(players), 1,
+                               sheet=TeamSheet(in_play_subs=1))
+    assert changed["autoSubs"] == [] and changed["autoSubsOff"] and changed["inPlaySubs"] == 1
+    assert changed["projectedFinish"] < untouched["projectedFinish"]  # the defender stays on 0
+
+
+def test_a_manual_sub_has_to_beat_the_auto_sub_it_switches_off():
+    """The defender's auto-sub brings in a bench defender who already scored 2;
+    any manual change gives those up, so a +2.5 sub isn't worth making."""
+    players = _day_one_done(1)
+    fx = _fx("finished", "finished", "upcoming")
+    proj = _proj(players, xpts=4.0)
+    bench_fwd = next(pr for pr in proj if pr.player_id == players[14].uefa_player_id)
+    bench_fwd.xpts = 6.5  # +2.5 over the club-5 forward still to play
+    out = build_live_state(players, TEAMS, fx, proj, _picks(players), 1)
+    assert out["manualSubs"] == []
+    bench_fwd.xpts = 8.0  # +4.0: worth it even net of the 2
+    out = build_live_state(players, TEAMS, fx, proj, _picks(players), 1)
+    assert [(s["outName"], s["inName"]) for s in out["manualSubs"]] == [(players[10].name, players[14].name)]
+
+
+def test_an_auto_sub_that_can_be_redone_by_hand_is_listed_first():
+    players = _day_one_done(4)  # a club-1 midfielder
+    players[11].live_points = players[12].live_points = 0  # the bench GK and DEF didn't play
+    players[11].live_played = players[12].live_played = False
+    fx = _fx("finished", "finished", "upcoming")
+    proj = _proj(players, xpts=4.0)
+    next(pr for pr in proj if pr.player_id == players[14].uefa_player_id).xpts = 8.0
+    out = build_live_state(players, TEAMS, fx, proj, _picks(players), 1)
+    redo, sub = out["manualSubs"]
+    assert (redo["outName"], redo["inName"]) == (players[4].name, players[13].name)
+    assert "auto-sub" in redo["reason"]
+    assert (sub["outName"], sub["inName"]) == (players[10].name, players[14].name)
+
+
+def test_uefas_settled_result_stands_in_for_the_live_one():
+    players = _squad_players()
+    for p in players:
+        p.live_points, p.live_played = 2, True
+    picks = _picks(players)
+    for pk in picks:
+        pk.points = 4.0 if pk.is_captain else 2.0  # UEFA doubles the captain itself
+    picks[0].points = 5.0  # a Player of the Match bonus the live feed never had
+    out = build_live_state(players, TEAMS, _fx("finished", "finished", "finished"),
+                           _proj(players), picks, 1, sheet=TeamSheet(points=27.0))
+    assert out["official"] == out["securedPoints"] == out["projectedFinish"] == 27.0
+    rows = {r["playerId"]: r for r in out["squad"]}
+    assert rows[picks[0].player_id]["actual"] == 5.0
+    assert rows[picks[8].player_id]["actual"] == 2.0  # the captain: the page doubles it
+
+
+def test_rivals_get_auto_subs_and_no_double_for_a_captain_out_of_the_xi():
+    players = _squad_players()
+    scores = {p.uefa_player_id: (2, True, True) for p in players}
+    dnp = players[8].uefa_player_id  # their captain, a club-1 forward, never featured
+    scores[dnp] = (0, False, True)
+    squad = [{"id": p.uefa_player_id, "c": i == 8, "s": i < 11, "b": 0 if i < 11 else i - 10}
+             for i, p in enumerate(players)]
+    rival = LeagueEntry(entry_id="r1", manager_name="Rival", team_name="R", matchday=1,
+                        points=0, total_points=0, rank=2, squad=squad)
+    out = build_live_rivals([rival], "me", players, TEAMS, _proj(players), scores, 1)
+    row = out["rows"][0]
+    # ten starters on 2, plus the first bench player who keeps the formation
+    # legal (a defender) on for him, and no captain double
+    assert row["secured"] == 22.0 and not row["official"]
+    settled_squad = [{**x, "p": 3.0} for x in squad]
+    rival.squad = settled_squad
+    out = build_live_rivals([rival], "me", players, TEAMS, _proj(players), scores, 1, settled=True)
+    assert out["rows"][0]["secured"] == 33.0 and out["rows"][0]["official"]

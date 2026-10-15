@@ -48,7 +48,7 @@ export function LiveRivalTable({ rivals }: { rivals: Api["LiveRivals"] }) {
             <th>Manager</th>
             <th className="num">Played</th>
             {final ? (
-              <th className="num">Points</th>
+              <th className="num">{rivals.rows.every((r) => r.official) ? "Points (UEFA)" : "Points"}</th>
             ) : (
               <>
                 <th className="num">Secured</th>
@@ -124,7 +124,11 @@ export function LiveMatchday({
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {final ? (
           <>
-            <StatCard label="Final score" value={fmt(live.securedPoints, 0)} sub="incl. captain and auto-subs" />
+            <StatCard
+              label="Final score"
+              value={fmt(live.securedPoints, 0)}
+              sub={live.official != null ? "UEFA's official score" : "incl. captain and auto-subs"}
+            />
             <StatCard
               label="vs pre-match"
               value={signed(delta, 0)}
@@ -197,6 +201,19 @@ export function LiveMatchday({
               {s.reason ? ` — ${s.reason}` : ""}
             </div>
           ))}
+          {live.autoSubs.length > 0 && !final && (
+            <div className="text-xs text-[var(--muted)]">
+              UEFA only makes auto-subs if you make no manual change (a sub or a new captain) this matchday.
+            </div>
+          )}
+        </div>
+      )}
+
+      {live.autoSubsOff && !final && (
+        <div className="card p-3 text-sm text-[var(--muted)]">
+          You've changed your team in play
+          {live.inPlaySubs > 0 ? ` (${live.inPlaySubs} of ${live.maxManualSubs} subs used)` : " (a new captain)"}, so
+          UEFA won't make any automatic subs this matchday: a starter who doesn't play scores 0.
         </div>
       )}
 
@@ -221,6 +238,7 @@ export function LiveMatchday({
               <Pill tone="warn">SUB {i + 1}</Pill> out {s.outName} ({s.outPos},{" "}
               {s.outActual != null ? `${fmt(s.outActual, 0)} pts` : `proj ${fmt(s.outXpts, 1)}`}) → in <b>{s.inName}</b> (
               {s.inPos}, proj {fmt(s.inXpts, 1)}) <span className="text-[var(--good)]">+{fmt(s.gain, 1)}</span>
+              {s.reason && <span className="text-[var(--muted)]"> — {s.reason}</span>}
             </div>
           ))}
         </div>

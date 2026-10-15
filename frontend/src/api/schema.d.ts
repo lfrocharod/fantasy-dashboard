@@ -1886,6 +1886,11 @@ export interface components {
              */
             mine: boolean;
             /**
+             * Official
+             * @default false
+             */
+            official: boolean;
+            /**
              * Played
              * @default 0
              */
@@ -2042,6 +2047,11 @@ export interface components {
              */
             autoSubs: components["schemas"]["LiveSub"][];
             /**
+             * Autosubsoff
+             * @default false
+             */
+            autoSubsOff: boolean;
+            /**
              * Benchslots
              * @default 0
              */
@@ -2063,6 +2073,11 @@ export interface components {
              */
             inPlayOpen: boolean;
             /**
+             * Inplaysubs
+             * @default 0
+             */
+            inPlaySubs: number;
+            /**
              * Manualsubs
              * @default []
              */
@@ -2074,6 +2089,8 @@ export interface components {
              * @default 0
              */
             maxManualSubs: number;
+            /** Official */
+            official: number | null;
             /**
              * Played
              * @default 0
