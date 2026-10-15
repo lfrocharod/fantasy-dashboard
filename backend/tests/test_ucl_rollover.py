@@ -172,3 +172,12 @@ def test_the_matchday_graph_ends_at_the_final_whistle(migrated_db: str) -> None:
         points = views.live_history(s, 2)
 
     assert [(p.secured, p.state) for p in points] == [(30, "live"), (80, "finished")]
+
+
+def test_transfer_advice_moves_on_once_the_matchday_is_locked() -> None:
+    from fantasy.leagues.ucl.pipeline import _plan_matchday
+
+    projected = {2: [], 3: [], 4: []}
+    assert _plan_matchday(2, False, projected) == 2  # deadline still ahead
+    assert _plan_matchday(2, True, projected) == 3  # MD2 under way: plan MD3
+    assert _plan_matchday(8, True, {8: []}) == 8  # nothing projected after it

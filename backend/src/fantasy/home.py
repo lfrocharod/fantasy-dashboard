@@ -75,7 +75,9 @@ def _ucl(session: Session, alerts: list[S.Alert]) -> S.UclHome:
             text=f"Champions League deadline in {when} — set your XI & captain"
             + (f" ({captain})" if captain else "") + ".",
         ))
-    if opt and opt.matchday_timing and opt.matchday_timing.live_options:
+    # the late-day bench tip is for the matchday whose deadline is next, not
+    # the one after while a matchday is under way
+    if opt and opt.matchday == out.matchday and opt.matchday_timing and opt.matchday_timing.live_options:
         opts = ", ".join(opt.matchday_timing.live_options[:3])
         alerts.append(S.Alert(
             league="UCL", tone="accent", href="/ucl/optimizer",
