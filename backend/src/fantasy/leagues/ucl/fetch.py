@@ -17,7 +17,15 @@ from zoneinfo import ZoneInfo
 
 from dateutil import parser as dateparser
 
-from fantasy.leagues.ucl.types import Fixture, LeagueEntry, Player, Position, SquadPick, Team
+from fantasy.leagues.ucl.types import (
+    Fixture,
+    LeagueEntry,
+    Player,
+    Position,
+    SquadPick,
+    Team,
+    TeamSheet,
+)
 
 # UEFA's Fantasy feeds emit *naive* wall-clock times in their own timezone
 # (Nyon / Zurich — CET in winter, CEST in summer). Treat them as such, not UTC,
@@ -50,6 +58,10 @@ def _i(v: Any, default: int = 0) -> int:
 
 def _opt_i(v: Any) -> int | None:
     return _i(v) if v not in (None, "", " ") else None
+
+
+def _opt_f(v: Any) -> float | None:
+    return _f(v) if v not in (None, "", " ") else None
 
 
 def unwrap(data: Any, *keys: str, depth: int = 0) -> Any:
@@ -361,9 +373,29 @@ def parse_my_team(payload: Any, matchday: int) -> tuple[list[SquadPick], float]:
                 bench_order=bench if on_bench else 0,
                 purchase_price=_f(_pick(r, "value", "buyValue", "purchasePrice")),
                 is_played=bool(_i(_pick(r, "isplayed", "isPlayed", default=0))),
+                points=_opt_f(_pick(r, "overallpoints", "overallPoints")),
+                sub_flag=_i(_pick(r, "autosubflag", "autoSubFlag")),
+                cap_flag=_i(_pick(r, "capchgflag", "capChgFlag")),
             )
         )
     return picks, bank
+
+
+def parse_team_sheet(payload: Any) -> TeamSheet:
+    """The squad payload's matchday summary: the official score once UEFA has
+    scored the matchday, and the in-play changes made (which switch UEFA's
+    automatic subs off)."""
+    val = payload.get("data", payload) if isinstance(payload, dict) else {}
+    if isinstance(val, dict) and isinstance(val.get("value"), dict):
+        val = val["value"]
+    if not isinstance(val, dict):
+        return TeamSheet()
+    rows = val.get("playerid") or val.get("teamPlayers") or val.get("players") or []
+    return TeamSheet(
+        points=_opt_f(_pick(val, "gdPoints", "mdPoints")),
+        in_play_subs=_i(_pick(val, "mdSubstitutions")),
+        captain_moved=any(_i(_pick(r, "capchgflag", "capChgFlag")) for r in rows if isinstance(r, dict)),
+    )
 
 
 def parse_private_leagues(payload: Any) -> list[dict]:

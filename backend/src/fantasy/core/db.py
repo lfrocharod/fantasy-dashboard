@@ -377,6 +377,18 @@ class DB:
             ],
         )
 
+    def update_league_points(self, league_id: str, matchday: int, entries: list[LeagueEntry]) -> None:
+        """Points, totals and ranks onto `matchday`'s stored rows, squads kept."""
+        self._many(
+            """update league_standings set points=%s, total_points=%s, rank=%s, prev_rank=%s,
+                 updated_at=now()
+               where league_id=%s and entry_id=%s and matchday=%s""",
+            [
+                (e.points, e.total_points, e.rank, e.prev_rank, league_id, e.entry_id, matchday)
+                for e in entries
+            ],
+        )
+
     def load_players(self) -> list[Player]:
         with self.conn() as c:
             rows = c.execute(

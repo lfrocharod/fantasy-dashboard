@@ -3386,6 +3386,11 @@
             "title": "Mine",
             "type": "boolean"
           },
+          "official": {
+            "default": false,
+            "title": "Official",
+            "type": "boolean"
+          },
           "played": {
             "default": 0,
             "title": "Played",
@@ -3427,7 +3432,8 @@
           "secured",
           "projected",
           "played",
-          "liveGapVsMe"
+          "liveGapVsMe",
+          "official"
         ],
         "title": "LiveRivalRow",
         "type": "object"
@@ -3719,6 +3725,11 @@
             "title": "Autosubs",
             "type": "array"
           },
+          "autoSubsOff": {
+            "default": false,
+            "title": "Autosubsoff",
+            "type": "boolean"
+          },
           "benchSlots": {
             "default": 0,
             "title": "Benchslots",
@@ -3752,6 +3763,11 @@
             "title": "Inplayopen",
             "type": "boolean"
           },
+          "inPlaySubs": {
+            "default": 0,
+            "title": "Inplaysubs",
+            "type": "integer"
+          },
           "manualSubs": {
             "default": [],
             "items": {
@@ -3768,6 +3784,17 @@
             "default": 0,
             "title": "Maxmanualsubs",
             "type": "integer"
+          },
+          "official": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official"
           },
           "played": {
             "default": 0,
@@ -3830,6 +3857,9 @@
           "benchSlots",
           "inPlayOpen",
           "maxManualSubs",
+          "inPlaySubs",
+          "autoSubsOff",
+          "official",
           "fixtures",
           "squad",
           "autoSubs",

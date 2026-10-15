@@ -21,11 +21,11 @@ PLAN = [("GK", 1), ("DEF", 1), ("DEF", 2), ("DEF", 3), ("MID", 1), ("MID", 2), (
         ("GK", 3), ("DEF", 4), ("MID", 6), ("FWD", 6)]
 
 
-def _fixtures() -> list[Fixture]:
+def _fixtures(md1_hours_ago: float = 5) -> list[Fixture]:
     """MD1 finished this afternoon; MD2, the current matchday, is next week."""
     now = datetime.now(UTC)
     out = []
-    for md, kickoff, status in ((1, now - timedelta(hours=5), "finished"),
+    for md, kickoff, status in ((1, now - timedelta(hours=md1_hours_ago), "finished"),
                                 (2, now + timedelta(days=6), "upcoming")):
         for i, (home, away) in enumerate(((1, 2), (3, 4), (5, 6))):
             out.append(Fixture(uefa_match_id=10 * md + i, matchday=md, home_team_id=home,
@@ -80,7 +80,9 @@ class _DB:
 
 
 class _QuietFeeds:
-    """UEFA's live scoring feeds with nothing new in them."""
+    """UEFA's live scoring feeds with nothing new in them, and no login."""
+
+    auth_state = "public_only"
 
     def get_live_player_points(self) -> dict[str, object]:
         return {"data": {"value": {"totalPoints": {}, "scores": {}}}}
@@ -89,11 +91,12 @@ class _QuietFeeds:
         return {}
 
 
-def _sync_after_the_roll_over(squads: dict[int, list[SquadPick]]) -> _DB:
+def _sync_after_the_roll_over(squads: dict[int, list[SquadPick]], feeds=None,
+                              md1_hours_ago: float = 5) -> _DB:
     db = _DB(squads)
     # `picks` is what this sync fetched for MD2: a new captain, P10
-    _live_stage(db, SimpleNamespace(dry_run=False), _QuietFeeds(), _players(), TEAMS,
-                _fixtures(), [], _squad(captain=10), 2, "L1", "me", [])
+    _live_stage(db, SimpleNamespace(dry_run=False), feeds or _QuietFeeds(), _players(), TEAMS,
+                _fixtures(md1_hours_ago), [], _squad(captain=10), 2, "L1", "me", [])
     return db
 
 
@@ -181,3 +184,36 @@ def test_transfer_advice_moves_on_once_the_matchday_is_locked() -> None:
     assert _plan_matchday(2, False, projected) == 2  # deadline still ahead
     assert _plan_matchday(2, True, projected) == 3  # MD2 under way: plan MD3
     assert _plan_matchday(8, True, {8: []}) == 8  # nothing projected after it
+
+
+class _UefaSettled(_QuietFeeds):
+    """Logged in: UEFA has scored MD1, the captain's 12 doubled and a Player of
+    the Match bonus our archive never saw (P10: 5)."""
+
+    auth_state = "authed"
+
+    def get_my_team(self, guid: str, md: int) -> dict[str, object]:
+        rows = [{"id": 10 + i, "benchposition": 0 if i < 11 else i - 10,
+                 "iscaptain": int(i == 8), "overallpoints": 24.0 if i == 8 else 5.0 if i == 0 else 2.0}
+                for i in range(15)]
+        return {"data": {"value": {"gdPoints": 47.0, "mdSubstitutions": 0, "playerid": rows}}}
+
+
+def test_a_settled_matchday_shows_uefas_own_result() -> None:
+    db = _sync_after_the_roll_over({1: _squad(captain=18)}, feeds=_UefaSettled(), md1_hours_ago=10)
+    live = db.docs[Docs.UCL_LIVE_STATE]
+    assert isinstance(live, dict)
+    assert live["official"] == live["securedPoints"] == 47.0
+    # hours after the whistle but before UEFA has scored it, ours stands
+    db = _sync_after_the_roll_over({1: _squad(captain=18)}, feeds=_UefaSettled(), md1_hours_ago=5)
+    live = db.docs[Docs.UCL_LIVE_STATE]
+    assert isinstance(live, dict) and live["official"] is None and live["securedPoints"] == 44.0
+
+
+def test_before_a_matchday_kicks_off_the_table_settles_the_last_one() -> None:
+    from fantasy.leagues.ucl.pipeline import _settled_md
+
+    fixtures = _fixtures()
+    assert _settled_md(fixtures, 2) == 1  # MD2 to come: UEFA's table is MD1's
+    fixtures[3].status = "live"
+    assert _settled_md(fixtures, 2) is None  # MD2 under way: the table is MD2's

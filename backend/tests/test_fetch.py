@@ -194,3 +194,28 @@ def test_league_standings_request_matches_the_site():
     q = dict(seen[0].params)
     assert seen[0].path.endswith("/Leagues/123/leagueleaderboard")
     assert (q["matchdayId"], q["phaseId"], q["optType"], q["leagueID"]) == ("0", "0", "1", "123")
+
+
+def test_a_scored_matchday_carries_uefas_own_numbers() -> None:
+    """After a matchday the squad payload holds UEFA's result: the score, each
+    pick's points (the captain's doubled), and the changes made in play."""
+    payload = {"data": {"value": {
+        "gdPoints": 83.0, "mdSubstitutions": 4,
+        "playerid": [
+            {"id": 1, "benchposition": 0, "iscaptain": 1, "overallpoints": 20.0,
+             "autosubflag": 0, "capchgflag": 2},
+            {"id": 2, "benchposition": 0, "iscaptain": 0, "overallpoints": -1.0,
+             "autosubflag": 0, "capchgflag": 1},
+            {"id": 3, "benchposition": 0, "iscaptain": 0, "overallpoints": 12.0, "autosubflag": 1},
+            {"id": 4, "benchposition": 2, "iscaptain": 0, "overallpoints": 0.0, "autosubflag": 2},
+        ],
+    }}}
+    picks, _bank = fetch.parse_my_team(payload, matchday=2)
+    by_id = {p.player_id: p for p in picks}
+    assert by_id[1].points == 20.0 and by_id[1].cap_flag == 2
+    assert (by_id[3].sub_flag, by_id[4].sub_flag) == (1, 2)
+    sheet = fetch.parse_team_sheet(payload)
+    assert (sheet.points, sheet.in_play_subs, sheet.captain_moved, sheet.changed) == (83.0, 4, True, True)
+    upcoming = fetch.parse_team_sheet({"data": {"value": {"gdPoints": None, "mdSubstitutions": 0,
+                                                          "playerid": [{"id": 1, "capchgflag": 0}]}}})
+    assert upcoming.points is None and not upcoming.changed

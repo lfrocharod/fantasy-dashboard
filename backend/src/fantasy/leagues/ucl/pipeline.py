@@ -150,14 +150,15 @@ def run(args: argparse.Namespace) -> int:
 
             # ---- 2. authed: squad + mini-league ------------------
             picks: list = []
+            sheet = None  # UEFA's own matchday summary for the squad
             guid = cfg.get(Keys.ENTRY_ID) or ""
             if samples:
                 picks = _private_from_samples(db, samples, matchday, args.dry_run)
             elif token and guid:
-                picks = _private_live(
+                picks, sheet = _private_live(
                     db, client, guid, matchday,
                     cfg.get(Keys.LEAGUE_ID), cfg.get(Keys.LEAGUE_CODE) or (league_codes[0] if league_codes else ""),
-                    notes,
+                    notes, settled_md=_settled_md(fixtures, matchday),
                 )
             elif token and not guid:
                 notes.append("token present but no entry/GUID set in Settings")
@@ -320,7 +321,7 @@ def run(args: argparse.Namespace) -> int:
                     db, args, client, players, teams, fixtures,
                     proj_by_md.get(matchday, []), picks, matchday,
                     cfg.get(Keys.LEAGUE_ID), cfg.get(Keys.ENTRY_ID), notes,
-                    confirmed=confirmed_xi, reprojected=reprojected,
+                    confirmed=confirmed_xi, reprojected=reprojected, sheet=sheet,
                 )
             except Exception as e:  # noqa: BLE001
                 notes.append(f"live stage skipped: {e}")
@@ -487,13 +488,15 @@ def _recent_played_md(fixtures, current_md: int, grace_hours: float = 54.0) -> i
 
 
 def _live_stage(db, args, client, players, teams, fixtures, projections, picks, matchday,
-                league_id, my_entry_id, notes, *, confirmed=None, reprojected=None) -> None:
+                league_id, my_entry_id, notes, *, confirmed=None, reprojected=None,
+                sheet=None) -> None:
     """Section 7: archive per-player actuals, build the live-state + live-rival
     blobs, snapshot history, and (opt-in) push an alert. No-op until a matchday
     game is live/finished; clears the blobs once the matchday is upcoming again.
     `confirmed` / `reprojected`: the current matchday's published team sheets and
-    this run's projections that know them (see build_live_state)."""
-    from fantasy.leagues.ucl.model.live import build_live_rivals, build_live_state
+    this run's projections that know them; `sheet`: UEFA's summary of the
+    squad's matchday (see build_live_state)."""
+    from fantasy.leagues.ucl.model.live import build_live_rivals, build_live_state, matchday_settled
 
     dry = args.dry_run
     md_fx = [f for f in fixtures if f.matchday == matchday]
@@ -554,15 +557,18 @@ def _live_stage(db, args, client, players, teams, fixtures, projections, picks, 
         db.upsert_player_scores(score_rows)
     _log(f"live: archived {len(score_rows)} player scores for MD{matchday}")
 
-    # 7b. my squad — secured / projected-finish after UEFA auto-subs. With no
-    # stored squad a replay has nothing to score: build_live_state returns None.
+    # 7b. my squad — secured / projected-finish after UEFA auto-subs. A replay
+    # reads the finished matchday's squad from UEFA again: it keeps correcting a
+    # matchday for hours (a Player of the Match bonus, its own score). With no
+    # squad at all it has nothing to score: build_live_state returns None.
     if replay:
-        live_picks = db.load_my_squad(matchday) if not dry else []
+        live_picks, sheet = _replay_squad(db, client, my_entry_id, matchday, notes) if not dry else ([], None)
     else:
         live_picks = picks or (db.load_my_squad(matchday) if not dry else [])
     live = build_live_state(
         players, teams, fixtures, projections, live_picks, matchday,
         confirmed=None if replay else confirmed, reprojected=None if replay else reprojected,
+        sheet=sheet,
     )
     if live:
         _log(
@@ -579,9 +585,12 @@ def _live_stage(db, args, client, players, teams, fixtures, projections, picks, 
     if league_id and not dry:
         try:
             standings = db.load_league_standings(league_id, matchday)
+            if replay and client.auth_state == "authed" and standings:
+                _enrich_rival_squads(client, standings, matchday, my_guid=my_entry_id, notes=notes)
+                db.upsert_league_standings(league_id, standings)
             rivals = build_live_rivals(
                 standings, my_entry_id, players, teams, projections,
-                db.load_player_scores(matchday), matchday, my_live=live,
+                db.load_player_scores(matchday), matchday, my_live=live, settled=matchday_settled(md_fx),
             )
             if rivals:
                 rivals["state"] = (
@@ -612,6 +621,20 @@ def _live_stage(db, args, client, players, teams, fixtures, projections, picks, 
     # 7e. opt-in push alert on still-actionable items
     if live and not dry and not replay:
         _maybe_alert(db, live)
+
+
+def _replay_squad(db, client, guid, matchday: int, notes) -> tuple[list, object]:
+    """A finished matchday's squad and UEFA's summary as UEFA has them now; the
+    copy stored while it was current when UEFA can't be asked."""
+    if guid and client.auth_state == "authed":
+        try:
+            payload = client.get_my_team(guid, matchday)
+            picks, _bank = fetch.parse_my_team(payload, matchday)
+            if picks:
+                return picks, fetch.parse_team_sheet(payload)
+        except (UefaAuthError, KeyError, ValueError) as e:
+            notes.append(f"MD{matchday} squad not re-read: {e}")
+    return db.load_my_squad(matchday), None
 
 
 def _maybe_alert(db, live: dict) -> None:
@@ -673,15 +696,33 @@ def _private_from_samples(db, samples, matchday, dry):
     return picks
 
 
-def _private_live(db, client: UefaClient, guid, matchday, league_id, league_code, notes):
+def _settled_md(fixtures, matchday: int) -> int | None:
+    """The last matchday played, while the current one hasn't kicked off: the
+    stretch in which UEFA's league table is that matchday's, settled."""
+    if any(f.status in ("live", "finished") for f in fixtures if f.matchday == matchday):
+        return None
+    return max((f.matchday for f in fixtures
+                if f.matchday < matchday and f.status in ("live", "finished")), default=None)
+
+
+def _private_live(db, client: UefaClient, guid, matchday, league_id, league_code, notes, *,
+                  settled_md: int | None = None):
+    """Your squad (and UEFA's summary of its matchday), then the mini-league
+    table with every rival's squad. Each sync files the table under the
+    current matchday; before that one kicks off it's the last one's, settled
+    (UEFA scores a matchday hours after its final whistle), so it's written
+    onto `settled_md`'s rows too."""
     picks: list = []
+    sheet = None
     state = client.check_auth(guid)
     _log(f"UEFA auth: {state}")
     if state != "authed":
         notes.append("UEFA session not valid — squad/league skipped (paste a fresh cookie)")
-        return picks
+        return picks, sheet
     try:
-        picks, bank = fetch.parse_my_team(client.get_my_team(guid, matchday), matchday)
+        payload = client.get_my_team(guid, matchday)
+        picks, bank = fetch.parse_my_team(payload, matchday)
+        sheet = fetch.parse_team_sheet(payload)
         _log(f"my squad: {len(picks)} picks, bank {bank}")
         if picks:
             db.replace_my_squad(matchday, picks)
@@ -711,10 +752,12 @@ def _private_live(db, client: UefaClient, guid, matchday, league_id, league_code
             _log(f"league {league_id}: {len(entries)} entries")
             _enrich_rival_squads(client, entries, matchday, my_guid=guid, notes=notes)
             db.upsert_league_standings(league_id, entries)
+            if settled_md:
+                db.update_league_points(league_id, settled_md, entries)
         elif problem:
             notes.append(f"league {league_id} table: {problem}")
             _log(notes[-1])
-    return picks
+    return picks, sheet
 
 
 def _resolve_league_id(client: UefaClient, guid: str, code: str, notes: list[str]) -> str | None:
@@ -749,22 +792,28 @@ def _league_table(client: UefaClient, league_id: str, matchday: int) -> tuple[li
     return fetch.parse_league_standings(rows, matchday), ""
 
 
+def _rival_squad(picks) -> list[dict]:
+    """A rival's squad as stored: starter / captain / bench order, so the
+    projection uses their actual XI and captain, plus UEFA's own points per
+    player ("p", the captain's doubled) and a mark ("m") on any in-play sub or
+    armband move, after which UEFA makes no automatic subs."""
+    return [
+        {"id": pk.player_id, "c": bool(pk.is_captain), "s": bool(pk.is_starter),
+         "b": int(pk.bench_order or 0), "p": pk.points, "m": bool(pk.sub_flag or pk.cap_flag)}
+        for pk in picks
+    ]
+
+
 def _enrich_rival_squads(client: UefaClient, entries, matchday, *, my_guid, notes) -> None:
-    """Pull each mini-league rival's saved squad (list of player ids) so the
-    rival-tracking page can project their score. Best-effort per entry."""
+    """Pull each mini-league rival's saved squad so the rival-tracking page can
+    project their score. Best-effort per entry."""
     ok = 0
     for e in entries:
         if not e.entry_id or e.entry_id == my_guid:
             continue
         try:
             picks, _bank = fetch.parse_my_team(client.get_my_team(e.entry_id, matchday), matchday)
-            # keep starter / captain / bench-order so the rival projection uses
-            # their ACTUAL XI + captain, not our guess at their best 11.
-            e.squad = [
-                {"id": pk.player_id, "c": bool(pk.is_captain), "s": bool(pk.is_starter),
-                 "b": int(pk.bench_order or 0)}
-                for pk in picks
-            ]
+            e.squad = _rival_squad(picks)
             if e.squad:
                 ok += 1
         except (UefaAuthError, KeyError, ValueError) as ex:
