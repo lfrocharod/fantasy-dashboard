@@ -61,19 +61,40 @@ def test_parse_rules() -> None:
     assert r.trade_deadline and r.trade_deadline.startswith("2027-02-26")
 
 
-def test_calendar_stretches_the_opening_week() -> None:
-    """167 days in 23 week units: the opening week runs Tuesday to the Sunday
-    after next (13 days) so every later unit is a Monday-to-Sunday week."""
-    opening = date(2026, 10, 20)  # a Tuesday
-    day_dates = {d: opening + timedelta(days=d - 1) for d in range(1, 175) if d % 9}
-    cal = L.build_calendar(L.parse_rules(league_payload()), day_dates)
-    assert cal.periods[1] == (1, 13)
-    assert cal.periods[2] == (14, 20) and cal.day_dates[14].weekday() == 0
-    assert cal.periods[19] == (133, 139)
-    assert cal.periods[20] == (140, 153) and cal.periods[21] == (154, 167)
+def _season(*gaps: tuple[date, date]) -> dict[int, date]:
+    """Game days from Tuesday 2026-10-20 to 2027-04-11, less the gaps."""
+    opening = date(2026, 10, 20)
+    days = {d: opening + timedelta(days=d - 1) for d in range(1, 175)}
+    return {d: v for d, v in days.items() if not any(a <= v <= b for a, b in gaps)}
+
+
+ALL_STAR = (date(2027, 2, 19), date(2027, 2, 24))
+# longer, but only until the NBA schedules its Cup knockout games
+CUP = (date(2026, 12, 4), date(2026, 12, 11))
+
+
+def test_the_opening_week_ends_on_the_first_sunday() -> None:
+    cal = L.build_calendar(L.parse_rules(league_payload()), _season(CUP, ALL_STAR))
+    assert cal.periods[1] == (1, 6)  # Tue Oct 20 – Sun Oct 25
+    assert cal.periods[2] == (7, 13) and cal.day_dates[7].weekday() == 0
     assert not cal.warnings
-    assert cal.period_of(13) == 1 and cal.period_of(14) == 2 and cal.period_of(500) == 21
+    assert cal.period_of(6) == 1 and cal.period_of(7) == 2 and cal.period_of(500) == 21
     assert cal.day_of(date(2026, 10, 1)) == 1  # preseason: opening night
+
+
+def test_the_all_star_break_matchup_covers_two_weeks() -> None:
+    """23 week units reach the final scoring day, Apr 4, only if the one
+    holding the All-Star break covers two weeks, as ESPN schedules it."""
+    cal = L.build_calendar(L.parse_rules(league_payload()), _season(CUP, ALL_STAR))
+    first, last = cal.periods[18]
+    assert (cal.day_dates[first], cal.day_dates[last]) == (date(2027, 2, 15), date(2027, 2, 28))
+    assert cal.periods[17] == (112, 118)  # Feb 8–14
+    assert cal.periods[20] == (140, 153) and cal.periods[21] == (154, 167)  # Mar 8–21, Mar 22–Apr 4
+
+
+def test_a_calendar_that_does_not_add_up_is_flagged() -> None:
+    cal = L.build_calendar(L.parse_rules(league_payload()), _season())  # no All-Star break
+    assert cal.periods[1] == (1, 6) and cal.warnings
 
 
 def test_pro_schedule_dates_are_eastern() -> None:

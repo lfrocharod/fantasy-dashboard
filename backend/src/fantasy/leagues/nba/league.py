@@ -195,10 +195,11 @@ class Calendar:
 
 
 def build_calendar(rules: Rules, day_dates: dict[int, date]) -> Calendar:
-    """Matchup period → day range. Week units after the first are Monday–Sunday;
-    the first unit runs from opening night and takes whatever length makes the
-    units add up to the league's final scoring period (ESPN stretches the
-    opening week rather than leave a stub of a few days)."""
+    """Matchup period → day range. ESPN's week units run Monday to Sunday, the
+    first from opening night to the first Sunday. The unit holding the
+    All-Star break covers two weeks: that's the one week by which plain weeks
+    fall short of the league's final scoring day (2026-27: 23 units, Oct 20
+    to Apr 4, matchup 18 = Feb 15–28)."""
     warnings: list[str] = []
     if not day_dates:
         return Calendar({}, {}, ["no NBA schedule"])
@@ -215,24 +216,56 @@ def build_calendar(rules: Rules, day_dates: dict[int, date]) -> Calendar:
     final = rules.final_day or last
     if n_units < 1:
         return Calendar(full, {1: (1, final)}, warnings + ["no matchup periods in the settings"])
-    first_len = final - 7 * (n_units - 1)
-    if first_len < 1:
-        warnings.append(f"{n_units} week units don't fit in {final} days; using 7-day units")
-        first_len = 7
+    lengths = {u: 7 for u in range(1, n_units + 1)}
+    lengths[1] = 7 - full[1].weekday()  # Monday = 0: a Tuesday opener plays 6 days
+    short = final - sum(lengths.values())
+    if short == 7:
+        doubled = _all_star_unit(full, set(day_dates), lengths)
+        if doubled is None:
+            warnings.append(f"the units end a week before day {final} and there's no All-Star "
+                            "break to stretch — check the calendar")
+        else:
+            lengths[doubled] = 14
+    elif short:
+        warnings.append(f"{n_units} week units end on day {final - short}, not on the final "
+                        f"scoring day {final} — check the calendar")
 
-    def unit(u: int) -> tuple[int, int]:
-        if u == 1:
-            return 1, first_len
-        start = first_len + 7 * (u - 2) + 1
-        return start, start + 6
-
-    periods = {}
-    for mp, us in sorted(rules.matchup_units.items()):
-        spans = [unit(u) for u in us]
-        periods[mp] = (min(a for a, _ in spans), max(b for _, b in spans))
-    if n_units > 1 and full.get(first_len + 1) and full[first_len + 1].weekday() != 0:
-        warnings.append(f"week 2 starts on {full[first_len + 1]:%A}, not a Monday — check the calendar")
+    spans, start = {}, 1
+    for u in range(1, n_units + 1):
+        spans[u] = (start, start + lengths[u] - 1)
+        start += lengths[u]
+    periods = {
+        mp: (min(spans[u][0] for u in us), max(spans[u][1] for u in us))
+        for mp, us in sorted(rules.matchup_units.items())
+    }
     return Calendar(full, periods, warnings)
+
+
+def _all_star_unit(full: dict[int, date], game_days: set[int], lengths: dict[int, int]) -> int | None:
+    """The week unit the All-Star break starts in: the longest run of days
+    without an NBA game from mid-January on. (December's run before the NBA
+    Cup knockouts are scheduled can be longer, so it's left out.)"""
+    runs: list[tuple[int, int]] = []  # (length, first day)
+    day = 1
+    while day <= max(full):
+        if day not in game_days and full[day] >= date(full[1].year + 1, 1, 15):
+            end = day
+            while end + 1 <= max(full) and end + 1 not in game_days:
+                end += 1
+            runs.append((end - day + 1, day))
+            day = end + 1
+        else:
+            day += 1
+    runs = [r for r in runs if r[0] >= 3 and r[1] < max(game_days)]
+    if not runs:
+        return None
+    gap = max(runs)[1]
+    start = 1
+    for u, n in sorted(lengths.items()):
+        if start <= gap < start + n:
+            return u
+        start += n
+    return None
 
 
 def check_calendar(cal: Calendar, matchups: list[Matchup]) -> list[str]:
