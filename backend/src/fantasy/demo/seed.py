@@ -507,7 +507,7 @@ NBA_TEAMS = [
     (9, "Zone Defense"), (10, "Bank Shots"),
 ]
 MY_NBA = 3
-NBA_TODAY = 30  # Wednesday of matchup 4: two days of it played, five to go
+NBA_TODAY = 23  # Wednesday of matchup 4 (Nov 9–15): two days of it played, five to go
 NBA_PERIODS = 19
 # ESPN's standard points scoring: stat id → points
 NBA_SCORING = {0: 1, 1: 4, 2: 4, 3: 2, 6: 1, 11: -2, 13: 2, 14: -1, 15: 1, 16: -1, 17: 1}
