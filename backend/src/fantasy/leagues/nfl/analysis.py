@@ -72,6 +72,10 @@ def week_points(p: NflPlayer, week_idx: int, weeks_left: int = 10) -> float:
         return 0.0
     if week_idx == 0 and p.injury in OUT_STATUS:
         return 0.0
+    if m.week in p.week_projs:
+        # ESPN's projection for that week already prices the opponent in: no
+        # second matchup nudge. This week's carries the experts' view too.
+        return max(0.0, p.week_proj if week_idx == 0 else p.week_projs[m.week])
     if week_idx == 0:
         base = p.week_proj
     else:
