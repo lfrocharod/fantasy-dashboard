@@ -155,18 +155,15 @@ def _nfl(session: Session, alerts: list[S.Alert]) -> S.NflHome:
         if bench_best > start_worst + 2:
             issues += 1
     opp, match = nfl_views._opponent(lg)
+    score = nfl_views._live_score(lg, match)
     live = None
-    if match is not None:
-        home = match.home_entry == str(lg.my_team_id)
-        mine_pts = (match.home_points if home else match.away_points) or 0.0
-        opp_pts = (match.away_points if home else match.home_points) or 0.0
-        if mine_pts > 0 or opp_pts > 0:
-            live = S.NflLiveHome(mine=js_round(mine_pts * 10) / 10, opp=js_round(opp_pts * 10) / 10,
-                                 final=match.winner in ("HOME", "AWAY", "TIE"))
+    if score is not None:
+        live = S.NflLiveHome(mine=js_round(score.mine * 10) / 10, opp=js_round(score.opp * 10) / 10,
+                             final=score.final)
     opp_lineup = NA.optimal_lineup(opp.players, lg.slots, 0) if opp and opp.players else None
     my_proj = js_round(lineup.total) if lineup else 0
     opp_proj = js_round(opp_lineup.total) if opp_lineup else None
-    win_pct = js_round(100 / (1 + math.exp(-(my_proj - opp_proj) / 19))) if opp_proj is not None else None
+    win_pct = nfl_views._win_pct(my_proj, opp_proj, score, roster, opp)
     mine = {p.ext_id for p in roster}
     free = sorted(
         (p for p in lg.players if p.available and p.ext_id not in mine and p.injury not in OUT_STATUS),

@@ -145,6 +145,36 @@ def win_prob_from_margin(margin: float) -> int:
     return js_round(100 / (1 + math.exp(-margin / 19)))
 
 
+def remaining_points(p: NflPlayer) -> float:
+    """What a starter is still expected to add this week: his projection
+    before kickoff, the share of the game left while it's on, nothing once
+    it's over (what he scored is in ESPN's total)."""
+    if p.game_state == "post":
+        return 0.0
+    w = week_points(p, 0)
+    return w * p.game_left if p.game_state == "in" else w
+
+
+def started(roster: Sequence[NflPlayer]) -> list[NflPlayer]:
+    """The players in the lineup ESPN has set (not on the bench or IR)."""
+    return [p for p in roster if p.slot not in ("", "BE", "IR")]
+
+
+def live_win_prob(mine: float, theirs: float, my_lineup: Sequence[NflPlayer],
+                  their_lineup: Sequence[NflPlayer]) -> int:
+    """Win probability mid-week: points banked plus what each set lineup is
+    still expected to add, the spread shrinking with the share of the week
+    still to play."""
+    my_left = sum(remaining_points(p) for p in my_lineup)
+    their_left = sum(remaining_points(p) for p in their_lineup)
+    margin = (mine + my_left) - (theirs + their_left)
+    full = sum(week_points(p, 0) for p in (*my_lineup, *their_lineup))
+    share = (my_left + their_left) / full if full > 0 else 0.0
+    if share <= 0:
+        return 100 if margin > 0 else 0 if margin < 0 else 50
+    return js_round(100 / (1 + math.exp(-margin / (19 * math.sqrt(min(1.0, share))))))
+
+
 @dataclass(slots=True)
 class LineupSlot:
     slot: str

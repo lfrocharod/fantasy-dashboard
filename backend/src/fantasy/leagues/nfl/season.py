@@ -57,7 +57,7 @@ def fetch_league(year: int, league_id: str, espn_s2: str, swid: str) -> dict:  #
         r = c.get(
             f"{_BASE}/{year}/segments/0/leagues/{league_id}",
             params=[("view", v) for v in
-                    ("mSettings", "mTeam", "mRoster", "mMatchup", "mStatus")],
+                    ("mSettings", "mTeam", "mRoster", "mMatchup", "mMatchupScore", "mStatus")],
         )
         r.raise_for_status()
         return r.json()
@@ -110,8 +110,8 @@ def parse_league(data: dict) -> dict:
                 "week": m.get("matchupPeriodId"),
                 "home": h, "away": a,
                 "home_name": teams.get(h, ""), "away_name": teams.get(a, ""),
-                "home_pts": round(_num(m.get("home", {}).get("totalPoints")), 1),
-                "away_pts": round(_num(m.get("away", {}).get("totalPoints")), 1),
+                "home_pts": _side_points(m.get("home", {})),
+                "away_pts": _side_points(m.get("away", {})),
                 "winner": m.get("winner"),
             })
 
@@ -123,6 +123,26 @@ def parse_league(data: dict) -> dict:
         "rosters": rosters, "slot_of": slot_of, "owner_of": owner_of,
         "schedule": schedule,
     }
+
+
+def _side_points(side: dict) -> float:
+    """A matchup side's points: ESPN's running total while the week is on
+    (`totalPointsLive`, with the mMatchupScore view), its total otherwise."""
+    live = side.get("totalPointsLive")
+    return round(_num(live if live is not None else side.get("totalPoints")), 1)
+
+
+def game_state(event: dict) -> dict:
+    """An NFL game from the public scoreboard: kickoff, "pre" / "in" / "post",
+    and the share of it still to play."""
+    st = (event.get("status") or {})
+    state = str((st.get("type") or {}).get("state") or "pre")
+    left = 1.0 if state == "pre" else 0.0
+    if state == "in":
+        period = int(_num(st.get("period"), 1))
+        clock = _num(st.get("clock"), 0.0)  # seconds left in the quarter
+        left = max(0.0, min(1.0, ((4 - min(period, 4)) * 900 + clock) / 3600))
+    return {"kickoff": event.get("date"), "state": state, "left": round(left, 3)}
 
 
 def parse_standings(data: dict, seeding_rule: str = "H2H_RECORD") -> list[dict]:
@@ -153,9 +173,12 @@ def _weekly_projs(player: dict, year: int) -> dict[int, float]:
     return out
 
 
-def _pro_schedule(year: int, weeks: list[int]) -> dict[int, dict[str, tuple[str, bool]]]:  # pragma: no cover - network
-    """{week: {team_abbr: (opponent_abbr, is_home)}} from the public scoreboard.
-    The site API 403s on a full desktop UA — a short one gets through."""
+def _pro_schedule(year: int, weeks: list[int],
+                  states: dict[str, dict] | None = None,
+                  state_week: int | None = None) -> dict[int, dict[str, tuple[str, bool]]]:  # pragma: no cover - network
+    """{week: {team_abbr: (opponent_abbr, is_home)}} from the public scoreboard,
+    and `states` filled with {team_abbr: game_state} for `state_week`. The site
+    API 403s on a full desktop UA — a short one gets through."""
     out: dict[int, dict[str, tuple[str, bool]]] = {}
     with httpx.Client(headers={"User-Agent": "Mozilla/5.0"}, timeout=20, follow_redirects=True) as c:
         for wk in weeks:
@@ -184,6 +207,8 @@ def _pro_schedule(year: int, weeks: list[int]) -> dict[int, dict[str, tuple[str,
                 ha, aa = h["team"]["abbreviation"], a["team"]["abbreviation"]
                 wm[ha] = (aa, True)
                 wm[aa] = (ha, False)
+                if states is not None and wk == state_week:
+                    states[ha] = states[aa] = game_state({**e, "status": comp.get("status") or e.get("status")})
             out[wk] = wm
     return out
 
@@ -208,7 +233,9 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
     raw_players = espn_nfl.fetch_players(year, total=500, page=200)
     # weeks 1-14 covers every possible bye + gives the full 32-team set;
     # week..week+3 covers the near-term matchup ratings.
-    sched = _pro_schedule(year, sorted(set(range(1, 15)) | set(range(week, week + 4))))
+    games_now: dict[str, dict] = {}  # this week's NFL games: kickoff, state, share left
+    sched = _pro_schedule(year, sorted(set(range(1, 15)) | set(range(week, week + 4))),
+                          states=games_now, state_week=week)
     bye_by_abbr = _bye_index(sched)
     abbr_to_id = {v: k for k, v in _PRO_ABBR.items()}
 
@@ -345,6 +372,7 @@ def build(year: int, league_id: str, espn_s2: str, swid: str, scoring: str,
                 "weekProj": wk_proj, "rosProj": ros_proj, "seasonProj": season_proj,
                 # ESPN's matchup-aware projections for the weeks the matchups cover
                 "weekProjs": {str(w): projs[w] for w in range(week, week + 4) if w in projs},
+                "game": games_now.get(team_abbr),
                 "bye": bye, "pctOwned": round(own.get("percentOwned", 0.0), 1),
                 "pctStarted": round(own.get("percentStarted", 0.0), 1),
                 "injury": inj,
