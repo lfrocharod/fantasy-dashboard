@@ -202,6 +202,35 @@ def test_tonights_tipped_games_are_not_counted_twice() -> None:
     assert (score.opp_remaining, score.opp_proj) == (80, 80)  # tonight's and tomorrow's
 
 
+def test_tonights_advice_works_around_players_already_locked() -> None:
+    """ESPN locks a slot at tip-off: a benched star whose game has started can't
+    be started any more, and a starter whose game has started can't be moved."""
+    from fantasy.leagues.nba import views as V
+
+    tip = datetime(2026, 10, 21, 23, 30, tzinfo=UTC)
+    star = player("1", 40, ["PG"], team=1, slot="BE")    # game under way, still benched
+    locked = player("2", 20, ["PG"], team=4, slot="PG")  # game under way, in PG
+    idle = player("3", 25, ["PG"], team=3, slot="UT")    # no game tonight
+    late = player("4", 30, ["PG"], team=2, slot="BE")    # tips off at 10:30
+    for p in (star, locked, idle, late):
+        p.owner_team_id = 1
+    lg = V.League(
+        name="", players=[star, locked, idle, late], my_team_id=1, entries=[], matchups=[],
+        slot_counts={"PG": 1, "UT": 1}, ir_slots=0, limits={}, periods={1: (1, 3)},
+        day_dates={d: date(2026, 10, 19 + d) for d in (1, 2, 3)},
+        games={1: {2: (9, True)}, 2: {2: (8, True)}, 4: {2: (7, False)}}, abbrev={}, pro_names={},
+        team_names={}, today=2, pinned=False, reg_periods=1, playoff_periods=[], playoff_teams=4,
+        acquisitions={}, trade_deadline=None, warnings=[],
+        tips={1: {2: int(tip.timestamp() * 1000)}, 4: {2: int(tip.timestamp() * 1000)},
+              2: {2: int((tip + timedelta(hours=3)).timestamp() * 1000)}},
+    )
+    start, bench = V._today_moves(lg, lg.my_roster, now=tip + timedelta(hours=1))
+    assert [p.ext_id for p in start] == ["4"] and [p.ext_id for p in bench] == ["3"]
+    # before any tip-off the star is the one to start
+    start, _ = V._today_moves(lg, lg.my_roster, now=tip - timedelta(hours=1))
+    assert [p.ext_id for p in start] == ["1", "4"]
+
+
 def test_win_prob() -> None:
     plan = A.plan_days([player("1", 30, ["PG"])], [1, 2], every_day(1), ["PG"])
     assert A.win_prob(0, plan, 0, plan) == 50
