@@ -67,7 +67,7 @@ flowchart LR
   end
   DB[("Neon Postgres")]
   GH["GitHub<br/>CI on every push"]
-  SRC["UEFA · FPL · ESPN<br/>nflverse · Sofascore"]
+  SRC["UEFA · FPL · ESPN<br/>nflverse · Understat"]
 
   SRC --> R --> DB
   A <--> DB

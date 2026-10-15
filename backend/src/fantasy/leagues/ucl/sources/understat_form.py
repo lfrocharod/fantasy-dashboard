@@ -1,7 +1,9 @@
-"""Understat form fallback (domestic leagues only).
+"""Recent form from Understat's per-match logs (the big-five leagues only).
 
-Used when RECENT_FORM_SOURCE=understat, or as a backstop if Sofascore is
-unreachable. Also powers the offline `--samples` path via aggregate_match_rows().
+The default form source (RECENT_FORM_SOURCE=understat). Understat's match
+logs carry `xg` (penalties included) where its season table splits out
+non-penalty xG; the match value stands in for it. Also powers the offline
+`--samples` path via aggregate_match_rows().
 """
 
 from __future__ import annotations
@@ -84,7 +86,7 @@ def fetch_form_rows(leagues: list[str], season: str | None, last_n: int = 5) -> 
         "player": ("player", "player_name"), "team": ("team", "team_title"),
         "date": ("date", "game_date", "game"), "minutes": ("time", "minutes"),
         "pos": ("position",), "goals": ("goals",), "assists": ("assists",),
-        "npxg": ("npxg", "npxG"), "xa": ("xa", "xA"), "shots": ("shots",),
+        "npxg": ("npxg", "npxG", "xg"), "xa": ("xa", "xA"), "shots": ("shots",),
     }.items()}
     recs = [
         {out_k: (row[src] if src else "") for out_k, src in cmap.items()}

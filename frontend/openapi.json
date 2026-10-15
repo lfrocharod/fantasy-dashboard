@@ -3556,6 +3556,21 @@
             "title": "Benchorder",
             "type": "integer"
           },
+          "confirmed": {
+            "anyOf": [
+              {
+                "enum": [
+                  "start",
+                  "bench"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed"
+          },
           "dnp": {
             "default": false,
             "title": "Dnp",
@@ -3688,7 +3703,8 @@
           "isVice",
           "benchOrder",
           "dnp",
-          "effRole"
+          "effRole",
+          "confirmed"
         ],
         "title": "LiveSquadRow",
         "type": "object"

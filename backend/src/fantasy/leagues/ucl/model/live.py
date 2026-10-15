@@ -87,11 +87,18 @@ def build_live_state(
     matchday: int,
     *,
     subs_allowed: int = 0,  # deprecated — CL Fantasy has no per-matchday sub cap
+    confirmed: dict[int, str] | None = None,
+    reprojected: list[Projection] | None = None,
 ) -> dict | None:
     """Returns the live-state blob, or None if the matchday hasn't started (or we
-    have no squad / fixtures for it)."""
+    have no squad / fixtures for it). `projections` are the frozen pre-match
+    ones; `confirmed` the published team sheets ({player: "start"|"bench"}) and
+    `reprojected` this run's projections, which know them: a player still to
+    play whose team sheet is out is valued with those."""
     pmap = {p.uefa_player_id: p for p in players}
     proj = {pr.player_id: pr for pr in projections}
+    confirmed = confirmed or {}
+    fresh = {pr.player_id: pr for pr in reprojected or []}
     md_fx = [f for f in fixtures if f.matchday == matchday]
     if not md_fx or not picks:
         return None
@@ -124,6 +131,9 @@ def build_live_state(
         c = ctx.get(p.team_id)
         state = c["status"] if c else "none"
         pr = proj.get(pk.player_id)
+        pre = round(pr.xpts, 1) if pr else 0.0
+        if state in _PENDING and pk.player_id in confirmed and pk.player_id in fresh:
+            pr = fresh[pk.player_id]
         xpts = round(pr.xpts, 1) if pr else 0.0
         actual = p.live_points if state in _LIVE else None
         played = bool(p.live_played) or bool(pk.is_played)
@@ -138,6 +148,7 @@ def build_live_state(
             "minute": c["minute"] if c else 0,
             "isStarter": pk.is_starter, "isCaptain": pk.is_captain, "isVice": pk.is_vice,
             "benchOrder": pk.bench_order, "dnp": dnp, "effRole": None,
+            "confirmed": confirmed.get(pk.player_id), "_pre": pre,
         }
 
     rows = [r for pk in picks if (r := mk_row(pk))]
@@ -264,7 +275,7 @@ def build_live_state(
     if cap_eff and cap_eff["playerId"] in xi_ids:
         secured_pts += secured(cap_eff)
         proj_pts += projected(cap_eff)
-    pre_match = sum(r["xpts"] for r in starters) + (cap["xpts"] if cap else 0.0)
+    pre_match = sum(r["_pre"] for r in starters) + (cap["_pre"] if cap else 0.0)
 
     # ---- manual-sub levers still worth pulling ------------------------
     # Between match days you may sub out up to 4 starters *whose team hasn't
@@ -305,6 +316,7 @@ def build_live_state(
     for r in rows:
         if r["effRole"] is None:
             r["effRole"] = "start" if r["isStarter"] else "bench"
+        del r["_pre"]
 
     all_done = all(f.status == "finished" for f in md_fx)
     return {

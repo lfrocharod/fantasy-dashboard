@@ -28,8 +28,9 @@ club says "doubt", that gap **is** the signal a point estimate would hide.
 | League | Source | Feeds | Access |
 |---|---|---|---|
 | **UCL** | UEFA UCL Fantasy feed | prices, ownership, availability (`pStatus`/`qStatus`), **minutes played** (→ `minutes_prior`), season points | public JSON |
-| UCL | Sofascore | last-N match starts / minutes / goals / xG / rating (all competitions) | public JSON, TLS-impersonated, best-effort |
-| UCL | Understat (via `soccerdata`) | domestic-league season xG / xA / minutes | scrape, slow, best-effort |
+| UCL | UEFA match centre (`match.uefa.com`) | **confirmed XIs and benches** ~1h before each kickoff, under the same match and player ids as UEFA Fantasy | public JSON |
+| UCL | Understat (via `soccerdata`) | **recent form**: last-N domestic match logs (starts / minutes / goals / xG / xA) and season xG / xA / minutes, big-five leagues | scrape, best-effort |
+| UCL | Sofascore (opt-in: `RECENT_FORM_SOURCE=sofascore\|both`) | last-N starts / minutes / goals / xG / rating across all competitions, season xG for every club | public JSON, TLS-impersonated; refuses this app since 2026-10 |
 | UCL | Club-strength priors | attack / defence ratings → fixture difficulty, clean-sheet model | static table, self-tunes on results |
 | **FPL Draft** | FPL / FPL-Draft API | prices, ownership, `chance_of_playing`, **editor news string** (aggregated presser notes), form, xG/xA, set-piece order, DefCon | public JSON |
 | FPL | FPL official FDR + club-strength priors | position-aware fixture difficulty | public JSON + static table |
@@ -64,9 +65,8 @@ the blend degrades gracefully.
 | Fantasy Football Scout — team news | predicted XIs, press-conference notes | full XIs are member-gated; the free team-news page is partial |
 | FPLedits / FPL predicted lineups | expected XI + sub list + confidence | JS-rendered (Next.js) — needs a headless fetch or their internal API |
 | Rotowire soccer lineups | predicted XI + confirmed flag | JS-rendered; per-match pages |
-| Sofascore match lineups (`/event/{id}/lineups`) | **confirmed** XI + `confirmed:true` flag near KO | same source we already use; needs UEFA-fixture → Sofascore-event mapping |
+| ESPN soccer box scores (`site.api.espn.com`) | recent starts / minutes / goals outside the big five (Portugal, Netherlands, Turkey, Belgium …) | public JSON; names matched to UEFA's, no xG |
 | Betting markets (anytime scorer / clean sheet / cards) | market-implied goal, assist, CS, card probabilities | free odds APIs need a key; scraping odds pages is brittle |
-| Understat per-match (not just season) | rolling xG form, home/away splits | already have the client; just a wider pull |
 | PhysioRoom / Ben Dinnery injury table | return-date estimates for `stash & wait` | single page, fairly stable HTML |
 
 ### NBA
