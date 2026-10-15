@@ -115,3 +115,26 @@ def test_fpl_live_scores_the_lineup_the_gameweek_was_played_with() -> None:
     # scored with another gameweek's lineup, it says so
     stand_in = live_view({**doc, "state": "live", "lineupSource": "event/7"}, board)
     assert stand_in is not None and stand_in.estimated
+
+
+def test_fpl_live_values_a_starter_still_to_play_at_this_gameweeks_projection() -> None:
+    """Once a gameweek is under way the board projects the next one; a starter
+    still to play counts at what was projected for the one being played."""
+    xi = [("1", "GKP"), *((f"d{i}", "DEF") for i in range(3)), *((f"m{i}", "MID") for i in range(5)),
+          ("f0", "FWD"), ("f1", "FWD")]
+    bench = [("2", "GKP"), ("bf", "FWD"), ("bd", "DEF"), ("bm", "MID")]
+    players = [_fpl(e, p) for e, p in xi + bench]  # next gameweek: 4.0 each
+    board = Board(
+        players=players, by_id={p.ext_id: p for p in players}, my_entry_id="1",
+        lineup=[SimpleNamespace(ext_id=e, position=i, starter=i <= 11, source="event/7")
+                for i, (e, _) in enumerate(xi + bench, start=1)],
+        league=None, entries=[],
+    )  # type: ignore[arg-type]
+    elements = {e: [2, 90] for e, _ in xi + bench}
+    elements["f1"] = [0, 0]  # plays Monday
+    doc = {"gw": 7, "state": "live", "secured": 20, "played": 10, "starters": 11,
+           "elements": elements}
+    view = live_view(doc, board, {"f1": 6.5})
+    assert view is not None and view.projected_finish == 10 * 2 + 6.5
+    stale = live_view(doc, board)
+    assert stale is not None and stale.projected_finish == 10 * 2 + 4.0

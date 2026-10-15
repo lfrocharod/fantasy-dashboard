@@ -109,7 +109,8 @@ def _fpl(session: Session, alerts: list[S.Alert]) -> S.FplHome:
     if top and FA.value_for(top, "medium") - worst > 4:
         claim = S.Claim(name=top.name, gain=js_round(FA.value_for(top, "medium") - worst))
     live_doc = session.scalar(select(M.Document.payload).where(M.Document.key == "fpl.live"))
-    lv = fpl_views.live_view(live_doc, b) if live_doc else None
+    lv = (fpl_views.live_view(live_doc, b, fpl_views.gw_projections(session, int(live_doc.get("gw") or 0)))
+          if live_doc else None)
     me = next((e for e in b.entries if e.is_mine), None)
     out = S.FplHome(
         active=bool(squad),

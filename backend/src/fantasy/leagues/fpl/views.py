@@ -7,7 +7,7 @@ the browser and computed everything there (app/fpl/*.tsx).
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -116,9 +116,23 @@ def _formation_ok(c: dict[str, int]) -> bool:
     )
 
 
-def live_view(live: dict[str, Any], b: Board) -> S.FplLiveView | None:
+def gw_projections(session: Session, gw: int) -> dict[str, float]:
+    """The board's projections for gameweek `gw`, as stored before its
+    deadline: once a gameweek is under way the board projects the next one."""
+    return dict(session.execute(
+        select(M.ModelPrediction.ext_id, M.ModelPrediction.predicted).where(
+            M.ModelPrediction.sport == "fpl", M.ModelPrediction.round == gw,
+            M.ModelPrediction.model == "structural",
+        )
+    ).tuples().all())
+
+
+def live_view(live: dict[str, Any], b: Board,
+              gw_proj: Mapping[str, float] | None = None) -> S.FplLiveView | None:
     """Points banked, projected finish after FPL's automatic substitutions, and
-    the head-to-head score. Draft has no captain — nothing is doubled."""
+    the head-to-head score. Draft has no captain — nothing is doubled. A
+    starter still to play counts at `gw_proj` (that gameweek's projections)
+    where there is one, else at the board's next-gameweek number."""
     elements: dict[str, list[int]] = live.get("elements") or {}
     finished = live.get("state") == "finished"
     gw = int(live.get("gw") or 0)
@@ -148,7 +162,8 @@ def live_view(live: dict[str, Any], b: Board) -> S.FplLiveView | None:
         if p is None:
             continue
         pts, mins = (elements.get(ext_id) or [0, 0])[:2]
-        fallback = p.gws[0].xpts if p.gws else p.proj
+        fallback = (gw_proj[ext_id] if gw_proj and ext_id in gw_proj
+                    else p.gws[0].xpts if p.gws else p.proj)
         rows.append(Row(
             p=p, pts=int(pts), mins=int(mins), slot=slot, starter=starter,
             dnp=finished and mins == 0, proj=float(pts) if mins > 0 or finished else fallback,
@@ -359,7 +374,8 @@ def overview(session: Session) -> S.FplOverview:
         )
     ]
     live_doc = get_document(session, Docs.FPL_LIVE)
-    live = live_view(live_doc, b) if live_doc and len(b.lineup) >= 11 else None
+    live = (live_view(live_doc, b, gw_projections(session, int(live_doc.get("gw") or 0)))
+            if live_doc and len(b.lineup) >= 11 else None)
     return S.FplOverview(
         teams=(b.league.n_teams if b.league and b.league.n_teams else 8),
         gws=gws,
