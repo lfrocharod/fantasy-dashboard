@@ -85,7 +85,10 @@ function Home({ sum }: { sum: Api["HomeSummary"] }) {
           rows={[
             ["Gameweek", fpl.gw ? String(fpl.gw) : "–"],
             fpl.live
-              ? ["Live GW pts", `${fmt(fpl.live.secured, 0)} (${fpl.live.played}/${fpl.live.starters})`]
+              ? [
+                  fpl.live.state === "finished" ? `GW${fpl.live.gw} final` : "Live GW pts",
+                  `${fmt(fpl.live.secured, 0)} (${fpl.live.played}/${fpl.live.starters} played)`,
+                ]
               : ["Best XI proj", String(fpl.xiProj)],
             ["League rank", fpl.rank ? `#${fpl.rank}` : "–"],
             ["Injured in squad", fpl.injured ? String(fpl.injured) : "none"],

@@ -107,6 +107,7 @@ def _fpl(session: Session, alerts: list[S.Alert]) -> S.FplHome:
     if top and FA.value_for(top, "medium") - worst > 4:
         claim = S.Claim(name=top.name, gain=js_round(FA.value_for(top, "medium") - worst))
     live_doc = session.scalar(select(M.Document.payload).where(M.Document.key == "fpl.live"))
+    lv = fpl_views.live_view(live_doc, b) if live_doc else None
     me = next((e for e in b.entries if e.is_mine), None)
     out = S.FplHome(
         active=bool(squad),
@@ -115,10 +116,9 @@ def _fpl(session: Session, alerts: list[S.Alert]) -> S.FplHome:
         rank=me.rank if me else None,
         top_claim=claim,
         injured=injured,
-        live=S.FplLiveHome(gw=int(live_doc.get("gw") or 0), secured=float(live_doc.get("secured") or 0),
-                           played=int(live_doc.get("played") or 0),
-                           starters=int(live_doc.get("starters") or 0))
-        if live_doc else None,
+        live=S.FplLiveHome(gw=lv.gw, state=lv.state, secured=lv.secured, played=lv.played,
+                           starters=lv.starters)
+        if lv else None,
     )
     if out.active and injured:
         alerts.append(S.Alert(

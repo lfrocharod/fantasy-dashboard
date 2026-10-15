@@ -50,6 +50,7 @@ class Claim(Schema):
 
 class FplLiveHome(Schema):
     gw: int
+    state: Literal["live", "finished"]
     secured: float
     played: int
     starters: int

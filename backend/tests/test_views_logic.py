@@ -85,3 +85,33 @@ def test_fpl_live_auto_sub_respects_formation() -> None:
     roles = {r.player.ext_id: r.role for r in view.rows}
     assert roles["d0"] == "auto-out" and roles["bd"] == "auto-in" and roles["bf"] == "bench"
     assert view.projected_finish == 2 * 11
+
+
+def test_fpl_live_scores_the_lineup_the_gameweek_was_played_with() -> None:
+    xi = [("1", "GKP"), *((f"d{i}", "DEF") for i in range(3)), *((f"m{i}", "MID") for i in range(5)),
+          ("f0", "FWD"), ("f1", "FWD")]
+    bench = [("2", "GKP"), ("bf", "FWD"), ("bd", "DEF"), ("bm", "MID")]
+    players = [_fpl(e, p) for e, p in xi + bench]
+    # the stored Pick Team is already next gameweek's: bf starts there, f1 sits
+    pick_team = [e for e, _ in xi if e != "f1"] + ["bf", "2", "f1", "bd", "bm"]
+    board = Board(
+        players=players, by_id={p.ext_id: p for p in players}, my_entry_id="1",
+        lineup=[SimpleNamespace(ext_id=e, position=i, starter=i <= 11, source="my-team")
+                for i, e in enumerate(pick_team, start=1)],
+        league=None, entries=[],
+    )  # type: ignore[arg-type]
+    elements = {e: [2, 90] for e, _ in xi + bench}
+    elements["f1"] = [10, 90]
+    played = [{"element": e, "slot": i, "starter": i <= 11}
+              for i, (e, _) in enumerate(xi + bench, start=1)]
+    doc = {"gw": 8, "state": "finished", "secured": 30, "played": 11, "starters": 11,
+           "elements": elements, "lineup": played, "lineupSource": "event/8"}
+
+    view = live_view(doc, board)
+    assert view is not None
+    roles = {r.player.ext_id: r.role for r in view.rows}
+    assert roles["f1"] == "start" and roles["bf"] == "bench"
+    assert view.secured == 30 and not view.estimated
+    # scored with another gameweek's lineup, it says so
+    stand_in = live_view({**doc, "state": "live", "lineupSource": "event/7"}, board)
+    assert stand_in is not None and stand_in.estimated

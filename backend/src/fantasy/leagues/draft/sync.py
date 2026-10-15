@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from fantasy.config import Docs, Env
 from fantasy.core.db import DB
@@ -107,6 +108,7 @@ def sync_picks(db: DB, env: Env, sport: str, cfg: dict) -> int:
 def _sync_fpl(db: DB, env: Env, cfg: dict) -> int:
     from fantasy.leagues.fpl.league import (
         _client,
+        fetch_gw_lineup,
         fetch_my_squad,
         has_auth,
         league_details,
@@ -141,10 +143,11 @@ def _sync_fpl(db: DB, env: Env, cfg: dict) -> int:
             picks = []
         my_ids: list[int] = []
         my_lineup: list[dict] = []
+        events: dict = {}
         if entry_id:
             try:
-                ev = _bootstrap_events(c)
-                next_gw = ev.get("next") or ev.get("current") or 1
+                events = _bootstrap_events()
+                next_gw = events.get("next") or events.get("current") or 1
                 my_lineup = fetch_my_squad(c, entry_id, next_gw, authed=authed, log=_log)
                 my_ids = [p["element"] for p in my_lineup]
                 if my_lineup:
@@ -213,24 +216,31 @@ def _sync_fpl(db: DB, env: Env, cfg: dict) -> int:
         db.set_setting("draft.fpl.teams", str(n))  # the board's VBD baseline
         db.upsert_league("fpl", n_teams=n)
 
-    # Live gameweek: per-player points + your H2H matchup score while the current
-    # GW is in progress. Cleared once it's over / unavailable. The web FPL page
-    # turns this into the same secured / projected-finish / auto-sub view the CL
-    # overview has.
+    # Live gameweek: per-player points + your H2H matchup score for the current
+    # GW, from its first kickoff until the next one's. The web FPL page turns
+    # this into the same secured / projected-finish / auto-sub view the CL
+    # overview has. It's scored with the lineup fielded for that gameweek:
+    # `my_lineup` is the *next* one's Pick Team (or an older XI) by then.
     live = None
     try:
         if entry_id and my_lineup:
-            # a fresh client: the one above closed with its `with` block
-            with _client(auth) as c:
-                cur_gw = _bootstrap_events(c).get("current")
-                if cur_gw:
-                    live = _fpl_live_score(c, int(cur_gw), my_lineup, det, entry_id)
+            events = events or _bootstrap_events()
+            cur_gw = events.get("current")
+            if cur_gw:
+                gw = int(cur_gw)
+                # a fresh client: the one above closed with its `with` block
+                with _client(auth) as c:
+                    lineup = (fetch_gw_lineup(c, entry_id, gw)
+                              or _kept_lineup(db.get_document(Docs.FPL_LIVE), gw)
+                              or my_lineup)
+                    live = _fpl_live_score(c, gw, lineup, det, entry_id,
+                                           finished=_gw_finished(events, gw))
     except Exception as e:  # noqa: BLE001
         _log(f"fpl live skipped: {e}")
     db.put_document(Docs.FPL_LIVE, live)
     if live:
         _log(f"fpl live: GW{live['gw']} {live['state']} — {live['secured']} pts banked, "
-             f"{live['played']}/{live['starters']} started"
+             f"{live['played']}/{live['starters']} started, XI from {live['lineupSource']}"
              + (f", vs {live['oppName']} {live['myPoints']}-{live['oppPoints']}"
                 if live.get("oppName") else ""))
 
@@ -239,13 +249,15 @@ def _sync_fpl(db: DB, env: Env, cfg: dict) -> int:
     return 0
 
 
-def _fpl_live_score(c, gw: int, lineup: list[dict], det: dict,
-                    entry_id) -> dict | None:  # pragma: no cover - network
+def _fpl_live_score(c, gw: int, lineup: list[dict], det: dict, entry_id, *,
+                    finished: bool = False) -> dict | None:
     """Per-player live points for the user's squad this GW plus the H2H matchup
-    score. Returns None if nobody has kicked off yet (caller clears the value)."""
-    r = c.get(f"https://draft.premierleague.com/api/event/{gw}/live")
-    r.raise_for_status()
-    els = r.json().get("elements", {})
+    score. Returns None if nobody has kicked off yet (caller clears the value).
+    `finished` is FPL's own flag for the gameweek; an H2H league's matchup
+    carries one too, but a classic league has no matchups to read it from."""
+    from fantasy.leagues.fpl.league import _get
+
+    els = _get(c, f"event/{gw}/live").get("elements", {})
     items = els if isinstance(els, dict) else {str(e.get("id")): e for e in els}
 
     def stat(eid) -> tuple[int, int]:
@@ -276,7 +288,6 @@ def _fpl_live_score(c, gw: int, lineup: list[dict], det: dict,
     }
     my_pts = opp_pts = None
     opp_name = None
-    finished = False
     for m in det.get("matches", []):
         if m.get("event") != gw:
             continue
@@ -287,21 +298,38 @@ def _fpl_live_score(c, gw: int, lineup: list[dict], det: dict,
             my_pts, opp_pts, opp_name = m.get("league_entry_2_points"), m.get("league_entry_1_points"), le_name.get(h)
         else:
             continue
-        finished = bool(m.get("finished"))
+        finished = finished or bool(m.get("finished"))
         break
 
     return {
         "gw": gw, "state": "finished" if finished else "live",
         "secured": secured, "played": played, "starters": len(starters),
         "elements": elements,
+        "lineup": [{"element": p["element"], "slot": p["slot"], "starter": p["starter"]}
+                   for p in lineup],
+        "lineupSource": lineup[0].get("source") if lineup else None,
         "myPoints": my_pts, "oppPoints": opp_pts, "oppName": opp_name,
     }
 
 
-def _bootstrap_events(c) -> dict:
+def _gw_finished(events: dict, gw: int) -> bool:
+    """FPL's flag on the bootstrap event: every match played, bonus confirmed."""
+    return any(int(e.get("id") or 0) == gw and bool(e.get("finished"))
+               for e in events.get("data") or [])
+
+
+def _kept_lineup(doc: Any, gw: int) -> list[dict]:
+    """The lineup an earlier sync read for gameweek `gw` itself, if one did."""
+    if not isinstance(doc, dict) or doc.get("gw") != gw or doc.get("lineupSource") != f"event/{gw}":
+        return []
+    return [{**p, "source": f"event/{gw}"} for p in doc.get("lineup") or []]
+
+
+def _bootstrap_events() -> dict:  # pragma: no cover - network
+    # its own client: a request carrying an expired login can be refused
     from fantasy.leagues.fpl.board import bootstrap
 
-    return bootstrap(c).get("events", {}) or {}
+    return bootstrap().get("events", {}) or {}
 
 
 def build_board(db: DB, sport: str, cfg: dict, env: Env | None = None) -> None:
