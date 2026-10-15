@@ -3221,6 +3221,8 @@ export interface components {
             idealSquad: components["schemas"]["IdealSquad"] | null;
             /** Keepfromcurrent */
             keepFromCurrent: number | null;
+            /** Lockedmatchday */
+            lockedMatchday: number | null;
             /**
              * Matchday
              * @default 0

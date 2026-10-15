@@ -283,7 +283,16 @@ def run(args: argparse.Namespace) -> int:
                 _print_top(projections, players)
 
             # ---- 6. optimizer + chips ------------------------
-            opt = _optimizer(db, players, teams, proj_by_md, matchday, params, picks, form_by_id)
+            # Teams lock at a matchday's first kickoff, and changes saved after
+            # that apply to the next matchday (rules 2026/27), so once one is
+            # under way the advice plans the next. The 5-minute live refresh only
+            # projects the current matchday: it leaves the last advice alone.
+            plan_md = _plan_matchday(matchday, md_live_now, proj_by_md)
+            opt = None
+            if not getattr(args, "live", False):
+                opt = _optimizer(db, players, teams, proj_by_md, plan_md, params, picks, form_by_id)
+                if opt and plan_md != matchday:
+                    opt["lockedMatchday"] = matchday
             if opt:
                 if opt.get("preSeason"):
                     _log(f"optimizer: pre-season squad {opt['formation']} "
@@ -341,6 +350,12 @@ def run(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+
+
+def _plan_matchday(matchday: int, underway: bool, proj_by_md: dict[int, list]) -> int:
+    """The matchday transfers and chips can still change: the current one
+    until its first kickoff locks it, then the next (when it's projected)."""
+    return matchday + 1 if underway and (matchday + 1) in proj_by_md else matchday
 
 
 def _league_codes(conf: dict) -> list[str]:

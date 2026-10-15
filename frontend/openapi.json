@@ -7048,6 +7048,17 @@
             ],
             "title": "Keepfromcurrent"
           },
+          "lockedMatchday": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lockedmatchday"
+          },
           "matchday": {
             "default": 0,
             "title": "Matchday",
@@ -7136,6 +7147,7 @@
           "matchdayTiming",
           "preSeason",
           "deadlineOpen",
+          "lockedMatchday",
           "freeTransfers",
           "idealSquad",
           "totalCost",

@@ -474,6 +474,8 @@ class OptimizerOutput(Schema):
     matchday_timing: MatchdayTiming | None = None
     pre_season: bool = False
     deadline_open: bool = False
+    # set while that matchday is under way and the advice plans the next one
+    locked_matchday: int | None = None
     free_transfers: int | None = None
     ideal_squad: IdealSquad | None = None
     # pre-season shape: the ideal squad's fields at top level

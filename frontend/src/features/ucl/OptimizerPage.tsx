@@ -44,6 +44,13 @@ function Optimizer({ data }: { data: Output }) {
   const gain = data.optimisedXpts - data.baselineXpts;
   return (
     <div className="space-y-8">
+      {data.lockedMatchday != null && (
+        <div className="card p-3 text-sm" style={{ borderLeft: "3px solid var(--accent)" }}>
+          Matchday {data.lockedMatchday} is under way and your team is locked for it: these are transfers, chips and
+          the XI for matchday {data.matchday}. UEFA applies changes saved after MD{data.lockedMatchday}&apos;s final day
+          kicks off to matchday {data.matchday}.
+        </div>
+      )}
       {data.idealSquad && (
         <Section title="If you wildcarded now">
           <p className="text-sm text-[var(--muted)]">
