@@ -52,9 +52,17 @@ function Home({ sum }: { sum: Api["HomeSummary"] }) {
           title="Champions League"
           active={ucl.active}
           rows={
-            ucl.live
+            ucl.live?.state === "finished"
               ? [
-                  ["Matchday", `${ucl.matchday} · ${ucl.live.state === "finished" ? "FT" : "LIVE"}`],
+                  ["Matchday", `${ucl.live.matchday} · FT`],
+                  ["Final score", fmt(ucl.live.secured, 0)],
+                  ["Played", `${ucl.live.played}/${ucl.live.starters}`],
+                  [`MD${ucl.matchday} deadline`, timeUntil(ucl.deadlineIso)],
+                  ["Mini-league", ucl.rank ? `#${ucl.rank} of ${ucl.leagueSize}` : "after MD1"],
+                ]
+              : ucl.live
+              ? [
+                  ["Matchday", `${ucl.live.matchday} · LIVE`],
                   ["Secured", fmt(ucl.live.secured, 0)],
                   ["Proj. finish", fmt(ucl.live.projectedFinish, 0)],
                   ["Played", `${ucl.live.played}/${ucl.live.starters}`],

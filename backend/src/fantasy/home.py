@@ -47,7 +47,8 @@ def _ucl(session: Session, alerts: list[S.Alert]) -> S.UclHome:
         cap = live.captain
         note = cap.note if cap and (cap.recommendation == "switch" or cap.effective_name is None) else None
         live_out = S.UclLive(
-            state=live.state, secured=live.secured_points, projected_finish=live.projected_finish,
+            matchday=live.matchday, state=live.state, secured=live.secured_points,
+            projected_finish=live.projected_finish,
             played=live.played, starters=live.starters, manual_subs=len(live.manual_subs),
             captain_note=note,
         )

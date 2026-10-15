@@ -475,6 +475,11 @@ def _live_stage(db, args, client, players, teams, fixtures, projections, picks, 
     dry = args.dry_run
     md_fx = [f for f in fixtures if f.matchday == matchday]
     started = any(f.status in ("live", "finished") for f in md_fx)
+    # A replay re-scores the matchday that just finished while the next one
+    # waits to kick off. `picks` is the *new* matchday's squad by then
+    # (transfers, a new captain), so the replay scores the squad stored for
+    # the finished matchday instead, and adds nothing to its history.
+    replay = False
     if not started:
         # Current matchday hasn't kicked off — keep the last played matchday's
         # result up until this one starts.
@@ -485,7 +490,7 @@ def _live_stage(db, args, client, players, teams, fixtures, projections, picks, 
                 db.put_document(Docs.UCL_LIVE_RIVALS, None)
             return
         _log(f"live: MD{matchday} not started — keeping MD{prev} result")
-        matchday = prev
+        matchday, replay = prev, True
         md_fx = [f for f in fixtures if f.matchday == matchday]
         if not dry:
             try:
@@ -526,8 +531,12 @@ def _live_stage(db, args, client, players, teams, fixtures, projections, picks, 
         db.upsert_player_scores(score_rows)
     _log(f"live: archived {len(score_rows)} player scores for MD{matchday}")
 
-    # 7b. my squad — secured / projected-finish after UEFA auto-subs
-    live_picks = picks or (db.load_my_squad(matchday) if not dry else [])
+    # 7b. my squad — secured / projected-finish after UEFA auto-subs. With no
+    # stored squad a replay has nothing to score: build_live_state returns None.
+    if replay:
+        live_picks = db.load_my_squad(matchday) if not dry else []
+    else:
+        live_picks = picks or (db.load_my_squad(matchday) if not dry else [])
     live = build_live_state(players, teams, fixtures, projections, live_picks, matchday)
     if live:
         _log(
@@ -548,6 +557,10 @@ def _live_stage(db, args, client, players, teams, fixtures, projections, picks, 
                 standings, my_entry_id, players, teams, projections,
                 db.load_player_scores(matchday), matchday, my_live=live,
             )
+            if rivals:
+                rivals["state"] = (
+                    "finished" if all(f.status == "finished" for f in md_fx) else "live"
+                )
         except Exception as e:  # noqa: BLE001
             notes.append(f"live rivals skipped: {e}")
         db.put_document(Docs.UCL_LIVE_RIVALS, rivals)
@@ -560,8 +573,8 @@ def _live_stage(db, args, client, players, teams, fixtures, projections, picks, 
                 )
                 _log(f"live rivals: you project {me['projected']} — {ahead} ahead live")
 
-    # 7d. snapshot the history row
-    if live and not dry:
+    # 7d. snapshot the history row (a replay's matchday is already over)
+    if live and not dry and not replay:
         try:
             db.insert_live_snapshot(
                 matchday, live["securedPoints"], live["projectedFinish"],
@@ -571,7 +584,7 @@ def _live_stage(db, args, client, players, teams, fixtures, projections, picks, 
             notes.append(f"live snapshot skipped: {e}")
 
     # 7e. opt-in push alert on still-actionable items
-    if live and not dry:
+    if live and not dry and not replay:
         _maybe_alert(db, live)
 
 

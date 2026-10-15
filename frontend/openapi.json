@@ -3435,11 +3435,21 @@
             },
             "title": "Rows",
             "type": "array"
+          },
+          "state": {
+            "default": "live",
+            "enum": [
+              "live",
+              "finished"
+            ],
+            "title": "State",
+            "type": "string"
           }
         },
         "required": [
           "ready",
           "matchday",
+          "state",
           "myEntryId",
           "rows"
         ],
@@ -9497,6 +9507,10 @@
             "title": "Manualsubs",
             "type": "integer"
           },
+          "matchday": {
+            "title": "Matchday",
+            "type": "integer"
+          },
           "played": {
             "title": "Played",
             "type": "integer"
@@ -9519,6 +9533,7 @@
           }
         },
         "required": [
+          "matchday",
           "state",
           "secured",
           "projectedFinish",

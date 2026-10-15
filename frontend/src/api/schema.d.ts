@@ -1923,6 +1923,12 @@ export interface components {
              * @default []
              */
             rows: components["schemas"]["LiveRivalRow"][];
+            /**
+             * State
+             * @default live
+             * @enum {string}
+             */
+            state: "live" | "finished";
         };
         /** LiveScore */
         LiveScore: {
@@ -3940,6 +3946,8 @@ export interface components {
             captainNote: string | null;
             /** Manualsubs */
             manualSubs: number;
+            /** Matchday */
+            matchday: number;
             /** Played */
             played: number;
             /** Projectedfinish */

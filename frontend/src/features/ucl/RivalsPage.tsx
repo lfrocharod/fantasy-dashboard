@@ -38,13 +38,20 @@ function Rivals({ d }: { d: Api["UclRivalsResponse"] }) {
 
       {live && live.rows.some((x) => x.mine) && (
         <Section
-          title={`Live — matchday ${live.matchday}`}
-          right={<span className="text-xs text-[var(--muted)]">refreshes every few minutes while matches are on</span>}
+          title={live.state === "finished" ? `Matchday ${live.matchday} — final` : `Live — matchday ${live.matchday}`}
+          right={
+            live.state === "finished" ? undefined : (
+              <span className="text-xs text-[var(--muted)]">refreshes every few minutes while matches are on</span>
+            )
+          }
         >
           <LiveRivalTable rivals={live} />
           <p className="text-xs text-[var(--muted)]">
-            Secured = points already banked; projected finish blends banked points with xPts for players still to play.
-            Rivals use a top-11 + captain estimate; your row uses the auto-sub-aware number from the Overview.
+            {live.state === "finished"
+              ? ""
+              : "Secured = points already banked; projected finish blends banked points with xPts for players still to play. "}
+            Rivals are scored from their saved XI and captain, without auto-subs; your row uses the auto-sub-aware
+            number from the Overview.
           </p>
         </Section>
       )}

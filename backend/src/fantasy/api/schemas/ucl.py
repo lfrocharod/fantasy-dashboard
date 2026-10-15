@@ -308,6 +308,7 @@ class LiveRivalRow(Schema):
 class LiveRivals(Schema):
     ready: bool = True
     matchday: int
+    state: Literal["live", "finished"] = "live"
     my_entry_id: str | None = None
     rows: list[LiveRivalRow] = []
 

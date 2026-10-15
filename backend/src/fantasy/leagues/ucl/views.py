@@ -49,6 +49,16 @@ def current_matchday(session: Session) -> int:
     return int(md or 1)
 
 
+def played_matchday(session: Session) -> int:
+    """The latest matchday with a game kicked off (0 before MD1). From one
+    matchday's final whistle to the next one's first kickoff, the current
+    matchday — the one open for transfers — is one ahead of it."""
+    md = session.scalar(
+        select(func.max(M.Fixture.matchday)).where(M.Fixture.status.in_(("live", "finished")))
+    )
+    return int(md or 0)
+
+
 # ---- players -------------------------------------------------------------------------
 
 
@@ -570,19 +580,23 @@ def live_rivals(session: Session) -> S.LiveRivals | None:
 
 
 def live_history(session: Session, matchday: int) -> list[S.LiveSnapshotPoint]:
+    """The in-play graph, first kickoff to final whistle. Snapshots taken after
+    the matchday finished add nothing, so the graph stops at the first one."""
     rows = session.scalars(
         select(M.LiveSnapshot)
         .where(M.LiveSnapshot.matchday == matchday)
         .order_by(M.LiveSnapshot.captured_at)
         .limit(400)
     )
-    return [
-        S.LiveSnapshotPoint(
+    out: list[S.LiveSnapshotPoint] = []
+    for r in rows:
+        out.append(S.LiveSnapshotPoint(
             captured_at=r.captured_at.isoformat(), secured=r.secured, projected=r.projected,
             pre_match=r.pre_match, state=r.state,
-        )
-        for r in rows
-    ]
+        ))
+        if r.state == "finished":
+            break
+    return out
 
 
 # ---- overview ----------------------------------------------------------------------------
@@ -593,10 +607,11 @@ def overview(session: Session) -> S.UclOverview:
     league = session.get(M.League, "ucl")
     live = live_state(session)
     # the live document may be for a just-finished matchday during the
-    # roll-over window: key history/fixtures off its own matchday
+    # roll-over window: key its history and rivals off its own matchday, and
+    # everything about the squad (opponents, fixtures) off the current one
     live_md = live.matchday if live else md
     squad = my_squad(session, md)
-    fx = fixtures(session, live_md)
+    fx = fixtures(session, md)
     _, me, table = league_table(session, md)
     opt = optimizer_output(session)
     rivals_doc = live_rivals(session)
@@ -605,12 +620,12 @@ def overview(session: Session) -> S.UclOverview:
         return S.UclOverview(
             matchday=md, deadline_iso=deadline, has_squad=False, cards=None, live=live,
             live_history=[], live_rivals=None, strategy=None, captaincy=None, checklist=[],
-            squad=[], fixtures_matchday=live_md, fixtures=fx,
+            squad=[], fixtures_matchday=md, fixtures=fx,
         )
 
     ctx: dict[str, tuple[str, bool, M.Team, M.Team]] = {}
     teams = {t.uefa_team_id: t for t in session.scalars(select(M.Team))}
-    for f in session.scalars(select(M.Fixture).where(M.Fixture.matchday == live_md)):
+    for f in session.scalars(select(M.Fixture).where(M.Fixture.matchday == md)):
         h, a = teams.get(f.home_team_id), teams.get(f.away_team_id)
         if h and a:
             ctx[h.name] = (a.name, True, a, h)
@@ -661,7 +676,7 @@ def overview(session: Session) -> S.UclOverview:
         ),
         checklist=pre_deadline_checklist(squad, opt),
         squad=rows,
-        fixtures_matchday=live_md,
+        fixtures_matchday=md,
         fixtures=fx,
     )
 
@@ -903,11 +918,19 @@ def league_page(session: Session) -> S.LeagueResponse:
     if not league_id:
         return S.LeagueResponse(matchday=md, league_id=None, standings=[], leader_points=0,
                                 power_ranking=[], mds_left=0, finish=[], calibration=calibration)
+    # Each sync files the table under the current matchday, so from the
+    # moment a matchday becomes current to its first kickoff there's a row
+    # for it with no points of its own. Only matchdays that have kicked off
+    # count.
+    kicked_off = played_matchday(session)
     history = session.scalars(
         select(M.LeagueStanding)
-        .where(M.LeagueStanding.league_id == league_id)
+        .where(M.LeagueStanding.league_id == league_id, M.LeagueStanding.matchday <= kicked_off)
         .order_by(M.LeagueStanding.matchday, M.LeagueStanding.rank)
     ).all()
+    if history:
+        md = history[-1].matchday
+        table = [r for r in history if r.matchday == md]
     per: dict[str, list[M.LeagueStanding]] = {}
     for r in history:
         per.setdefault(r.entry_id, []).append(r)

@@ -25,28 +25,32 @@ function Overview({ o }: { o: Api["UclOverview"] }) {
   }
   const live = o.live;
   const c = o.cards;
+  // A finished matchday's result stays up until the next one kicks off. By
+  // then the cards, checklist and squad here are about the next matchday.
+  const recap = live?.state === "finished" && live.matchday !== o.matchday;
+  const inPlay = live && !recap ? live : null;
+  const final = inPlay?.state === "finished";
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
         <StatCard label="Matchday" value={o.matchday} />
         <StatCard
-          label={live ? "Live" : "Deadline"}
-          value={live ? (live.state === "finished" ? "✓ FT" : "🔴") : timeUntil(o.deadlineIso)}
-          sub={live ? `${live.played}/${live.starters} played` : undefined}
+          label={inPlay ? "Live" : "Deadline"}
+          value={inPlay ? (final ? "✓ FT" : "🔴") : timeUntil(o.deadlineIso)}
+          sub={inPlay ? `${inPlay.played}/${inPlay.starters} played` : undefined}
         />
         <StatCard
-          label={live ? "Proj. finish" : "Proj. total"}
-          value={fmt(live ? live.projectedFinish : c.projTotal, 0)}
-          sub={live ? `${fmt(live.securedPoints, 0)} secured` : "best XI + captain"}
+          label={inPlay ? (final ? "Final score" : "Proj. finish") : "Proj. total"}
+          value={fmt(inPlay ? inPlay.projectedFinish : c.projTotal, 0)}
+          sub={inPlay ? (final ? "all games finished" : `${fmt(inPlay.securedPoints, 0)} secured`) : "best XI + captain"}
         />
         <StatCard label="Captain pick" value={lastName(c.captainPickName)} sub={`${fmt(c.captainPickXpts)} xPts`} />
         <StatCard label="Squad value" value={money(c.squadValue)} />
         <StatCard label="League rank" value={c.rank ?? "–"} sub={c.leagueSize ? `of ${c.leagueSize}` : undefined} />
       </div>
 
-      {live ? (
-        <LiveMatchday live={live} history={o.liveHistory} rivals={o.liveRivals} />
-      ) : (
+      {live && <LiveMatchday live={live} history={o.liveHistory} rivals={o.liveRivals} />}
+      {!inPlay && (
         <>
           {o.strategy && <StrategyBanner s={o.strategy} />}
           {o.captaincy && <CaptaincyCard v={o.captaincy} />}
@@ -73,7 +77,7 @@ function Overview({ o }: { o: Api["UclOverview"] }) {
         />
       </Section>
 
-      {!live && (
+      {!inPlay && (
         <Section title={`Matchday ${o.fixturesMatchday} fixtures`}>
           {o.fixtures.length === 0 ? (
             <EmptyState title="No fixtures loaded for this matchday" />

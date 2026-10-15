@@ -1,5 +1,5 @@
 import type { Api } from "@/api/client";
-import { dateTime, fmt, lastName, relTime } from "@/shared/format";
+import { dateTime, fmt, lastName, relTime, signed } from "@/shared/format";
 import { Pill, PosBadge, Section, StatCard } from "@/shared/ui";
 
 type Live = Api["LiveState"];
@@ -37,6 +37,8 @@ function Sparkline({ points }: { points: Api["LiveSnapshotPoint"][] }) {
 }
 
 export function LiveRivalTable({ rivals }: { rivals: Api["LiveRivals"] }) {
+  // once every game is over, secured and projected are the same number
+  const final = rivals.state === "finished";
   return (
     <div className="card table-wrap">
       <table className="dtable">
@@ -45,8 +47,14 @@ export function LiveRivalTable({ rivals }: { rivals: Api["LiveRivals"] }) {
             <th>#</th>
             <th>Manager</th>
             <th className="num">Played</th>
-            <th className="num">Secured</th>
-            <th className="num">Proj. finish</th>
+            {final ? (
+              <th className="num">Points</th>
+            ) : (
+              <>
+                <th className="num">Secured</th>
+                <th className="num">Proj. finish</th>
+              </>
+            )}
             <th className="num">vs you</th>
           </tr>
         </thead>
@@ -59,7 +67,7 @@ export function LiveRivalTable({ rivals }: { rivals: Api["LiveRivals"] }) {
                 {r.mine && <span className="ml-1 text-[var(--accent)]">(you)</span>}
               </td>
               <td className="num">{r.played}</td>
-              <td className="num">{fmt(r.secured, 0)}</td>
+              {!final && <td className="num">{fmt(r.secured, 0)}</td>}
               <td className="num">{fmt(r.projected, 0)}</td>
               <td className="num" style={{
                 color: r.mine ? "var(--muted)" : (r.liveGapVsMe ?? 0) > 0 ? "var(--bad)" : "var(--good)",
@@ -83,6 +91,7 @@ export function LiveMatchday({
   history: Api["LiveSnapshotPoint"][];
   rivals: Api["LiveRivals"] | null | undefined;
 }) {
+  const final = live.state === "finished";
   const delta = live.projectedFinish - live.preMatchProjection;
   const cap = live.captain;
   const rank = (r: Row) => (r.effRole === "auto-out" ? 2 : r.isStarter ? 0 : 1) * 100 + r.benchOrder;
@@ -104,22 +113,39 @@ export function LiveMatchday({
 
   return (
     <Section
-      title={`Live — matchday ${live.matchday}`}
+      title={final ? `Matchday ${live.matchday} — final` : `Live — matchday ${live.matchday}`}
       right={
         <span className="text-xs text-[var(--muted)]">
-          {live.state === "finished" ? "all games finished" : "in progress · refreshes every minute"} · data{" "}
+          {final ? "all games finished" : "in progress · refreshes every minute"} · data{" "}
           {relTime(live.generatedAt)}
         </span>
       }
     >
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Secured" value={fmt(live.securedPoints, 0)} sub="banked so far (incl. captain)" />
+        {final ? (
+          <>
+            <StatCard label="Final score" value={fmt(live.securedPoints, 0)} sub="incl. captain and auto-subs" />
+            <StatCard
+              label="vs pre-match"
+              value={signed(delta, 0)}
+              sub={`projected ${fmt(live.preMatchProjection, 0)} before kickoff`}
+            />
+          </>
+        ) : (
+          <>
+            <StatCard label="Secured" value={fmt(live.securedPoints, 0)} sub="banked so far (incl. captain)" />
+            <StatCard
+              label="Projected finish"
+              value={fmt(live.projectedFinish, 0)}
+              sub={`${signed(delta, 0)} vs pre-match ${fmt(live.preMatchProjection, 0)}`}
+            />
+          </>
+        )}
         <StatCard
-          label="Projected finish"
-          value={fmt(live.projectedFinish, 0)}
-          sub={`${delta >= 0 ? "+" : ""}${fmt(delta, 0)} vs pre-match ${fmt(live.preMatchProjection, 0)}`}
+          label="Played"
+          value={`${live.played}/${live.starters}`}
+          sub={final ? `${live.autoSubs.length} auto-sub${live.autoSubs.length === 1 ? "" : "s"}` : `${live.toPlay} still to play`}
         />
-        <StatCard label="Played" value={`${live.played}/${live.starters}`} sub={`${live.toPlay} still to play`} />
         <StatCard label="Captain" value={lastName(cap?.name)} sub={captainSub} />
       </div>
 
@@ -257,7 +283,7 @@ export function LiveMatchday({
 
       {rivals && rivals.rows.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-sm font-semibold text-[var(--muted)]">Mini-league — live</h3>
+          <h3 className="text-sm font-semibold text-[var(--muted)]">Mini-league — {final ? "final" : "live"}</h3>
           <LiveRivalTable rivals={rivals} />
         </div>
       )}

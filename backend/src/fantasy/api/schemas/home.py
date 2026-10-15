@@ -18,6 +18,9 @@ class Alert(Schema):
 
 
 class UclLive(Schema):
+    # the matchday these numbers belong to: one behind UclHome.matchday while a
+    # finished matchday's result is kept up until the next one kicks off
+    matchday: int
     state: str
     secured: float
     projected_finish: float
