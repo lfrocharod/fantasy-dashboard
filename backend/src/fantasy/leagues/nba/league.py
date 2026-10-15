@@ -142,6 +142,7 @@ class ProTeam:
     abbrev: str
     name: str
     games: dict[int, tuple[int, bool]] = field(default_factory=dict)  # day → (opponent id, home)
+    tips: dict[int, int] = field(default_factory=dict)  # day → tip-off, epoch ms
 
 
 def pro_teams(pro_schedule: dict[str, Any]) -> tuple[dict[int, ProTeam], dict[int, date]]:
@@ -160,8 +161,10 @@ def pro_teams(pro_schedule: dict[str, Any]) -> tuple[dict[int, ProTeam], dict[in
                 day = int(g.get("scoringPeriodId") or sp)
                 team.games[day] = (away if home == tid else home, home == tid)
                 when = g.get("date")
-                if isinstance(when, (int, float)) and day not in day_dates:
-                    day_dates[day] = datetime.fromtimestamp(when / 1000, UTC).astimezone(ET).date()
+                if isinstance(when, (int, float)):
+                    team.tips[day] = int(when)
+                    if day not in day_dates:
+                        day_dates[day] = datetime.fromtimestamp(when / 1000, UTC).astimezone(ET).date()
         teams[tid] = team
     return teams, day_dates
 

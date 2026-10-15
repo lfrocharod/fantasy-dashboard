@@ -203,7 +203,7 @@ def _nba(session: Session, alerts: list[S.Alert]) -> S.NbaHome:
                          tonight=0, top_stream=None)
     left = lg.days_left
     plan = BA.plan_days(roster, left, lg.games, lg.slots)
-    score = nba_views._score(lg, lg.period, left, plan)
+    score = nba_views._score(lg, lg.period, left)
     start, _ = nba_views._today_moves(lg, roster)
     streams = BA.streams(roster, nba_views._free(lg), left, lg.games, lg.slots,
                          nba_views._ros(lg), lg.limits)

@@ -88,6 +88,7 @@ def test_pro_schedule_dates_are_eastern() -> None:
     teams, dates = L.pro_teams(sched)
     assert set(teams) == {1} and teams[1].abbrev == "AAA"
     assert teams[1].games == {2: (2, True)} and dates[2] == date(2026, 10, 21)
+    assert teams[1].tips == {2: late}  # the projection needs to know who has tipped off
 
 
 # ---- projections -------------------------------------------------------------------------
@@ -149,6 +150,35 @@ def test_plan_days_skips_ir_and_off_days() -> None:
     plan = A.plan_days([a, b, hurt], [1, 2, 3], games, ["PG"])
     assert [d.points for d in plan.days] == [30, 20, 30] and plan.total == 80
     assert plan.games == 3 and plan.lost == 0
+
+
+def test_tonights_tipped_games_are_not_counted_twice() -> None:
+    """ESPN's live matchup total already holds tonight's games once they tip
+    off, so the projection of what's still to come leaves them out."""
+    from fantasy.core import models as M
+    from fantasy.leagues.nba import views as V
+
+    tip = datetime(2026, 10, 21, 23, 30, tzinfo=UTC)  # 7:30pm Eastern on day 2
+    mine = player("1", 40, ["PG"], team=1, slot="PG")
+    theirs = player("2", 40, ["PG"], team=2, slot="PG")
+    mine.owner_team_id, theirs.owner_team_id = 1, 2
+    lg = V.League(
+        name="", players=[mine, theirs], my_team_id=1, entries=[],
+        matchups=[M.Matchup(sport="nba", round=1, home_entry="1", away_entry="2",
+                            home_points=40.0, away_points=0.0, finished=False)],
+        slot_counts={"PG": 1}, ir_slots=0, limits={}, periods={1: (1, 3)},
+        day_dates={d: date(2026, 10, 19 + d) for d in (1, 2, 3)},
+        games=every_day(1, 2, days=range(2, 4)), abbrev={}, pro_names={},
+        team_names={2: "Rival"}, today=2, pinned=False, reg_periods=1, playoff_periods=[],
+        playoff_teams=4, acquisitions={}, trade_deadline=None, warnings=[],
+        # mine tipped at 7:30 and his 40 are in the total; theirs plays at 10:30
+        tips={1: {2: int(tip.timestamp() * 1000)},
+              2: {2: int((tip + timedelta(hours=3)).timestamp() * 1000)}},
+    )
+    score = V._score(lg, 1, [2, 3], now=tip + timedelta(hours=2))
+    assert score is not None
+    assert (score.my_remaining, score.my_proj) == (40, 80)  # tomorrow's game only
+    assert (score.opp_remaining, score.opp_proj) == (80, 80)  # tonight's and tomorrow's
 
 
 def test_win_prob() -> None:

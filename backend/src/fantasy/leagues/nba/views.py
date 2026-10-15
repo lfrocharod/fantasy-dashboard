@@ -54,6 +54,7 @@ class League:
     acquisitions: dict[str, Any]
     trade_deadline: str | None
     warnings: list[str]
+    tips: dict[int, dict[int, int]] = field(default_factory=dict)  # team → day → tip-off ms
     _days: dict[str, list[int]] = field(default_factory=dict)
 
     # ---- the calendar ----
@@ -102,6 +103,18 @@ class League:
         if "po" not in self._days:
             self._days["po"] = [d for mp in self.playoff_periods for d in self.period_days(mp)]
         return self._days["po"]
+
+    def unplayed(self, now: datetime | None = None) -> dict[int, dict[int, tuple[int, bool]]]:
+        """`games` less today's games that have tipped off. ESPN's live matchup
+        total already counts those, so what's still to come mustn't again."""
+        if self.pinned:  # the demo's "today" is a fixed day, not a clock
+            return self.games
+        now_ms = (now or datetime.now(UTC)).timestamp() * 1000
+        return {
+            team: {d: g for d, g in days.items()
+                   if not (d == self.today and self.tips.get(team, {}).get(d, now_ms + 1) <= now_ms)}
+            for team, days in self.games.items()
+        }
 
     def game_days(self, mp: int) -> int:
         """Days in matchup `mp` with at least one NBA game."""
@@ -179,6 +192,7 @@ def load(session: Session, now: datetime | None = None) -> League:
         acquisitions=dict(doc.get("acquisitions") or {}),
         trade_deadline=doc.get("tradeDeadline"),
         warnings=[str(w) for w in doc.get("warnings") or []],
+        tips={k: {int(d): int(ms) for d, ms in (v.get("tips") or {}).items()} for k, v in pro.items()},
     )
 
 
@@ -229,13 +243,17 @@ def _free(lg: League) -> list[NbaPlayer]:
 # ---- overview -----------------------------------------------------------------------------
 
 
-def _score(lg: League, mp: int, days: list[int], plan: A.WeekPlan) -> S.NbaScore | None:
+def _score(lg: League, mp: int, days: list[int], now: datetime | None = None) -> S.NbaScore | None:
+    """ESPN's live totals plus each side's best lineups over the games still to
+    come — not tonight's that have tipped off: the totals count those."""
     match = lg.match_of(lg.my_team_id, mp)
     if match is None:
         return None
     home = match.home_entry == str(lg.my_team_id)
     opp_id = int(match.away_entry if home else match.home_entry)
-    opp_plan = A.plan_days(lg.roster_of(opp_id), days, lg.games, lg.slots)
+    games = lg.unplayed(now)
+    plan = A.plan_days(lg.my_roster, days, games, lg.slots)
+    opp_plan = A.plan_days(lg.roster_of(opp_id), days, games, lg.slots)
     mine = (match.home_points if home else match.away_points) or 0.0
     theirs = (match.away_points if home else match.home_points) or 0.0
     return S.NbaScore(
@@ -356,7 +374,7 @@ def overview(session: Session) -> S.NbaOverview:
     roster = lg.my_roster
     left = lg.days_left
     plan = A.plan_days(roster, left, lg.games, lg.slots)
-    score = _score(lg, lg.period, left, plan)
+    score = _score(lg, lg.period, left)
     starts = Counter(s.player.ext_id for d in plan.days for s in d.seats if s.player)
     lost = Counter(p.ext_id for d in plan.days for p in d.benched)
     today_plan = next((d for d in plan.days if d.day == lg.today), None)
