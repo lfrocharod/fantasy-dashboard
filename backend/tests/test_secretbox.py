@@ -20,7 +20,10 @@ def test_round_trip():
 
 def test_rejects_tampered_payload():
     enc = secretbox.encrypt("secret")
-    tampered = "v1:" + base64.b64encode(base64.b64decode(enc[3:])[:-1] + b"\x00").decode()
+    blob = base64.b64decode(enc[3:])
+    # flip a bit: the ciphertext is random, so overwriting a byte with a fixed
+    # value leaves it unchanged one run in 256
+    tampered = "v1:" + base64.b64encode(blob[:-1] + bytes([blob[-1] ^ 1])).decode()
     with pytest.raises((InvalidTag, ValueError)):
         secretbox.decrypt(tampered)
 
