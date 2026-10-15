@@ -5,6 +5,22 @@ patch, a feature the minor. Each version is a tag and a GitHub release.
 
 ## [Unreleased]
 
+## [2.1.4] — 2026-10-15
+
+### Fixed
+- **UCL:** a finished matchday keeps its real score until the next one kicks
+  off. Once the next matchday became current, the result still on screen was
+  re-scored with the new squad (an 80 read as 43) on the overview, the home
+  card and the mini-league table; it now reads as final. The league page counts
+  only matchdays that have kicked off, and the overview's squad faces the
+  current matchday's opponents.
+- **FPL:** the live gameweek is scored with the lineup fielded for it and ends
+  when FPL marks it finished. In a classic-scoring league it read "live" until
+  the next gameweek, and once scored the previous week's XI. Reads an expired
+  login made FPL refuse are retried without it.
+- **NBA:** tonight's games aren't counted twice in the matchup projection once
+  they tip off.
+
 ### Added
 - A public, read-only [live demo](https://fantasy-dashboard-demo.vercel.app)
   of the anonymised dataset. It runs from its own database and database role.
@@ -87,7 +103,8 @@ The original Next.js app over Postgres, fed by a Python ingest job.
   streaming, trades and playoff odds.
 - A cross-league home page with deadline checklists and alerts.
 
-[Unreleased]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.3...HEAD
+[Unreleased]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.4...HEAD
+[2.1.4]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.3...v2.1.4
 [2.1.3]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.0...v2.1.1
