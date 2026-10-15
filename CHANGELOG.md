@@ -5,6 +5,28 @@ patch, a feature the minor. Each version is a tag and a GitHub release.
 
 ## [Unreleased]
 
+## [2.1.5] — 2026-10-15
+
+### Fixed
+- **UCL:** team sheets come from UEFA's match centre, under UEFA Fantasy's own
+  ids, and recent form from Understat; Sofascore, which refuses the app, is
+  opt-in. The live advice follows UEFA's rule that any change made in play
+  switches its automatic subs off, and once UEFA has scored a matchday its own
+  result is shown, for you and every rival (MD2 is 83, with a Player of the
+  Match bonus the live feed missed). Once a matchday kicks off, transfers and
+  chips plan the next one. The league table shows the last matchday's settled
+  standings.
+- **FPL:** a starter still to play in the live gameweek counts at that
+  gameweek's projection, not the next one's.
+- **NFL:** weekly projections are this season's; they were last season's
+  (Brock Purdy 14.2 instead of 21.4). The rest of the season sums ESPN's weekly
+  projections, expert ranks are priced within each position, and once games
+  are on the win chance counts the points already scored.
+- **NBA:** matchups start on their real dates: matchup 1 is Oct 20–25 with six
+  pickups, not thirteen days and thirteen, and the All-Star matchup covers two
+  weeks. Tonight's lineup advice works around players whose games have tipped
+  off.
+
 ## [2.1.4] — 2026-10-15
 
 ### Fixed
@@ -103,7 +125,8 @@ The original Next.js app over Postgres, fed by a Python ingest job.
   streaming, trades and playoff odds.
 - A cross-league home page with deadline checklists and alerts.
 
-[Unreleased]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.4...HEAD
+[Unreleased]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.5...HEAD
+[2.1.5]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.4...v2.1.5
 [2.1.4]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.3...v2.1.4
 [2.1.3]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/lfrocharod/fantasy-dashboard/compare/v2.1.1...v2.1.2
