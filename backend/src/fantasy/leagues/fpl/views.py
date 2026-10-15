@@ -121,6 +121,15 @@ def live_view(live: dict[str, Any], b: Board) -> S.FplLiveView | None:
     the head-to-head score. Draft has no captain — nothing is doubled."""
     elements: dict[str, list[int]] = live.get("elements") or {}
     finished = live.get("state") == "finished"
+    gw = int(live.get("gw") or 0)
+    # The lineup the sync scored the gameweek with. Older documents don't
+    # carry one: fall back to the stored Pick Team.
+    kept = live.get("lineup")
+    lineup = (
+        [(str(x["element"]), int(x.get("slot") or 0), bool(x.get("starter"))) for x in kept]
+        if kept else [(s.ext_id, s.position or 0, s.starter) for s in b.lineup]
+    )
+    source = live.get("lineupSource")
 
     @dataclass(slots=True)
     class Row:
@@ -134,16 +143,16 @@ def live_view(live: dict[str, Any], b: Board) -> S.FplLiveView | None:
         role: str
 
     rows: list[Row] = []
-    for s in b.lineup:
-        p = b.by_id.get(s.ext_id)
+    for ext_id, slot, starter in lineup:
+        p = b.by_id.get(ext_id)
         if p is None:
             continue
-        pts, mins = (elements.get(s.ext_id) or [0, 0])[:2]
+        pts, mins = (elements.get(ext_id) or [0, 0])[:2]
         fallback = p.gws[0].xpts if p.gws else p.proj
         rows.append(Row(
-            p=p, pts=int(pts), mins=int(mins), slot=s.position or 0, starter=s.starter,
+            p=p, pts=int(pts), mins=int(mins), slot=slot, starter=starter,
             dnp=finished and mins == 0, proj=float(pts) if mins > 0 or finished else fallback,
-            role="start" if s.starter else "bench",
+            role="start" if starter else "bench",
         ))
     by_id = {r.p.ext_id: r for r in rows}
     starters = [r for r in rows if r.starter]
@@ -184,9 +193,10 @@ def live_view(live: dict[str, Any], b: Board) -> S.FplLiveView | None:
         ),
     )
     return S.FplLiveView(
-        gw=int(live.get("gw") or 0),
+        gw=gw,
         state="finished" if finished else "live",
-        secured=float(live.get("secured") or 0),
+        # once it's over, FPL's automatic substitutions are part of the score
+        secured=projected if finished else float(live.get("secured") or 0),
         played=int(live.get("played") or 0),
         starters=int(live.get("starters") or 0),
         projected_finish=projected,
@@ -200,6 +210,10 @@ def live_view(live: dict[str, Any], b: Board) -> S.FplLiveView | None:
         my_points=live.get("myPoints"),
         opp_points=live.get("oppPoints"),
         opp_name=live.get("oppName"),
+        lineup_source=source,
+        # scored with another lineup than this gameweek's own, which FPL
+        # hadn't shown the sync: right unless it changed since
+        estimated=bool(source) and source != f"event/{gw}",
     )
 
 

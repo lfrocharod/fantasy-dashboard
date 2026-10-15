@@ -107,6 +107,10 @@ class FplLiveView(Schema):
     my_points: float | None
     opp_points: float | None
     opp_name: str | None
+    # where the scored lineup came from: "event/<gw>" (that gameweek's own),
+    # "my-team" (the Pick Team), or an earlier "event/<gw>"
+    lineup_source: str | None
+    estimated: bool
 
 
 class Swap(Schema):

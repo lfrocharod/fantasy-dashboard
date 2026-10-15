@@ -150,11 +150,18 @@ function FplLive({ live }: { live: Api["FplLiveView"] }) {
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">
-        Live — GW{live.gw}
+        {finished ? `GW${live.gw} — final` : `Live — GW${live.gw}`}
         <span className="ml-2 text-xs font-normal text-[var(--muted)]">
-          {finished ? "settled" : "in progress · updates with each sync"}
+          {finished ? "every match played, bonus confirmed" : "in progress · updates with each sync"}
         </span>
       </h2>
+      {live.estimated && (
+        <div className="card border-l-2 border-[var(--warn)] p-3 text-sm">
+          Scored with{" "}
+          {live.lineupSource === "my-team" ? "your current Pick Team" : `your GW${live.lineupSource?.slice(6)} lineup`}:
+          FPL hasn't shown the sync your GW{live.gw} lineup yet, so a change you made for GW{live.gw} isn't counted.
+        </div>
+      )}
       {h2h && (
         <div className="card p-3 text-sm" style={{ borderLeft: `3px solid ${winning ? "var(--good)" : "var(--bad)"}` }}>
           <b>H2H GW{live.gw}:</b> you {live.myPoints} – {live.oppPoints} {live.oppName}{" "}
@@ -162,10 +169,23 @@ function FplLive({ live }: { live: Api["FplLiveView"] }) {
         </div>
       )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="GW points" value={live.secured} sub="banked by your XI" />
-        <StatCard label="Projected finish" value={fmt(live.projectedFinish, 0)} />
-        <StatCard label="Played" value={`${live.played}/${live.starters}`} />
-        <StatCard label="Still to play" value={live.notPlayed.length} />
+        {finished ? (
+          <>
+            <StatCard
+              label="GW points"
+              value={fmt(live.secured, 0)}
+              sub={live.autoSubs.length ? `final, after ${live.autoSubs.length} auto-sub(s)` : "final"}
+            />
+            <StatCard label="Played" value={`${live.played}/${live.starters}`} />
+          </>
+        ) : (
+          <>
+            <StatCard label="GW points" value={fmt(live.secured, 0)} sub="banked by your XI" />
+            <StatCard label="Projected finish" value={fmt(live.projectedFinish, 0)} />
+            <StatCard label="Played" value={`${live.played}/${live.starters}`} />
+            <StatCard label="Still to play" value={live.notPlayed.length} />
+          </>
+        )}
       </div>
       {live.autoSubs.length > 0 && (
         <div className="card space-y-1 p-3 text-sm">

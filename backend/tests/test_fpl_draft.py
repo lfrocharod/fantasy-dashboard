@@ -1,3 +1,5 @@
+import httpx
+
 from fantasy.leagues.fpl.board import (
     _SCORING,
     _anchor,
@@ -221,3 +223,61 @@ def test_best_xi_can_field_two_midfielders():
              + [player(30 + i, "FWD", 7) for i in range(3)])
     xi = best_xi(squad)
     assert xi.formation == "5-2-3" and len(xi.xi) == 11
+
+
+# ---- the live gameweek -------------------------------------------------------------
+
+
+def _mock_client(handler, **kw) -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(handler), **kw)
+
+
+def test_a_stale_login_is_dropped_for_public_endpoints(monkeypatch) -> None:
+    """FPL refuses even its public endpoints when a request carries an expired
+    token, and the token only lasts hours: the read is retried without it."""
+    from fantasy.leagues.fpl import league
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if "x-api-authorization" in req.headers:
+            return httpx.Response(401)
+        return httpx.Response(200, json={"choices": [
+            {"index": 1, "round": 1, "pick": 1, "entry": 9, "entry_name": "Me", "element": 42},
+        ]})
+
+    monkeypatch.setattr(league, "_client", lambda auth=None: _mock_client(handler))
+    with _mock_client(handler, headers={"x-api-authorization": "Bearer expired"}) as c:
+        assert [p["player_ext_id"] for p in league.parse_choices(c, "1")] == [42]
+
+
+def test_a_classic_leagues_gameweek_ends_on_fpls_own_flag() -> None:
+    from fantasy.leagues.draft.sync import _fpl_live_score, _gw_finished
+
+    events = {"current": 6, "data": [{"id": 6, "finished": True}, {"id": 7, "finished": False}]}
+    assert _gw_finished(events, 6) and not _gw_finished(events, 7)
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.url.path == "/api/event/6/live"
+        return httpx.Response(200, json={"elements": {
+            "1": {"stats": {"total_points": 6, "minutes": 90}},
+            "2": {"stats": {"total_points": 2, "minutes": 90}},
+        }})
+
+    lineup = [{"element": 1, "slot": 1, "starter": True, "source": "event/6"},
+              {"element": 2, "slot": 12, "starter": False, "source": "event/6"}]
+    # a classic-scoring league has no head-to-head matches to say it's over
+    with _mock_client(handler) as c:
+        live = _fpl_live_score(c, 6, lineup, {"league_entries": [], "matches": []}, "900",
+                               finished=True)
+    assert live is not None
+    assert (live["state"], live["secured"], live["lineupSource"]) == ("finished", 6, "event/6")
+    assert [(p["element"], p["starter"]) for p in live["lineup"]] == [(1, True), (2, False)]
+
+
+def test_only_a_gameweeks_own_lineup_is_kept_between_syncs() -> None:
+    from fantasy.leagues.draft.sync import _kept_lineup
+
+    doc = {"gw": 6, "lineupSource": "event/6",
+           "lineup": [{"element": 1, "slot": 1, "starter": True}]}
+    assert _kept_lineup(doc, 6) == [{"element": 1, "slot": 1, "starter": True, "source": "event/6"}]
+    assert _kept_lineup(doc, 7) == []
+    assert _kept_lineup({**doc, "lineupSource": "event/5"}, 6) == []  # a stand-in, not GW6's

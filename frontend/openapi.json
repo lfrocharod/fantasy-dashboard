@@ -1643,10 +1643,19 @@
           "starters": {
             "title": "Starters",
             "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "live",
+              "finished"
+            ],
+            "title": "State",
+            "type": "string"
           }
         },
         "required": [
           "gw",
+          "state",
           "secured",
           "played",
           "starters"
@@ -1663,9 +1672,24 @@
             "title": "Autosubs",
             "type": "array"
           },
+          "estimated": {
+            "title": "Estimated",
+            "type": "boolean"
+          },
           "gw": {
             "title": "Gw",
             "type": "integer"
+          },
+          "lineupSource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineupsource"
           },
           "myPoints": {
             "anyOf": [
@@ -1751,7 +1775,9 @@
           "rows",
           "myPoints",
           "oppPoints",
-          "oppName"
+          "oppName",
+          "lineupSource",
+          "estimated"
         ],
         "title": "FplLiveView",
         "type": "object"

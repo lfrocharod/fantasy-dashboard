@@ -70,7 +70,13 @@ def has_auth(auth: str | None) -> bool:
 
 
 def _get(c: httpx.Client, path: str) -> dict:
-    r = c.get(f"{_BASE}/{path}")
+    url = f"{_BASE}/{path}"
+    r = c.get(url)
+    if r.status_code in (401, 403) and ("x-api-authorization" in c.headers or c.cookies):
+        # A request carrying an expired login is refused even by the public
+        # endpoints, and the token only lasts hours: ask again without it.
+        with _client() as anon:
+            r = anon.get(url)
     r.raise_for_status()
     return r.json()
 
@@ -146,6 +152,16 @@ def _picks_to_lineup(picks: list[dict], source: str) -> list[dict]:
         })
     out.sort(key=lambda x: x["slot"] or 99)
     return out
+
+
+def fetch_gw_lineup(client: httpx.Client, entry_id: str, gw: int) -> list[dict]:
+    """The lineup you fielded in gameweek `gw`, the one that scores it: [] if
+    FPL won't show it (before the deadline, or not to this session)."""
+    try:
+        d = _get(client, f"entry/{entry_id}/event/{gw}")
+    except (httpx.HTTPError, ValueError):
+        return []
+    return _picks_to_lineup(d.get("picks", []), f"event/{gw}")
 
 
 def fetch_my_squad(

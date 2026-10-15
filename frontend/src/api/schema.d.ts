@@ -1316,13 +1316,22 @@ export interface components {
             secured: number;
             /** Starters */
             starters: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "live" | "finished";
         };
         /** FplLiveView */
         FplLiveView: {
             /** Autosubs */
             autoSubs: components["schemas"]["LiveSubstitution"][];
+            /** Estimated */
+            estimated: boolean;
             /** Gw */
             gw: number;
+            /** Lineupsource */
+            lineupSource: string | null;
             /** Mypoints */
             myPoints: number | null;
             /** Notplayed */
