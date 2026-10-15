@@ -9,7 +9,8 @@
 #                                     a match is in play (no network, no database)
 #   fantasy-run train  weekly       — refit the learned FPL points model
 #
-# Runs from home on purpose: UEFA's and ESPN's edges block datacenter IPs.
+# Runs from home on purpose: UEFA's fantasy API refuses datacenter IPs. The
+# other leagues can also sync from GitHub's runners (cloud-sync.yml).
 set -euo pipefail
 
 mode=${1:?usage: fantasy-run fast|full|live}
@@ -35,8 +36,10 @@ case "$mode" in
     exec flock --nonblock --conflict-exit-code 0 "$lock" \
       uv run --frozen --no-sync fantasy sync ucl --mode live --if-live ;;
   fast|full)
+    # FANTASY_SYNC=ucl (in the runner's env file) once the cloud sync
+    # (.github/workflows/cloud-sync.yml) refreshes the other leagues
     exec flock --wait 1800 "$lock" \
-      uv run --frozen --no-sync fantasy sync all --mode "$mode" ;;
+      uv run --frozen --no-sync fantasy sync "${FANTASY_SYNC:-all}" --mode "$mode" ;;
   train)
     exec nice -n 15 uv run --frozen --no-sync fantasy ml train ;;
   *)
