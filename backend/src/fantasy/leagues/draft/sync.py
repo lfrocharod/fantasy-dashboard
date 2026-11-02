@@ -384,6 +384,11 @@ def build_board(db: DB, sport: str, cfg: dict, env: Env | None = None) -> None:
         rows = build(next_gw, roster, teams, league_id, cookie, role_overrides=overrides)
         db.replace_draft_players(sport, rows)
         db.upsert_league("fpl", current_round=int(next_gw))
+        # the board's own projections for the gameweek, kept per gameweek: once
+        # it's under way the live panel values a starter still to play with
+        # them (the ML step below writes them too, but only where it can run)
+        db.put_predictions("fpl", int(next_gw), "structural",
+                           {r.ext_id: round(float(r.proj_points or 0), 2) for r in rows})
         try:
             from fantasy.ml import serve
         except ImportError:  # the ml extra isn't installed here

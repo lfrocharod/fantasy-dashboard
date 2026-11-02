@@ -9,7 +9,7 @@ few things that do need a human.
 |---|---|---|
 | **App** — the React SPA + the FastAPI API | Vercel (Hobby plan), one project with two services | The SPA is static files on Vercel's CDN; `/api/*` runs FastAPI as a Python function in `cle1` (Cleveland), next to the database. Reads the database; the only writes are your settings and the draft board. |
 | **Database** | Neon Postgres (AWS us-east-2) | Everything. Schema owned by Alembic (`backend/src/fantasy/migrations`). |
-| **Syncs** | systemd user timers on a home machine | Pull every league's data, rebuild projections, write the database. Home on purpose: UEFA's and ESPN's edges block datacenter IPs. |
+| **Syncs** | systemd user timers on a home machine; optionally GitHub Actions for FPL, NFL and NBA | Pull every league's data, rebuild projections, write the database. The Champions League stays home on purpose: UEFA's fantasy API refuses datacenter IPs. |
 | **CI** | GitHub Actions, every push | Lint, types, tests (Postgres 18), the generated API client check, both Docker images and an API smoke test. |
 | **Deploys** | Vercel's Git integration | Every push builds a preview; `main` builds production, which runs `fantasy db upgrade` before the new version takes traffic. |
 
@@ -41,6 +41,27 @@ home page also flags any league whose data is going stale.
 wakes (`Persistent=true`); live ticks during the outage are simply lost. For
 match nights, keep the machine awake — or install the runner on anything
 always-on (a Raspberry Pi works: `infra/home/install.sh` is all it needs).
+
+## Cloud sync (optional): FPL, NFL and NBA without the home machine
+
+UEFA's fantasy API times out from cloud IPs, but FPL, ESPN (NFL and NBA),
+FantasyPros, Understat and UEFA's match centre all answer GitHub's runners
+(checked 2026-10-15). `.github/workflows/cloud-sync.yml` refreshes FPL, NFL
+and NBA every 30 minutes, 06:15–23:45, on public-repo Actions minutes, which
+are free. It's off until you switch it on:
+
+1. Repository secrets (Settings → Secrets and variables → Actions):
+   `DATABASE_URL` and `WEB_CRYPTO_KEY`, the same values as the runner's env
+   file. The scheduled workflow runs from `main` only; pull requests from
+   forks never see secrets.
+2. Repository variable `CLOUD_SYNC` = `1`. Run it once by hand from the
+   Actions tab to check.
+3. Add `FANTASY_SYNC=ucl` to the runner's env file, so the home machine only
+   does the Champions League from then on.
+
+The learned FPL model is trained on the home machine, so its predictions only
+refresh there; the board and its projections refresh either way. GitHub pauses
+a scheduled workflow after 60 days without activity in the repository.
 
 ## What does need a human
 

@@ -43,3 +43,11 @@ before the new version takes traffic, so there is one deploy path: merge to
   change, not a rewrite.
 * Secrets for the syncs live only on that machine (mode 600); the app's live in
   Vercel's environment variables; CI needs none.
+
+## Update — 2026-10-15
+
+A probe from a GitHub-hosted runner found ESPN's fantasy API, FPL, FantasyPros,
+Understat and UEFA's match centre all reachable; only UEFA's fantasy API
+(`gaming.uefa.com`) still refuses cloud IPs (it times out). FPL, NFL and NBA can
+therefore also sync from GitHub Actions (`cloud-sync.yml`, opt-in), which
+leaves only the Champions League dependent on the home machine.

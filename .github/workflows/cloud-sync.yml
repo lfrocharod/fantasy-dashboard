@@ -1,0 +1,53 @@
+name: cloud sync
+
+# FPL, NFL and NBA refreshed from GitHub's runners, so they keep updating while
+# the home machine is off. UEFA's fantasy API refuses cloud IPs (it times out),
+# so the Champions League stays on the home runner. Public-repo Actions minutes
+# cost nothing.
+#
+# Off until the repository variable CLOUD_SYNC is "1" and the DATABASE_URL and
+# WEB_CRYPTO_KEY secrets are set; then give the home runner FANTASY_SYNC=ucl.
+# See docs/operations.md.
+
+on:
+  schedule:
+    # every 30 minutes, 06:15–23:45 Mexico City (UTC−6)
+    - cron: "15,45 12-23 * * *"
+    - cron: "15,45 0-5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: vars.CLOUD_SYNC == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      WEB_CRYPTO_KEY: ${{ secrets.WEB_CRYPTO_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Install
+        run: uv sync --frozen --extra jobs --extra sources
+      - name: FPL
+        run: uv run --frozen --no-sync fantasy sync fpl
+      - name: NFL
+        if: ${{ !cancelled() }}
+        run: uv run --frozen --no-sync fantasy sync nfl
+      - name: NBA
+        if: ${{ !cancelled() }}
+        run: uv run --frozen --no-sync fantasy sync nba
